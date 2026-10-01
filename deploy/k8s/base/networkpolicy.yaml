@@ -1,0 +1,85 @@
+# Covers all three plane pods (and the migrate Job pod, harmlessly) via
+# app.kubernetes.io/name: gateway. Ingress: only from the ingress
+# controller's namespace, on each plane's port. Egress: DNS, Postgres,
+# ClickHouse (analytics overlay only -- harmless no-op otherwise), and
+# 443/80 to public addresses only (private and link-local ranges excluded --
+# see the comment on that rule).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        # Match your ingress controller's namespace label -- this is the
+        # convention ingress-nginx's own manifests ship
+        # (kubernetes.io/metadata.name is automatically set by the API
+        # server to the namespace's own name on every namespace). Adjust if
+        # your controller lives elsewhere.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080 # mcp
+        - protocol: TCP
+          port: 8081 # api
+        - protocol: TCP
+          port: 8082 # llm
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Postgres (required).
+    - ports:
+        - protocol: TCP
+          port: 5432
+    # ClickHouse (optional; only reached when the analytics overlay's sink
+    # is enabled -- an unused, harmless allow otherwise): native protocol
+    # (9000), native over TLS (9440 -- what a managed ClickHouse such as
+    # ClickHouse Cloud serves, sinks.clickhouse.secure: true), HTTP (8123).
+    - ports:
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 9440
+        - protocol: TCP
+          port: 8123
+    # Outbound HTTPS/HTTP to the public internet only: the llm plane calls
+    # whichever LLM providers are configured and the mcp plane calls
+    # whatever connector endpoints tenants configure (an open-ended set),
+    # so the destination cannot be enumerated here. The link-local range
+    # (cloud metadata, 169.254.169.254) and the RFC 1918 ranges are carved
+    # out so a tenant-supplied URL cannot reach the node, the metadata
+    # service or other in-cluster workloads (the gateway also refuses these
+    # at dial time -- see egress.* in docs/configuration.md). If a connector
+    # must reach a private service, add an explicit rule for it. Narrow this
+    # further, or route it through an egress proxy, once you know your
+    # destinations.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80

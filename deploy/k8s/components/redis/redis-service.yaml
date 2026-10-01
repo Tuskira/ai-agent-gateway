@@ -1,0 +1,17 @@
+# Name matches GATEWAY_REDIS_ADDR in gateway-mcp-redis-patch.yaml
+# (redis:6379 resolves within the ai-gateway namespace).
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

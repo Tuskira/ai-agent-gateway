@@ -1,0 +1,13 @@
+AI Agent Gateway
+Copyright 2026 Tuskira, Inc.
+
+This product includes software developed at Tuskira (https://tuskira.ai).
+Licensed under the Apache License, Version 2.0; see LICENSE.
+
+AI Agent Gateway and Tuskira are trademarks of Tuskira, Inc. See
+TRADEMARKS.md for how you may use them, and info@tuskira.ai for
+trademark questions.
+
+Third-party components and their licenses are listed in
+THIRD_PARTY_NOTICES (release archives), /licenses in the container image,
+and /licenses.txt in the console.

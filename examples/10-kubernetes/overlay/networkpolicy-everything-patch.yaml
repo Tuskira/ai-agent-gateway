@@ -1,0 +1,19 @@
+# deploy/k8s/base/networkpolicy.yaml only lets gateway pods egress to
+# DNS, Postgres, ClickHouse and port 443. An in-cluster MCP server on
+# any other port -- like this example's "everything" server on 3001 --
+# is blocked, and kind's kindnet DOES enforce NetworkPolicy (kind >= 0.20
+# embeds kube-network-policies), so the connector handshake would just
+# time out. APPEND one egress rule for it (a JSON patch: a strategic
+# merge would replace the whole egress list, since NetworkPolicy rules
+# have no merge key). Do the same for every connector you run inside the
+# cluster in a real deployment.
+- op: add
+  path: /spec/egress/-
+  value:
+    to:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: everything
+    ports:
+      - protocol: TCP
+        port: 3001

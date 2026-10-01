@@ -1,0 +1,50 @@
+# Codecov configuration: https://docs.codecov.com/docs/codecov-yaml
+#
+# .github/workflows/ci.yml uploads coverage per test layer as a flag --
+# unit (go job), integration (Postgres/Redis/ClickHouse conformance), e2e
+# (test/e2e) and web (Vitest) -- so each can be badged separately
+# (?flag=<name> on the badge URL); the headline number merges all of them.
+
+coverage:
+  precision: 1
+  round: down
+  status:
+    # Report only for now: don't fail PRs on coverage until a baseline
+    # exists.
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "condensed_header, diff, flags"
+  require_changes: true
+
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: unit
+      paths: [cmd/, internal/, pkg/]
+    - name: integration
+      paths: [cmd/, internal/, pkg/]
+    - name: e2e
+      paths: [cmd/, internal/, pkg/]
+    - name: web
+      paths: [web/src/]
+
+# Test helpers, fakes and generated/entrypoint code aren't product code;
+# counting them only drags the number down.
+ignore:
+  - "**/*_test.go"
+  - "cmd/gateway/**"
+  - "test/**"
+  - "internal/dataplane/dptest/**"
+  - "pkg/llm/llmtest/**"
+  - "pkg/session/sessiontest/**"
+  - "pkg/store/storetest/**"
+  - "web/src/test/**"
+  - "web/src/**/*.test.ts"
+  - "web/src/**/*.test.tsx"

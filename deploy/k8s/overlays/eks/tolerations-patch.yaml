@@ -1,0 +1,10 @@
+# Tolerate the cluster's dedicated-node taint (<key>:NoSchedule) so the
+# scheduler may place these pods on those node pools; it does not force
+# them there. Applied to every Deployment (the three planes and Redis) and
+# to the gateway-migrate Job.
+- op: add
+  path: /spec/template/spec/tolerations
+  value:
+    - key: ${GW_NODE_TOLERATION_KEY}
+      operator: Exists
+      effect: NoSchedule

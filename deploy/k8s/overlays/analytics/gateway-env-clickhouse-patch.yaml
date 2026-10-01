@@ -1,0 +1,16 @@
+# Turns on the ClickHouse sink (feeds the admin console's Overview/LLM Logs
+# pages, GET /api/v1/analytics/*) for all three plane Deployments at once.
+# This works by patching the shared gateway-env ConfigMap they already
+# consume via envFrom (see ../../base/deployment-*.yaml), rather than
+# patching each Deployment individually -- same effect, no repetition.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-env
+  namespace: ai-gateway
+data:
+  GATEWAY_SINKS_CLICKHOUSE_ENABLED: "true"
+  GATEWAY_SINKS_CLICKHOUSE_HOST: "clickhouse"
+  GATEWAY_SINKS_CLICKHOUSE_PORT: "9000"
+  GATEWAY_SINKS_CLICKHOUSE_DATABASE: "gateway"
+  GATEWAY_SINKS_CLICKHOUSE_USERNAME: "default"

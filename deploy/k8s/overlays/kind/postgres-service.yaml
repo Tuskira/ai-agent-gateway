@@ -1,0 +1,17 @@
+# Headless, so the StatefulSet gets stable DNS; name matches the
+# GATEWAY_DATABASE_HOST value patched in gateway-env-dev-patch.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

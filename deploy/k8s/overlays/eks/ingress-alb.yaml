@@ -1,0 +1,65 @@
+# One Ingress, three hosts, on an INTERNAL ALB. Unlike ingress-nginx
+# (base/ingress*.yaml), the ALB has no per-Ingress read timeout or
+# buffering to tune for the long-lived streams (MCP's GET /mcp/stream, the
+# llm plane's streamed completions): the ALB never buffers, and its only
+# stream-relevant knob is the load-balancer-wide idle timeout below.
+#
+# group.name joins an existing shared ALB instead of creating a new one.
+# Load-balancer-level settings (scheme, subnets, idle timeout, listeners)
+# must match every other Ingress in that group exactly, or the controller
+# refuses to reconcile the group -- keep them in sync with the group.
+# Target-group settings (health checks, drain) are per Service, in
+# services-alb-patch.yaml.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: ai-gateway
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.name: ${GW_ALB_GROUP_NAME}
+    alb.ingress.kubernetes.io/subnets: ${GW_ALB_SUBNETS}
+    alb.ingress.kubernetes.io/certificate-arn: ${GW_ALB_CERT_ARN}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/ssl-policy: ${GW_ALB_SSL_POLICY}
+    # Must be >= llm_proxy.limits.max_stream_duration (15m) or the ALB
+    # cuts idle-looking streams first.
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=${GW_ALB_IDLE_TIMEOUT}
+spec:
+  ingressClassName: alb
+  rules:
+    - host: ${GW_API_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-api
+                port:
+                  number: 8081
+    - host: ${GW_MCP_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-mcp
+                port:
+                  number: 8080
+    - host: ${GW_LLM_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-llm
+                port:
+                  number: 8082

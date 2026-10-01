@@ -1,0 +1,36 @@
+# Compose overlay for example 09: mounts config.roles.yaml into the gateway
+# container and points CONFIG_PATH at it. The shipped deploy/docker-compose.yml
+# has no config-file mount by design (all common knobs are GATEWAY_* env
+# vars); auth.roles is a map, which overlayEnv can't reach
+# (internal/config/config.go), so it needs a real file (the auth.rate_limit
+# tuning rides along in it, though GATEWAY_AUTH_RATE_LIMIT_* would also
+# work) -- this overlay adds one without touching the shipped compose file. cmd/gateway/main.go's run() reads CONFIG_PATH via
+# flag.String("config", os.Getenv("CONFIG_PATH"), ...), so setting the env
+# var alone (no command/entrypoint override) is enough.
+#
+# Usage (run.sh does this itself; shown here for reference):
+#   docker compose \
+#     -f deploy/docker-compose.yml \
+#     -f examples/09-roles-keys-and-rate-limits/docker-compose.roles.yml \
+#     up -d gateway
+#
+# Compose recreates the "gateway" container automatically once its merged
+# config (env + volumes) changes -- no --force-recreate needed, either to
+# apply this overlay or to drop it again afterwards (plain
+# `docker compose -f deploy/docker-compose.yml up -d gateway`, no second
+# -f, is enough to revert to the unmounted, env-only config).
+
+services:
+  gateway:
+    environment:
+      CONFIG_PATH: /etc/gateway/config.yaml
+    volumes:
+      # Relative paths in an overlay file resolve against the PROJECT
+      # directory, which Compose takes from the FIRST -f file
+      # (deploy/docker-compose.yml, i.e. deploy/) -- not against this
+      # overlay file's own directory. Hence "../examples/...", one level
+      # up from deploy/. Verified with:
+      #   docker compose -f deploy/docker-compose.yml \
+      #     -f examples/09-roles-keys-and-rate-limits/docker-compose.roles.yml \
+      #     config
+      - ../examples/09-roles-keys-and-rate-limits/config.roles.yaml:/etc/gateway/config.yaml:ro

@@ -1,0 +1,26 @@
+# Local testing overlay: `kubectl apply -k deploy/k8s/overlays/kind`.
+# Adds an in-cluster dev Postgres, swaps in dev secrets/image, and swaps
+# Ingress for NodePort Services (see delete-ingresses-patch.yaml and
+# services-nodeport-patch.yaml). mcp stays at replicas: 1 -- that's the
+# base Deployment's own default (see ../../base/deployment-mcp.yaml), not
+# something this overlay needs to set.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ai-gateway
+
+resources:
+  - ../../base
+  - postgres-statefulset.yaml
+  - postgres-service.yaml
+
+patches:
+  - path: secret-dev-patch.yaml
+  - path: gateway-env-dev-patch.yaml
+  - path: services-nodeport-patch.yaml
+  - path: delete-ingresses-patch.yaml
+
+images:
+  - name: ghcr.io/tuskira/tusk-ai-secured-gateway
+    newName: tusk-ai-secured-gateway
+    newTag: dev

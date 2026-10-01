@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ai-gateway
+
+resources:
+  - namespace.yaml
+  - configmap-config.yaml
+  - configmap-env.yaml
+  - secret.yaml
+  - deployment-api.yaml
+  - deployment-mcp.yaml
+  - deployment-llm.yaml
+  - service-api.yaml
+  - service-mcp.yaml
+  - service-llm.yaml
+  - job-migrate.yaml
+  - hpa-api.yaml
+  - hpa-llm.yaml
+  - pdb-api.yaml
+  - pdb-mcp.yaml
+  - pdb-llm.yaml
+  - networkpolicy.yaml
+  - ingress.yaml
+  - ingress-stream.yaml
+
+# Pin the published release image. The raw Deployment/Job manifests keep
+# `:latest` as a literal (so they're still usable standalone or as docs),
+# and this overlay-level transform is what actually sets the tag everyone
+# building through kustomize gets. Bump this on every release -- see
+# CONTRIBUTING.md's release process. The overlays that already override
+# this image (kind: a locally built "dev" tag; eks: ${GW_IMAGE_TAG} from
+# the deploy script) take precedence over this for their own builds, so
+# this only changes what base/, analytics/ and redis/ render.
+images:
+  - name: ghcr.io/tuskira/tusk-ai-secured-gateway
+    newTag: "0.3.0"

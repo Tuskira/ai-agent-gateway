@@ -1,0 +1,183 @@
+{
+  "wire": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 1024,
+    "stream": true,
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "Get the current weather in a given location",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The city and state, e.g. San Francisco, CA"
+            }
+          },
+          "required": [
+            "location"
+          ]
+        },
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      },
+      {
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "max_uses": 5
+      }
+    ],
+    "tool_choice": {
+      "type": "auto",
+      "disable_parallel_tool_use": true
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": "What's the weather like in San Francisco?"
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll check the weather."
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01A09q90qw90lq917835lq9",
+            "name": "get_weather",
+            "input": {
+              "location": "San Francisco, CA"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01A09q90qw90lq917835lq9",
+            "content": "15 degrees",
+            "is_error": false
+          },
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_02",
+            "is_error": true,
+            "content": [
+              {
+                "type": "text",
+                "text": "timeout"
+              },
+              {
+                "type": "tool_reference",
+                "tool_name": "get_forecast"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "neutral": {
+    "model": "claude-sonnet-4-5",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What's the weather like in San Francisco?"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll check the weather."
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01A09q90qw90lq917835lq9",
+            "name": "get_weather",
+            "input": {
+              "location": "San Francisco, CA"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01A09q90qw90lq917835lq9",
+            "content": [
+              {
+                "type": "text",
+                "text": "15 degrees"
+              }
+            ]
+          },
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_02",
+            "is_error": true,
+            "content": [
+              {
+                "type": "text",
+                "text": "timeout"
+              },
+              {
+                "type": "tool_reference",
+                "tool_name": "get_forecast"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "Get the current weather in a given location",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The city and state, e.g. San Francisco, CA"
+            }
+          },
+          "required": [
+            "location"
+          ]
+        },
+        "extra": {
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      },
+      {
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "extra": {
+          "max_uses": 5
+        }
+      }
+    ],
+    "tool_choice": {
+      "type": "auto",
+      "disable_parallel_tool_use": true
+    },
+    "max_tokens": 1024,
+    "stream": true
+  }
+}

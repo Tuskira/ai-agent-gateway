@@ -1,0 +1,169 @@
+# Local stack: Postgres + the gateway (built from source). ClickHouse, Adminer,
+# and the analytics read-path come up under the "analytics" profile — one file,
+# no duplicate. Every value below is overridable via the shell env (${VAR:-…}).
+#
+# Quickstart (Postgres-only; access logs to stdout, /api/v1/analytics/* → 404):
+#   docker compose -f deploy/docker-compose.yml up --build
+#
+# With analytics (ClickHouse sink + Adminer on :8090 + LLM-logs dashboard):
+#   GATEWAY_SINKS_CLICKHOUSE_ENABLED=true \
+#     docker compose -f deploy/docker-compose.yml --profile analytics up --build
+#
+# With MCP sessions in Redis (what lets gateway-mcp run more than one replica;
+# a single compose gateway just exercises the store):
+#   GATEWAY_SESSIONS_STORE=redis GATEWAY_REDIS_ENABLED=true \
+#     docker compose -f deploy/docker-compose.yml --profile redis up --build
+#
+# Live Bedrock (Flow C) additionally needs AWS creds in the env:
+#   eval "$(aws configure export-credentials --profile <p> --format env)"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
+      POSTGRES_DB: gateway
+    volumes:
+      - gateway-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # ClickHouse backs the sinks.clickhouse log sink and GET /api/v1/analytics/*.
+  # Started only under the "analytics" profile; the default quickstart never
+  # pulls or starts it.
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    profiles: ["analytics"]
+    environment:
+      CLICKHOUSE_DB: gateway
+      CLICKHOUSE_USER: default
+      # Dev default; override with CLICKHOUSE_PASSWORD for anything real.
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-local}
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - gateway-clickhouse-data:/var/lib/clickhouse
+    # Not published to the host by default: the gateway reaches ClickHouse
+    # over the compose network, and 8123/9000 are commonly taken by a local
+    # ClickHouse. Uncomment to query it from the host.
+    # ports:
+    #   - "127.0.0.1:8123:8123" # HTTP
+    #   - "127.0.0.1:9000:9000" # native
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "localhost:8123/ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Valkey (BSD-3, Redis-compatible) backs sessions.store: redis (MCP
+  # sessions + the cross-replica tools/list_changed relay). Started only
+  # under the "redis" profile, and not published to the host: 6379 is
+  # commonly taken by a local Redis.
+  redis:
+    image: valkey/valkey:9.0-alpine
+    profiles: ["redis"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Web DB browser for the Postgres capture ledger (http://localhost:8090).
+  adminer:
+    image: adminer:4
+    profiles: ["analytics"]
+    ports:
+      - "127.0.0.1:8090:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    # Retries if the ClickHouse sink or the Redis session store is enabled
+    # before that service is ready (gateway depends only on Postgres so the
+    # default profile stays CH- and Redis-free).
+    restart: on-failure
+    depends_on:
+      postgres: { condition: service_healthy }
+    # Lets the gateway container reach an MCP server running on the host
+    # (e.g. `npx @modelcontextprotocol/server-everything`) via
+    # host.docker.internal. Docker Desktop (macOS/Windows) already
+    # provides this mapping; on Linux it's only added with this entry.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # planes — all on by default; override any to trim (e.g. LLM-only)
+      GATEWAY_MCP_ENABLED: "${GATEWAY_MCP_ENABLED:-true}"
+      # Off by default: a caller with no X-Agent-Profile-Name header gets
+      # every tool its tenant owns. Turn on to make an agent profile
+      # mandatory on every MCP request (see examples/05-profiles).
+      GATEWAY_MCP_REQUIRE_PROFILE: "${GATEWAY_MCP_REQUIRE_PROFILE:-false}"
+      GATEWAY_API_ENABLED: "${GATEWAY_API_ENABLED:-true}"
+      GATEWAY_LLM_PROXY_ENABLED: "${GATEWAY_LLM_PROXY_ENABLED:-true}"
+      # Outbound (SSRF) policy: internal addresses are blocked by default. This
+      # LOCAL stack opts in to the host machine (an MCP server or model server
+      # on your laptop) -- remove both lines for anything shared.
+      GATEWAY_EGRESS_ALLOWED_HOSTS: "${GATEWAY_EGRESS_ALLOWED_HOSTS:-host.docker.internal}"
+      GATEWAY_EGRESS_ALLOWED_CIDRS: "${GATEWAY_EGRESS_ALLOWED_CIDRS:-127.0.0.0/8,::1/128}"
+      # store + auth
+      GATEWAY_DATABASE_HOST: postgres
+      GATEWAY_DATABASE_SSL_MODE: disable
+      GATEWAY_DATABASE_MIGRATE: "true"
+      GATEWAY_AUTH_API_KEYS_ENABLED: "true"
+      # Dev convenience: trust X-Forwarded-For from the Docker bridge range
+      # (a reverse proxy in front of the stack, or Docker's own NAT of host
+      # clients, connects from there). Narrow or clear this -- trusted peers
+      # can claim any client IP -- before exposing the stack to a network.
+      GATEWAY_API_TRUSTED_PROXIES: "${GATEWAY_API_TRUSTED_PROXIES:-172.16.0.0/12}"
+      # MCP sessions — in-process by default; "redis" needs the redis profile
+      # and GATEWAY_REDIS_ENABLED=true
+      GATEWAY_SESSIONS_STORE: "${GATEWAY_SESSIONS_STORE:-memory}"
+      GATEWAY_REDIS_ENABLED: "${GATEWAY_REDIS_ENABLED:-false}"
+      GATEWAY_REDIS_ADDR: "${GATEWAY_REDIS_ADDR:-redis:6379}"
+      GATEWAY_REDIS_PASSWORD: "${GATEWAY_REDIS_PASSWORD:-}"
+      # LLM providers (native passthrough, BYOK)
+      GATEWAY_LLM_PROXY_BEDROCK_ENABLED: "${GATEWAY_LLM_PROXY_BEDROCK_ENABLED:-true}"
+      GATEWAY_LLM_PROXY_BEDROCK_REGION: "${GATEWAY_LLM_PROXY_BEDROCK_REGION:-us-east-1}"
+      GATEWAY_LLM_PROXY_PROVIDERS_OPENAI_ENABLED: "${GATEWAY_LLM_PROXY_PROVIDERS_OPENAI_ENABLED:-true}"
+      GATEWAY_LLM_PROXY_PROVIDERS_GEMINI_ENABLED: "${GATEWAY_LLM_PROXY_PROVIDERS_GEMINI_ENABLED:-true}"
+      # capture — Postgres is the lossless ledger; bodies on here (code default off)
+      GATEWAY_LLM_PROXY_CAPTURE_STORE: "${GATEWAY_LLM_PROXY_CAPTURE_STORE:-postgres}"
+      GATEWAY_LLM_PROXY_CAPTURE_STORE_BODIES: "${GATEWAY_LLM_PROXY_CAPTURE_STORE_BODIES:-true}"
+      # MCP access-log request/response bodies, default-on like the LLM plane
+      GATEWAY_CAPTURE_STORE_BODIES: "${GATEWAY_CAPTURE_STORE_BODIES:-true}"
+      # shared analytics sinks — stdout on; ClickHouse off unless enabled with the
+      # analytics profile (compose profiles gate services, not env values)
+      GATEWAY_SINKS_STDOUT_ENABLED: "${GATEWAY_SINKS_STDOUT_ENABLED:-true}"
+      # Bodies are stored for the console but NOT printed to container logs
+      # (prompts/completions would reach any log shipper). Set true only for a
+      # throwaway debugging session.
+      GATEWAY_SINKS_STDOUT_INCLUDE_BODIES: "${GATEWAY_SINKS_STDOUT_INCLUDE_BODIES:-false}"
+      GATEWAY_SINKS_CLICKHOUSE_ENABLED: "${GATEWAY_SINKS_CLICKHOUSE_ENABLED:-false}"
+      GATEWAY_SINKS_CLICKHOUSE_HOST: clickhouse
+      GATEWAY_SINKS_CLICKHOUSE_PORT: "9000"
+      GATEWAY_SINKS_CLICKHOUSE_DATABASE: gateway
+      GATEWAY_SINKS_CLICKHOUSE_USERNAME: default
+      GATEWAY_SINKS_CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-local}"
+      # DEV-ONLY DEFAULT KEY — DO NOT USE OUTSIDE THIS LOCAL STACK. A fixed,
+      # publicly-visible base64 AES-256 key so `docker compose up` works with zero
+      # setup; override GATEWAY_MASTER_KEY (openssl rand -base64 32) for real use.
+      GATEWAY_MASTER_KEY: ${GATEWAY_MASTER_KEY:-WZEHr2ma0e+D+zVJrkG3ILhaBt09wZFRjZ4jVhzLHfA=}
+      # Bedrock Flow C creds (gateway signs with its own identity), passed through
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    ports:
+      - "127.0.0.1:8080:8080" # mcp plane
+      - "127.0.0.1:8081:8081" # api plane (analytics/llm-logs read side)
+      - "127.0.0.1:8082:8082" # llm plane
+
+volumes:
+  gateway-postgres-data:
+  gateway-clickhouse-data:

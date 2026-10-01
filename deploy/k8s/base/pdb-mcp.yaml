@@ -1,0 +1,23 @@
+# maxUnavailable: 1 (rather than minAvailable: 1) on purpose: with mcp at
+# a single replica (base's default, see deployment-mcp.yaml), minAvailable:
+# 1 would permit zero voluntary evictions and permanently block node
+# drains/cordons. maxUnavailable: 1 still allows the one replica to be
+# evicted -- accepting a brief MCP outage -- rather than wedging cluster
+# maintenance. It stays right when ../overlays/redis raises mcp to 2
+# replicas (Redis-backed sessions): one replica then stays up through an
+# eviction.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gateway-mcp
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/component: mcp
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+      app.kubernetes.io/component: mcp

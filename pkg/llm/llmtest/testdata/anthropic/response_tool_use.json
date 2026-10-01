@@ -1,0 +1,75 @@
+{
+  "neutral": {
+    "id": "msg_01Aq9w938a90dw8q",
+    "model": "claude-sonnet-4-5",
+    "role": "assistant",
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "I need the weather.",
+        "signature": "EqQBCgIYAhIM"
+      },
+      {
+        "type": "text",
+        "text": "I'll check."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_01A09q90qw90lq917835lq9",
+        "name": "get_weather",
+        "input": {
+          "location": "San Francisco, CA"
+        }
+      }
+    ],
+    "stop_reason": "tool_use",
+    "usage": {
+      "input_tokens": 472,
+      "output_tokens": 89,
+      "cache_read_tokens": 100,
+      "cache_write_tokens": 50,
+      "cache_write_1h_tokens": 20,
+      "web_search_requests": 1
+    }
+  },
+  "wire": {
+    "id": "msg_01Aq9w938a90dw8q",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-5",
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "I need the weather.",
+        "signature": "EqQBCgIYAhIM"
+      },
+      {
+        "type": "text",
+        "text": "I'll check."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_01A09q90qw90lq917835lq9",
+        "name": "get_weather",
+        "input": {
+          "location": "San Francisco, CA"
+        }
+      }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 472,
+      "output_tokens": 89,
+      "cache_read_input_tokens": 100,
+      "cache_creation_input_tokens": 50,
+      "cache_creation": {
+        "ephemeral_5m_input_tokens": 30,
+        "ephemeral_1h_input_tokens": 20
+      },
+      "server_tool_use": {
+        "web_search_requests": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+# Point at the in-cluster dev Postgres StatefulSet's headless Service, and
+# disable TLS to it (it doesn't speak TLS).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-env
+  namespace: ai-gateway
+data:
+  GATEWAY_DATABASE_HOST: "postgres"
+  GATEWAY_DATABASE_SSL_MODE: "disable"
+  # kind's default pod CIDR (networking.podSubnet): ingress-nginx runs as a
+  # pod, so it connects from here. If your kind config changes podSubnet (or
+  # you use another local cluster), set this to that CIDR.
+  GATEWAY_API_TRUSTED_PROXIES: "10.244.0.0/16"

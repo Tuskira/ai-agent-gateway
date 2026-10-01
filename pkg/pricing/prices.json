@@ -1,0 +1,51 @@
+{
+  "_note": "Approximate published list prices as of 2026-09-25, in USD per MILLION tokens. Verify against each provider's pricing page before relying on these for billing. Keys are the normalized model id: Anthropic direct ids may be undated aliases (a dated id falls back to its alias); Bedrock ids are the inference-profile id with the region prefix (us./eu./...) stripped, and a dated Bedrock 'anthropic.<name>-YYYYMMDD-vN:M' falls back to the '<name>' alias. OpenAI dashed-date snapshots (gpt-4o-2024-08-06) fall back to the base id. A model not listed here is stored with cost_usd = NULL, never a guessed price. Notes: Gemini output already bills thinking tokens as output (Usage.Output = candidates + thoughts) and toolUsePromptTokenCount is added to input; 'above_200k' is the long-context override applied to the WHOLE request once the prompt exceeds 200K tokens (Sonnet 4.5, Gemini 2.5/3.x Pro). Anthropic 1-hour cache writes bill at 2x base input (handled in code, no field needed). 'priority'/'flex' replace the rates for a call served on that OpenAI/Gemini service tier; 'fast_multiplier'/'us_geo_multiplier' scale an Anthropic call reported as speed fast / inference_geo us. Bedrock keys may be region-specific: an exact inference-profile id (eu.amazon.nova-lite-v1:0) or '<region>/<id>' (us-gov-west-1/...) wins over the prefix-stripped id. 'regional_premium' (Claude 4.5+) prices Bedrock geographic inference profiles (us./eu./apac./au./jp.) at 1.1x and GovCloud (us-gov.) at 1.2x; global. and bare in-region ids bill the listed rate (GovCloud regions 1.2x). gemini-3.x carries an intro rate through 2026-12-31. Current Claude 5-family >200K tiers are not published separately, so those models are flat pending confirmation.",
+  "models": {
+    "claude-fable-5-1": {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_write": 12.50, "regional_premium": true, "us_geo_multiplier": 1.1},
+    "claude-opus-5-5":  {"input": 4.0,  "output": 20.0, "cache_read": 0.20, "cache_write": 5.00, "regional_premium": true, "fast_multiplier": 2.0, "us_geo_multiplier": 1.1},
+    "claude-sonnet-5":  {"input": 2.0,  "output": 10.0, "cache_read": 0.20, "cache_write": 2.50, "regional_premium": true, "us_geo_multiplier": 1.1},
+    "claude-haiku-4-5": {"input": 1.0,  "output": 5.0,  "cache_read": 0.10, "cache_write": 1.25, "regional_premium": true},
+
+    "claude-sonnet-4-5": {"input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write": 3.75,
+                          "regional_premium": true,
+                          "above_200k": {"input": 6.0, "output": 22.50, "cache_read": 0.60, "cache_write": 7.50}},
+    "claude-opus-4-1":   {"input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write": 18.75},
+
+    "anthropic.claude-haiku-4-5-20251001-v1:0":  {"input": 1.0, "output": 5.0,  "cache_read": 0.10, "cache_write": 1.25, "regional_premium": true},
+    "anthropic.claude-sonnet-4-5-20250929-v1:0": {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_write": 3.75,
+                          "regional_premium": true,
+                          "above_200k": {"input": 6.0, "output": 22.50, "cache_read": 0.60, "cache_write": 7.50}},
+
+    "amazon.nova-lite-v1:0":  {"input": 0.06,  "output": 0.24, "cache_read": 0.015,   "cache_write": 0.06},
+    "amazon.nova-micro-v1:0": {"input": 0.035, "output": 0.14, "cache_read": 0.00875, "cache_write": 0.035},
+    "eu.amazon.nova-lite-v1:0":    {"input": 0.078, "output": 0.312, "cache_read": 0.0195,  "cache_write": 0.078},
+    "eu.amazon.nova-micro-v1:0":   {"input": 0.046, "output": 0.184, "cache_read": 0.0115,  "cache_write": 0.046},
+    "apac.amazon.nova-lite-v1:0":  {"input": 0.063, "output": 0.252, "cache_read": 0.01575, "cache_write": 0.063},
+    "apac.amazon.nova-micro-v1:0": {"input": 0.037, "output": 0.148, "cache_read": 0.00925, "cache_write": 0.037},
+    "us-gov-west-1/amazon.nova-lite-v1:0":  {"input": 0.072, "output": 0.288, "cache_read": 0.018,  "cache_write": 0.072},
+    "us-gov-west-1/amazon.nova-micro-v1:0": {"input": 0.042, "output": 0.168, "cache_read": 0.0105, "cache_write": 0.042},
+
+    "gpt-4o":      {"input": 2.50, "output": 10.0, "cache_read": 1.25,  "cache_write": 0,
+                    "priority": {"input": 4.25, "output": 17.0, "cache_read": 2.125, "cache_write": 0}},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60, "cache_read": 0.075, "cache_write": 0,
+                    "priority": {"input": 0.25, "output": 1.00, "cache_read": 0.125, "cache_write": 0}},
+
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50, "cache_read": 0.03,  "cache_write": 0,
+                         "priority": {"input": 0.54, "output": 4.50, "cache_read": 0.054, "cache_write": 0},
+                         "flex":     {"input": 0.15, "output": 1.25, "cache_read": 0.03,  "cache_write": 0}},
+    "gemini-2.5-pro":   {"input": 1.25, "output": 10.0, "cache_read": 0.125, "cache_write": 0,
+                         "priority": {"input": 2.25, "output": 18.0, "cache_read": 0.225, "cache_write": 0,
+                                      "above_200k": {"input": 4.50, "output": 27.0, "cache_read": 0.45, "cache_write": 0}},
+                         "flex":     {"input": 0.625, "output": 5.0, "cache_read": 0.125, "cache_write": 0},
+                         "above_200k": {"input": 2.50, "output": 15.0, "cache_read": 0.25, "cache_write": 0}},
+
+    "gemini-3.8-flash":       {"input": 0.75, "output": 3.75, "cache_read": 0.075, "cache_write": 0,
+                               "priority": {"input": 1.35,  "output": 6.75,  "cache_read": 0.135,  "cache_write": 0},
+                               "flex":     {"input": 0.375, "output": 1.875, "cache_read": 0.075, "cache_write": 0}},
+    "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.0, "cache_read": 0.20,  "cache_write": 0,
+                               "priority": {"input": 3.60, "output": 21.6, "cache_read": 0.36, "cache_write": 0,
+                                      "above_200k": {"input": 7.20, "output": 32.4, "cache_read": 0.72, "cache_write": 0}},
+                               "flex":     {"input": 1.00, "output": 6.0, "cache_read": 0.20, "cache_write": 0},
+                               "above_200k": {"input": 4.00, "output": 18.0, "cache_read": 0.40, "cache_write": 0}}
+  }
+}

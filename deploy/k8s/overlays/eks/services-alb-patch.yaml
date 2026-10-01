@@ -1,0 +1,30 @@
+# Target-group settings live on each Service, so each plane gets its own
+# health check path (the ALB's default "/" is not a health endpoint on
+# any plane). gateway-llm also gets a deregistration delay matching its
+# 900s terminationGracePeriodSeconds, so a target being drained keeps
+# serving in-flight streamed completions instead of being cut at the
+# ALB's 300s default.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-api
+  namespace: ai-gateway
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /api/v1/health
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-mcp
+  namespace: ai-gateway
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-llm
+  namespace: ai-gateway
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=900

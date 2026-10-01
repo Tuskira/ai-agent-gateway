@@ -1,0 +1,66 @@
+# gitleaks config for tusk-ai-secured-gateway.
+#
+# Extends gitleaks' built-in default ruleset (AWS keys, private keys,
+# generic high-entropy secrets, etc.) and adds one project-specific rule
+# for the gateway's own API key format.
+#
+# Allowlists (gitleaks >= 8.25 array form, one table per entry):
+#   - "Documented, git-committed local dev-only defaults" covers the
+#     *documented, git-committed* local dev defaults in
+#     deploy/docker-compose.yml and configs/base/default.yml -- the
+#     Postgres/ClickHouse dev credentials and the fixed dev-only AES
+#     master key that `docker compose up` and `make run` use out of the
+#     box. These are intentionally public (they only unlock an
+#     ephemeral local compose stack) and are documented as such at the
+#     point they're defined; they are not secrets. It also covers the
+#     sample `gateway bootstrap-key` transcript in README.md, whose
+#     "gk_..." value is a fixed illustrative example, not a live key.
+#     Scoped to its files by path AND to the exact known value by
+#     regex (matchCondition = "AND"), so this can't mask a real secret
+#     landing anywhere else in the repo.
+#   - "internal/skills scanner test vectors" covers the intentional
+#     fake-secret test vectors in internal/skills/validate_test.go used
+#     to validate the skills secret scanner itself, not actual
+#     credentials. Scoped by path only: the whole point of that file is
+#     to exercise many different fake secret shapes, so there is no
+#     fixed regex list to also require -- the path scoping alone keeps
+#     this from masking a real secret anywhere else in the repo.
+title = "tusk-ai-secured-gateway gitleaks config"
+
+[extend]
+useDefault = true
+
+# Tuskira gateway API key, minted by `gateway bootstrap-key` / the admin
+# API (see internal/auth/apikey). Format: "gk_" + >=40 alphanumerics.
+[[rules]]
+id = "gateway-api-key"
+description = "Tuskira gateway API key (gk_...)"
+regex = '''gk_[A-Za-z0-9]{40,}'''
+tags = ["key", "gateway"]
+
+[[allowlists]]
+description = "Documented, git-committed local dev-only defaults (not secrets)"
+matchCondition = "AND"
+paths = [
+  '''deploy/docker-compose\.yml''',
+  '''configs/base/default\.yml''',
+  '''README\.md''',
+  '''deploy/k8s/overlays/kind/secret-dev-patch\.yaml''',
+]
+regexes = [
+  '''POSTGRES_(USER|PASSWORD|DB): gateway''',
+  '''user: gateway''',
+  '''password: gateway''',
+  '''database: gateway''',
+  '''CLICKHOUSE_PASSWORD:\s*\$\{CLICKHOUSE_PASSWORD:-local\}''',
+  '''GATEWAY_MASTER_KEY:\s*\$\{GATEWAY_MASTER_KEY:-WZEHr2ma0e\+D\+zVJrkG3ILhaBt09wZFRjZ4jVhzLHfA=\}''',
+  '''GATEWAY_MASTER_KEY:\s*"WZEHr2ma0e\+D\+zVJrkG3ILhaBt09wZFRjZ4jVhzLHfA="''',
+  '''GATEWAY_DATABASE_PASSWORD:\s*"gateway"''',
+  '''gk_clY4NZ0V1YpAX6UnbYqkFTDkeufRC0SXPKcp5atQhiS''',
+]
+
+[[allowlists]]
+description = "internal/skills scanner test vectors (fake secrets used to test the skills secret scan)"
+paths = [
+  '''internal/skills/validate_test\.go''',
+]

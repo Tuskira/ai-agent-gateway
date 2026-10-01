@@ -1,0 +1,74 @@
+# DEV-GRADE Valkey (BSD-3, a Redis-compatible server) for the session
+# store: one replica, no persistence, no auth, no TLS. Sessions are
+# cache-like state (a lost Redis costs every connected agent one
+# re-initialize, nothing more), so this is fine for a test cluster --
+# but in production use a managed Redis (ElastiCache, Memorystore,
+# Azure Cache, Upstash, ...) with auth and in-transit TLS:
+# set GATEWAY_REDIS_ADDR to it, GATEWAY_REDIS_PASSWORD in gateway-secrets,
+# GATEWAY_REDIS_TLS=true, and remove this file and redis-service.yaml
+# from kustomization.yaml. Redis Cluster mode is not supported yet
+# (redis.cluster: true is rejected at startup); a single primary with
+# replicas behind one endpoint is.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/part-of: ai-gateway
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: valkey/valkey:9.0-alpine
+          # No RDB/AOF: sessions are rebuilt by re-initializing, and a
+          # writable volume is one more thing a dev cluster does not need.
+          args: ["--save", "", "--appendonly", "no"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}

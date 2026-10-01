@@ -1,0 +1,21 @@
+# Headless; name matches GATEWAY_SINKS_CLICKHOUSE_HOST in
+# gateway-env-clickhouse-patch.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/name: clickhouse
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: clickhouse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: http
+    - name: native
+      port: 9000
+      targetPort: native

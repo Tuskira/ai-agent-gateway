@@ -1,0 +1,16 @@
+# Production shape: base + Redis-backed MCP sessions, so gateway-mcp runs
+# two replicas: `kubectl apply -k deploy/k8s/overlays/redis`.
+#
+# Everything Redis-related lives in ../../components/redis (a kustomize
+# Component), so the same pieces drop into any other overlay too --
+# overlays/kind-redis adds them to the kind overlay for local testing, and
+# your own overlay can list `../../components/redis` next to analytics.
+# See deploy/README.md, "Scaling per plane".
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/redis

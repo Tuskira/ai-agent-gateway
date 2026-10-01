@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tuskira AI Agent Gateway</title>
+    <meta name="description" content="Admin console for the Tuskira AI Agent Gateway." />
+    <!-- Inter (--font-ui / --font-display) and JetBrains Mono (--font-mono),
+         see src/styles/tokens.css, are self-hosted via @fontsource/* (see
+         src/main.tsx) rather than loaded from fonts.googleapis.com /
+         fonts.gstatic.com -- the console makes no request to a Google host.
+         The token stacks still fall back to system fonts (SF Pro, Segoe UI,
+         SF Mono, ui-monospace, ...) if a font file fails to load. -->
+    <!-- External (not inline) so the console's CSP script-src can stay a
+         plain 'self' with no per-script hash -- see
+         web/public/theme-init.js and internal/api/security_headers.go. -->
+    <script src="/theme-init.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,38 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    # errcheck and revive are intentionally NOT enabled here. Turning
+    # them on against the current tree (pre-dating this CI setup) trips
+    # 25 (errcheck) and 44 (revive) pre-existing findings -- mostly
+    # unchecked deferred Close() calls and exported symbols without doc
+    # comments -- none of which this change is allowed to touch (see
+    # .github/workflows/ci.yml scope). Re-enable once that cleanup lands
+    # in a dedicated PR against internal/**, pkg/**. Full finding list
+    # captured in the CI rollout notes.
+  exclusions:
+    rules:
+      # Pre-existing staticcheck findings (SA4000 identical left/right
+      # comparison; SA9003 empty branch) in test files outside this
+      # change's scope; excluded by path rather than disabling
+      # staticcheck for the whole repo.
+      - path: internal/auth/apikey/key_test\.go
+        linters:
+          - staticcheck
+        text: "SA4000"
+      - path: internal/auth/middleware_test\.go
+        linters:
+          - staticcheck
+        text: "SA9003"
+
+formatters:
+  enable:
+    - gofmt
+    # goimports (import-grouping) is intentionally NOT enabled: it flags
+    # 2 pre-existing files (cmd/gateway/main.go, internal/api/router.go)
+    # this change cannot edit. `gofmt -l` (required by the CI "go" job)
+    # already passes clean; goimports enforcement can return once those
+    # two files are regrouped in a source-touching PR.

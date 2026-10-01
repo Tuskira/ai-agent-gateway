@@ -1,0 +1,6 @@
+# See CONTRIBUTING.md for how reviews and PRs work.
+# Order matters: later patterns override earlier ones for matching paths.
+
+*                    @Tuskira/gateway-maintainers
+/web/                @Tuskira/gateway-maintainers
+/internal/llmplane/  @Tuskira/gateway-maintainers

@@ -1,0 +1,298 @@
+{
+  "_comment": "Shared by internal/api/handlers/models_contract_test.go (replays the requests through the real handlers and compares their answers with the responses here) and web/src/test/models.contract.test.tsx (checks the responses against the console's types and the requests against what the dialog sends). Regenerate responses: UPDATE_CONSOLE_FIXTURES=1 go test ./internal/api/handlers -run TestModels_ConsoleContract",
+  "create": {
+    "request": {
+      "name": "team-sonnet",
+      "description": "Team default",
+      "enabled": true,
+      "targets": [
+        {
+          "vendor": "anthropic",
+          "model": "claude-sonnet-4-5",
+          "base_url": "https://anthropic-proxy.internal",
+          "allow_caller_key": true
+        }
+      ],
+      "price": {
+        "input": 3,
+        "output": 15
+      },
+      "limits": {
+        "daily_usd": 5,
+        "rpm": 60
+      }
+    },
+    "status": 201,
+    "response": {
+      "created_at": "2026-01-01T00:00:00Z",
+      "description": "Team default",
+      "enabled": true,
+      "id": "model-2",
+      "limits": {
+        "daily_usd": 5,
+        "rpm": 60
+      },
+      "metadata": {},
+      "name": "team-sonnet",
+      "price": {
+        "input": 3,
+        "output": 15
+      },
+      "scope": "tenant",
+      "targets": [
+        {
+          "allow_caller_key": true,
+          "base_url": "https://anthropic-proxy.internal",
+          "model": "claude-sonnet-4-5",
+          "vendor": "anthropic"
+        }
+      ],
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  "seed": {
+    "request": {
+      "name": "local-coder",
+      "description": "Local model behind an OpenAI-compatible endpoint",
+      "targets": [
+        {
+          "vendor": "openai_compat",
+          "model": "qwen2.5:1.5b",
+          "base_url": "http://127.0.0.1:11434/v1",
+          "allow_caller_key": true,
+          "label": "ollama"
+        },
+        {
+          "vendor": "anthropic",
+          "model": "claude-haiku-4-5",
+          "credential": "anthropic-prod"
+        }
+      ],
+      "limits": {
+        "rpm": 5,
+        "max_tokens": 1024
+      }
+    },
+    "status": 201,
+    "response": {
+      "created_at": "2026-01-01T00:00:00Z",
+      "description": "Local model behind an OpenAI-compatible endpoint",
+      "enabled": true,
+      "id": "model-3",
+      "limits": {
+        "max_tokens": 1024,
+        "rpm": 5
+      },
+      "metadata": {},
+      "name": "local-coder",
+      "price": null,
+      "scope": "tenant",
+      "targets": [
+        {
+          "allow_caller_key": true,
+          "base_url": "http://127.0.0.1:11434/v1",
+          "label": "ollama",
+          "model": "qwen2.5:1.5b",
+          "vendor": "openai_compat"
+        },
+        {
+          "credential": "anthropic-prod",
+          "model": "claude-haiku-4-5",
+          "vendor": "anthropic"
+        }
+      ],
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  "list": {
+    "status": 200,
+    "response": {
+      "items": [
+        {
+          "created_at": "2026-01-01T00:00:00Z",
+          "description": "",
+          "enabled": true,
+          "id": "model-1",
+          "limits": null,
+          "metadata": {},
+          "name": "haiku",
+          "price": null,
+          "scope": "platform",
+          "targets": [
+            {
+              "model": "claude-haiku-4-5",
+              "vendor": "anthropic"
+            }
+          ],
+          "updated_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "created_at": "2026-01-01T00:00:00Z",
+          "description": "Local model behind an OpenAI-compatible endpoint",
+          "enabled": true,
+          "id": "model-3",
+          "limits": {
+            "max_tokens": 1024,
+            "rpm": 5
+          },
+          "metadata": {},
+          "name": "local-coder",
+          "price": null,
+          "scope": "tenant",
+          "targets": [
+            {
+              "allow_caller_key": true,
+              "base_url": "http://127.0.0.1:11434/v1",
+              "label": "ollama",
+              "model": "qwen2.5:1.5b",
+              "vendor": "openai_compat"
+            },
+            {
+              "credential": "anthropic-prod",
+              "model": "claude-haiku-4-5",
+              "vendor": "anthropic"
+            }
+          ],
+          "updated_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "created_at": "2026-01-01T00:00:00Z",
+          "description": "Team default",
+          "enabled": true,
+          "id": "model-2",
+          "limits": {
+            "daily_usd": 5,
+            "rpm": 60
+          },
+          "metadata": {},
+          "name": "team-sonnet",
+          "price": {
+            "input": 3,
+            "output": 15
+          },
+          "scope": "tenant",
+          "targets": [
+            {
+              "allow_caller_key": true,
+              "base_url": "https://anthropic-proxy.internal",
+              "model": "claude-sonnet-4-5",
+              "vendor": "anthropic"
+            }
+          ],
+          "updated_at": "2026-01-01T00:00:00Z"
+        }
+      ],
+      "total": 3
+    }
+  },
+  "update": {
+    "request": {
+      "name": "local-coder",
+      "description": "Local model, now budgeted",
+      "enabled": true,
+      "targets": [
+        {
+          "vendor": "openai_compat",
+          "model": "qwen2.5:1.5b",
+          "base_url": "http://127.0.0.1:11434/v1",
+          "allow_caller_key": true,
+          "label": "ollama"
+        },
+        {
+          "vendor": "anthropic",
+          "model": "claude-haiku-4-5",
+          "credential": "anthropic-prod"
+        }
+      ],
+      "limits": {
+        "monthly_usd": 20,
+        "rpm": 5,
+        "max_tokens": 1024
+      }
+    },
+    "status": 200,
+    "response": {
+      "created_at": "2026-01-01T00:00:00Z",
+      "description": "Local model, now budgeted",
+      "enabled": true,
+      "id": "model-3",
+      "limits": {
+        "max_tokens": 1024,
+        "monthly_usd": 20,
+        "rpm": 5
+      },
+      "metadata": {},
+      "name": "local-coder",
+      "price": null,
+      "scope": "tenant",
+      "targets": [
+        {
+          "allow_caller_key": true,
+          "base_url": "http://127.0.0.1:11434/v1",
+          "label": "ollama",
+          "model": "qwen2.5:1.5b",
+          "vendor": "openai_compat"
+        },
+        {
+          "credential": "anthropic-prod",
+          "model": "claude-haiku-4-5",
+          "vendor": "anthropic"
+        }
+      ],
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  "invalid": {
+    "request": {
+      "name": "both",
+      "targets": [
+        {
+          "vendor": "anthropic",
+          "model": "claude-haiku-4-5",
+          "credential": "anthropic-prod",
+          "allow_caller_key": true
+        }
+      ]
+    },
+    "status": 400,
+    "response": {
+      "error": {
+        "message": "targets[0]: allow_caller_key cannot be combined with credential (a target's credential always wins)",
+        "type": "validation_error"
+      }
+    }
+  },
+  "analytics_models": {
+    "status": 200,
+    "response": {
+      "highest_traffic": {
+        "name": "local-coder",
+        "tokens": 3400
+      },
+      "models": [
+        {
+          "calls": 12,
+          "cost_usd": 0.0421,
+          "last_seen": "2026-01-02T03:04:05Z",
+          "name": "local-coder",
+          "provider": "openai_compat",
+          "status": "active",
+          "tokens": 3400,
+          "used_by": 2
+        },
+        {
+          "calls": 1,
+          "cost_usd": null,
+          "last_seen": "2026-01-02T03:04:05Z",
+          "name": "claude-sonnet-4-5",
+          "provider": "anthropic",
+          "status": "active",
+          "tokens": 20,
+          "used_by": 1
+        }
+      ],
+      "range": "7d",
+      "total_models": 2
+    }
+  }
+}

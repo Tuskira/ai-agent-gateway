@@ -1,0 +1,49 @@
+# This example does NOT duplicate deploy/k8s -- it builds on top of the
+# kind overlay that already ships there. Before writing anything here, read
+# ../../../deploy/README.md and ../../../deploy/k8s/overlays/kind/: that
+# overlay already gives you a dev Postgres StatefulSet, dev secret values,
+# a local image tag, and NodePort Services in place of Ingress. This
+# overlay adds only the things it doesn't:
+#
+#   1. everything.yaml -- an in-cluster copy of the reference
+#      "@modelcontextprotocol/server-everything" MCP server, so this
+#      example has something to register as a connector. Kind nodes can't
+#      reliably reach a server started on the host the way 01-quickstart's
+#      compose stack does (host.docker.internal only resolves on Docker
+#      Desktop's kind driver) -- running it as a Deployment in the same
+#      cluster sidesteps that entirely.
+#   2. networkpolicy-everything-patch.yaml -- one extra egress rule so
+#      the gateway pods may reach that server on :3001 (the shipped
+#      NetworkPolicy allows only DNS/Postgres/ClickHouse/443, and kind
+#      enforces it).
+#   3. configmap-egress-patch.yaml -- allows the gateway to dial that
+#      in-cluster Service by name (egress.allowed_hosts); the SSRF guard
+#      otherwise refuses private addresses.
+#   4. a further `images:` tag override, from the kind overlay's own
+#      "dev" tag to "example" -- the tag run.sh builds locally by default
+#      -- so this example's image never gets confused with the tag someone
+#      testing deploy/k8s/overlays/kind directly (per deploy/README.md)
+#      would use, if they happen to reuse a node.
+#
+# Everything else -- namespace, the three plane Deployments, Services, the
+# migrate Job, HPAs, PDBs -- is inherited unchanged; the NetworkPolicy and
+# gateway-env ConfigMap get only the egress additions above.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ai-gateway
+
+resources:
+  - ../../../deploy/k8s/overlays/kind
+  - everything.yaml
+
+patches:
+  - path: configmap-egress-patch.yaml
+  - path: networkpolicy-everything-patch.yaml
+    target:
+      kind: NetworkPolicy
+      name: gateway
+
+images:
+  - name: tusk-ai-secured-gateway
+    newTag: example

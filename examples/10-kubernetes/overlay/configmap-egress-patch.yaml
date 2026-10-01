@@ -1,0 +1,12 @@
+# The gateway refuses to dial private addresses (SSRF guard, egress.* in
+# docs/configuration.md), and this example's connector is an in-cluster
+# Service. Allow that one hostname -- matched by name, so only dials to
+# "everything.ai-gateway.svc.cluster.local" are exempt, not the whole
+# cluster network.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-env
+  namespace: ai-gateway
+data:
+  GATEWAY_EGRESS_ALLOWED_HOSTS: "everything.ai-gateway.svc.cluster.local"

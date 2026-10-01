@@ -1,0 +1,54 @@
+# AWS EKS overlay: base + Redis-backed MCP sessions, exposed through an
+# INTERNAL Application Load Balancer (AWS Load Balancer Controller), with
+# the Namespace and the gateway-secrets Secret owned outside this tree
+# (infrastructure-as-code creates both before the first deploy).
+#
+# Nothing environment-specific is committed here:
+# every account-, network- or DNS-specific value is a ${GW_*} placeholder
+# that deploy/scripts/deploy_eks.sh fills in with envsubst after
+# `kubectl kustomize` renders this overlay. See README.md next to this
+# file for the full variable list, and for how to render it by hand.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ai-gateway
+
+resources:
+  - ../../base
+  - ingress-alb.yaml
+
+components:
+  # In-cluster Redis for MCP sessions, so gateway-mcp runs two replicas.
+  # Not a managed Redis on purpose: sessions.store: redis needs a single
+  # (non-cluster-mode) node -- see components/redis.
+  - ../../components/redis
+
+patches:
+  # Namespace + gateway-secrets are created by infrastructure-as-code, not
+  # by `kubectl apply` (the base Secret is a REPLACE_ME template).
+  - path: delete-externally-owned-patch.yaml
+  # nginx Ingresses from base are replaced by ingress-alb.yaml.
+  - path: delete-nginx-ingresses-patch.yaml
+  # Database connection details come from gateway-secrets.
+  - path: gateway-env-patch.yaml
+  # Per-plane ALB target-group health checks and drain timing.
+  - path: services-alb-patch.yaml
+  # Allow the ALB (target-type: ip) to reach the pods.
+  - path: networkpolicy-alb-patch.yaml
+    target:
+      kind: NetworkPolicy
+      name: gateway
+  # Let every workload schedule onto the cluster's tainted node pools.
+  - path: tolerations-patch.yaml
+    target:
+      kind: (Deployment|Job)
+  # Give the ALB time to deregister a pod before it gets SIGTERM.
+  - path: prestop-patch.yaml
+    target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name=gateway
+
+images:
+  - name: ghcr.io/tuskira/tusk-ai-secured-gateway
+    newName: ${GW_IMAGE_REPOSITORY}
+    newTag: ${GW_IMAGE_TAG}

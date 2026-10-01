@@ -1,0 +1,846 @@
+/**
+ * tusk-ai-secured-gateway docs (community.tuskira.ai) - visual theme.
+ *
+ * Taken from the Tuskira documentation site (documentation repo,
+ * src/css/custom.css) so both sites read as one: same tokens, fonts,
+ * navbar, sidebar, tables, code and footer. The parts specific to that
+ * site (nav icon sprites, landing-page hero, card grids, FAQ index,
+ * lightbox) are left out. Keep this in step with the source when the
+ * house theme changes.
+ */
+
+/* ---------- Fonts ---------- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* =========================================================
+   Color tokens - light mode
+   ========================================================= */
+:root {
+  /* Tuskira platform purple - accent / CTA color */
+  --ifm-color-primary: #7C3AED;
+  --ifm-color-primary-dark: #6D28D9;
+  --ifm-color-primary-darker: #5B21B6;
+  --ifm-color-primary-darkest: #4C1D95;
+  --ifm-color-primary-light: #8B5CF6;
+  --ifm-color-primary-lighter: #A78BFA;
+  --ifm-color-primary-lightest: #C4B5FD;
+
+  /* Surfaces - cool off-white, pure-white cards */
+  --tk-bg: #F7F8FA;
+  --tk-bg-elevated: #FFFFFF;
+  --tk-border: #E6E8EE;
+  --tk-border-soft: #EEF0F4;
+  --tk-text: #0F1729;
+  --tk-text-muted: #6B7280;
+  --tk-text-subtle: #9CA3AF;
+
+  /* Accents */
+  --tk-accent: #7C3AED;
+  --tk-accent-soft: rgba(124, 58, 237, 0.12);
+  --tk-accent-glow: rgba(124, 58, 237, 0.28);
+
+  /* Vivid chip palette , aligned to Tuskira platform (saturated, not pastel) */
+  --tk-chip-mint-bg: #6EE7B7;
+  --tk-chip-mint-fg: #047857;
+  --tk-chip-peach-bg: #FB923C;
+  --tk-chip-peach-fg: #9A3412;
+  --tk-chip-lavender-bg: #A78BFA;
+  --tk-chip-lavender-fg: #5B21B6;
+  --tk-chip-sky-bg: #38BDF8;
+  --tk-chip-sky-fg: #075985;
+  --tk-chip-rose-bg: #F472B6;
+  --tk-chip-rose-fg: #9F1239;
+  --tk-chip-gold-bg: #FBBF24;
+  --tk-chip-gold-fg: #92400E;
+
+  /* Typography */
+  --ifm-font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'SF Mono', Menlo, Monaco, Consolas, monospace;
+  --ifm-heading-font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ifm-heading-font-weight: 700;
+  --ifm-h1-font-size: 2.4rem;
+  --ifm-h2-font-size: 1.7rem;
+  --ifm-h3-font-size: 1.25rem;
+  --ifm-line-height-base: 1.7;
+  --ifm-paragraph-margin-bottom: 1.1rem;
+
+  /* Code */
+  --ifm-code-font-size: 88%;
+  --ifm-code-background: rgba(124, 58, 237, 0.07);
+  --ifm-code-color: #4C1D95;
+  --ifm-code-padding-horizontal: 0.4rem;
+  --ifm-code-padding-vertical: 0.15rem;
+  --docusaurus-highlighted-code-line-bg: rgba(124, 58, 237, 0.12);
+
+  /* Layout */
+  --ifm-background-color: var(--tk-bg);
+  --ifm-navbar-background-color: rgba(255, 255, 255, 0.78);
+  --ifm-navbar-shadow: 0 1px 0 rgba(28, 39, 79, 0.06);
+  --ifm-navbar-height: 4rem;
+  --ifm-toc-border-color: var(--tk-border-soft);
+  --ifm-hr-border-color: var(--tk-border-soft);
+  --ifm-table-border-color: var(--tk-border);
+  --ifm-table-stripe-background: #F6F8FB;
+  --ifm-link-color: var(--ifm-color-primary);
+  --ifm-link-hover-color: var(--ifm-color-primary-darker);
+  --ifm-link-decoration: none;
+  --ifm-link-hover-decoration: none;
+  --ifm-blockquote-color: var(--tk-text-muted);
+  --ifm-blockquote-border-color: var(--ifm-color-primary);
+  --ifm-menu-color: #2C3650;
+  --ifm-menu-color-active: #ffffff;
+  --ifm-menu-color-background-active: var(--ifm-color-primary);
+  --ifm-menu-color-background-hover: var(--tk-accent-soft);
+
+  --tk-shadow-sm: 0 1px 2px rgba(28, 39, 79, 0.05), 0 1px 3px rgba(28, 39, 79, 0.04);
+  --tk-shadow-md: 0 4px 12px rgba(28, 39, 79, 0.06), 0 2px 4px rgba(28, 39, 79, 0.04);
+  --tk-shadow-lg: 0 12px 32px rgba(28, 39, 79, 0.08), 0 4px 8px rgba(28, 39, 79, 0.04);
+  --tk-radius: 10px;
+  --tk-radius-lg: 14px;
+}
+
+/* =========================================================
+   Color tokens - dark mode
+   ========================================================= */
+[data-theme='dark'] {
+  --ifm-color-primary: #A78BFA;
+  --ifm-color-primary-dark: #8B5CF6;
+  --ifm-color-primary-darker: #7C3AED;
+  --ifm-color-primary-darkest: #6D28D9;
+  --ifm-color-primary-light: #B8A0FB;
+  --ifm-color-primary-lighter: #C4B5FD;
+  --ifm-color-primary-lightest: #DDD6FE;
+
+  --tk-bg: #0E1020;
+  --tk-bg-elevated: #15182A;
+  --tk-border: #262B40;
+  --tk-border-soft: #1C2034;
+  --tk-text: #E8EAF3;
+  --tk-text-muted: #9CA3B8;
+  --tk-text-subtle: #6B7290;
+
+  --tk-accent: #A78BFA;
+  --tk-accent-soft: rgba(167, 139, 250, 0.18);
+  --tk-accent-glow: rgba(167, 139, 250, 0.36);
+
+  --ifm-code-background: rgba(167, 139, 250, 0.10);
+  --ifm-code-color: #DDD6FE;
+  --docusaurus-highlighted-code-line-bg: rgba(167, 139, 250, 0.14);
+
+  --ifm-background-color: var(--tk-bg);
+  --ifm-navbar-background-color: rgba(14, 20, 36, 0.72);
+  --ifm-navbar-shadow: 0 1px 0 rgba(255, 255, 255, 0.05);
+  --ifm-toc-border-color: var(--tk-border-soft);
+  --ifm-hr-border-color: var(--tk-border-soft);
+  --ifm-table-border-color: var(--tk-border);
+  --ifm-table-stripe-background: rgba(255, 255, 255, 0.02);
+  --ifm-menu-color: #C5CFE3;
+  --ifm-menu-color-background-hover: var(--tk-accent-soft);
+
+  --tk-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --tk-shadow-md: 0 4px 14px rgba(0, 0, 0, 0.35);
+  --tk-shadow-lg: 0 14px 36px rgba(0, 0, 0, 0.45);
+}
+
+/* =========================================================
+   Global polish
+   ========================================================= */
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  height: 100%;
+}
+
+body {
+  background: var(--tk-bg);
+  color: var(--tk-text);
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  letter-spacing: -0.005em;
+  min-height: 100%;
+}
+
+/* Sticky footer , keep footer pinned to viewport bottom on short pages.
+   Structure: #__docusaurus > div > (navbar + .main-wrapper + footer).
+   The intermediate anonymous div must be the flex container. */
+#__docusaurus>div {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.main-wrapper {
+  flex: 1 0 auto;
+}
+
+/* Vivid blobs behind everything (matches Tuskira platform saturation) */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(560px 460px at -4% 6%, rgba(250, 204, 21, 0.42), transparent 65%),
+    radial-gradient(620px 520px at 102% 96%, rgba(244, 114, 182, 0.45), transparent 65%),
+    radial-gradient(900px 600px at 50% -10%, rgba(124, 58, 237, 0.32), transparent 70%);
+}
+
+[data-theme='dark'] body::before {
+  background:
+    radial-gradient(900px 520px at 90% -10%, rgba(167, 139, 250, 0.12), transparent 65%),
+    radial-gradient(800px 480px at -10% 110%, rgba(124, 58, 237, 0.10), transparent 65%);
+}
+
+/* Selection */
+::selection {
+  background: var(--tk-accent-glow);
+  color: var(--tk-text);
+}
+
+[data-theme='dark'] ::selection {
+  color: #fff;
+}
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Scrollbar (WebKit) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--tk-border);
+  border-radius: 8px;
+  border: 2px solid var(--tk-bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ifm-color-primary-lighter);
+}
+
+/* =========================================================
+   Typography
+   ========================================================= */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.markdown>h1,
+.markdown>h2,
+.markdown>h3 {
+  letter-spacing: -0.022em;
+  color: var(--tk-text);
+  scroll-margin-top: 5rem;
+}
+
+.markdown>h1 {
+  font-weight: 800;
+  color: var(--tk-text);
+  margin-bottom: 1.25rem;
+  letter-spacing: -0.028em;
+}
+
+[data-theme='dark'] .markdown>h1 {
+  color: #fff;
+}
+
+.markdown>h2 {
+  margin-top: 2.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--tk-border-soft);
+}
+
+.markdown>h3 {
+  margin-top: 2rem;
+}
+
+.markdown a:not(.card):not(.button) {
+  color: var(--ifm-color-primary);
+  background-image: linear-gradient(var(--ifm-color-primary), var(--ifm-color-primary));
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  background-size: 0% 1.5px;
+  transition: background-size 180ms ease, color 180ms ease;
+  padding-bottom: 1px;
+}
+
+.markdown a:not(.card):not(.button):hover {
+  background-size: 100% 1.5px;
+  color: var(--ifm-color-primary-darker);
+}
+
+[data-theme='dark'] .markdown a:not(.card):not(.button):hover {
+  color: var(--ifm-color-primary-lighter);
+}
+
+/* Heading anchor link */
+.hash-link {
+  opacity: 0;
+  margin-left: 0.4rem;
+  transition: opacity 150ms ease;
+}
+
+h1:hover .hash-link,
+h2:hover .hash-link,
+h3:hover .hash-link,
+h4:hover .hash-link,
+h5:hover .hash-link,
+h6:hover .hash-link {
+  opacity: 1;
+}
+
+/* Blockquote */
+.markdown blockquote {
+  border-left: 3px solid var(--ifm-color-primary);
+  background: var(--tk-accent-soft);
+  border-radius: 0 var(--tk-radius) var(--tk-radius) 0;
+  padding: 0.9rem 1.25rem;
+  color: var(--tk-text-muted);
+}
+
+[data-theme='dark'] .markdown blockquote {
+  color: var(--tk-text);
+}
+
+/* Inline code */
+code {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.markdown :not(pre)>code {
+  background: var(--ifm-code-background);
+  border-color: rgba(124, 58, 237, 0.16);
+  color: var(--ifm-code-color);
+}
+
+[data-theme='dark'] .markdown :not(pre)>code {
+  border-color: rgba(167, 139, 250, 0.22);
+}
+
+/* Code blocks */
+.theme-code-block,
+div[class*='codeBlockContainer'] {
+  border-radius: var(--tk-radius) !important;
+  box-shadow: var(--tk-shadow-md) !important;
+  border: 1px solid var(--tk-border-soft);
+  overflow: hidden;
+}
+
+[data-theme='dark'] div[class*='codeBlockContainer'] {
+  border-color: var(--tk-border);
+}
+
+/* HR */
+hr {
+  background: linear-gradient(90deg, transparent, var(--tk-border), transparent);
+  height: 1px;
+  border: 0;
+  margin: 2.5rem 0;
+}
+
+/* Docusaurus injects a hidden <svg><defs><symbol id="theme-svg-external-link"/></defs></svg>
+   sprite into the DOM. Some envs (CSP / theme overrides) ignore its inline
+   display:none and it renders at the SVG default ~150px height, creating a
+   gap above the navbar. Force-hide any defs-only sprite SVG. */
+svg:has(> defs > symbol) {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  position: absolute !important;
+}
+
+/* =========================================================
+   Navbar - glass effect
+   ========================================================= */
+.navbar {
+  backdrop-filter: saturate(180%) blur(14px);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
+  border-bottom: 1px solid var(--tk-border-soft);
+  box-shadow: var(--ifm-navbar-shadow);
+}
+
+[data-theme='dark'] .navbar {
+  border-bottom-color: var(--tk-border);
+}
+
+.navbar__logo {
+  height: 2rem;
+  display: flex;
+  align-items: center;
+}
+
+.navbar__logo img {
+  height: 100%;
+  width: auto;
+}
+
+/* Top-nav doc links */
+.navbar__items .navbar__link {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--tk-text);
+  padding: 0.4rem 0.85rem;
+  border-radius: 8px;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+[data-theme='dark'] .navbar__items .navbar__link {
+  color: var(--tk-text);
+}
+
+/* Prominent navbar search */
+.navbar .navbar__search,
+.navbar .navbar__search-input,
+.navbar .DocSearch-Button {
+  width: 100%;
+  max-width: 460px;
+}
+
+.navbar__items--right {
+  gap: 0.4rem;
+}
+
+.navbar input[type='search'],
+.navbar .navbar__search-input {
+  width: 460px;
+  max-width: 44vw;
+  background: var(--tk-accent-soft);
+  border: 1.5px solid var(--ifm-color-primary-lighter);
+  border-radius: 999px;
+  padding-left: 2.6rem;
+  height: 42px;
+  font-size: 0.92rem;
+  color: var(--tk-text);
+  box-shadow: 0 1px 2px rgba(28, 39, 79, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease, width 200ms ease;
+}
+
+.navbar input[type='search']::placeholder,
+.navbar .navbar__search-input::placeholder {
+  color: var(--ifm-color-primary-darker);
+  opacity: 0.75;
+  font-weight: 500;
+}
+
+[data-theme='dark'] .navbar input[type='search']::placeholder,
+[data-theme='dark'] .navbar .navbar__search-input::placeholder {
+  color: var(--ifm-color-primary-lighter);
+  opacity: 0.7;
+}
+
+.navbar input[type='search']:hover,
+.navbar .navbar__search-input:hover {
+  border-color: var(--ifm-color-primary);
+  background: var(--tk-bg-elevated);
+}
+
+.navbar input[type='search']:focus,
+.navbar .navbar__search-input:focus {
+  border-color: var(--ifm-color-primary);
+  background: var(--tk-bg-elevated);
+  box-shadow: 0 0 0 4px var(--tk-accent-glow);
+}
+
+/* Brand-tint the search-icon glyph that easyops-search renders */
+.navbar .navbar__search::before,
+.navbar .DocSearch-Search-Icon {
+  color: var(--ifm-color-primary) !important;
+  opacity: 0.85;
+}
+
+@media (max-width: 996px) {
+
+  .navbar input[type='search'],
+  .navbar .navbar__search-input {
+    width: 280px;
+    height: 40px;
+  }
+}
+
+/* =========================================================
+   Sidebar
+   ========================================================= */
+.theme-doc-sidebar-container {
+  border-right: 1px solid var(--tk-border-soft) !important;
+  background: transparent;
+}
+
+[data-theme='dark'] .theme-doc-sidebar-container {
+  border-right-color: var(--tk-border) !important;
+}
+
+.menu {
+  padding: 1rem 0.75rem !important;
+  font-size: 0.92rem;
+}
+
+.menu__list-item {
+  margin: 1px 0;
+}
+
+.menu__link {
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-weight: 500;
+  color: var(--ifm-menu-color);
+  transition: background-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.menu__link:hover {
+  background: var(--ifm-menu-color-background-hover);
+  color: var(--ifm-color-primary-darker);
+}
+
+[data-theme='dark'] .menu__link:hover {
+  color: var(--ifm-color-primary-lighter);
+}
+
+.menu__link--active,
+.menu__link.menu__link--active,
+.menu__link--sublist.menu__link--active,
+.menu__list-item-collapsible--active>.menu__link {
+  background: var(--ifm-color-primary-darker) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  box-shadow: 0 2px 8px var(--tk-accent-glow);
+  border-radius: 8px;
+}
+
+.menu__link--active:hover,
+.menu__link.menu__link--active:hover,
+.menu__link--sublist.menu__link--active:hover,
+.menu__list-item-collapsible--active>.menu__link:hover {
+  background: var(--ifm-color-primary-darkest) !important;
+  color: #ffffff !important;
+}
+
+.menu__link--active .sidebar-icon,
+.menu__link--sublist.menu__link--active .sidebar-icon,
+.menu__list-item-collapsible--active>.menu__link .sidebar-icon {
+  filter: brightness(0) invert(1);
+}
+
+/* Caret on active sublist categories - keep visible against the purple bg */
+.menu__link--sublist.menu__link--active::after {
+  filter: brightness(0) invert(1);
+  opacity: 1;
+}
+
+.menu__caret,
+.menu__link--sublist-caret::after {
+  opacity: 0.6;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.menu__link--sublist:hover .menu__caret,
+.menu__link--sublist:hover::after {
+  opacity: 1;
+}
+
+.sidebar-icon {
+  width: 18px !important;
+  height: 18px !important;
+  display: inline-block;
+  flex-shrink: 0;
+  margin-right: 8px;
+  vertical-align: -3px;
+  opacity: 0.85;
+  overflow: hidden;
+}
+
+/* Category labels (top-level) */
+.menu__list .menu__list-item-collapsible>.menu__link {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+/* =========================================================
+   Main content
+   ========================================================= */
+.main-wrapper {
+  background: transparent;
+}
+
+article {
+  padding-top: 0.5rem;
+}
+
+/* Tables */
+.markdown table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--tk-border);
+  border-radius: var(--tk-radius);
+  overflow: hidden;
+  box-shadow: var(--tk-shadow-sm);
+  margin: 1.5rem 0;
+}
+
+.markdown table thead {
+  background: linear-gradient(180deg, var(--tk-accent-soft), transparent);
+}
+
+.markdown table th {
+  font-weight: 600;
+  color: var(--tk-text);
+  text-align: left;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--tk-border);
+}
+
+.markdown table td {
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--tk-border-soft);
+}
+
+.markdown table tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown table tbody tr:hover {
+  background: var(--tk-accent-soft);
+}
+
+/* Images */
+.markdown img:not(.no-shadow) {
+  border-radius: var(--tk-radius);
+  box-shadow: var(--tk-shadow-md);
+  border: 1px solid var(--tk-border-soft);
+  max-width: 100%;
+  margin: 0.5rem 0;
+  cursor: pointer;
+  transition: box-shadow 220ms ease;
+}
+
+.markdown img:not(.no-shadow):hover {
+  box-shadow: var(--tk-shadow-lg);
+}
+
+/* yet-another-react-lightbox */
+.yarl__root {
+  --yarl__color_backdrop: rgba(0, 0, 0, 0.85);
+}
+
+.markdown img.img-landscape {
+  width: 100%;
+  max-width: 100%;
+}
+
+.markdown img.img-portrait {
+  display: block;
+  max-width: min(420px, 100%);
+  width: auto;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Admonitions */
+.theme-admonition,
+.alert {
+  border-radius: var(--tk-radius) !important;
+  border: 1px solid var(--tk-border-soft);
+  border-left-width: 3px !important;
+  box-shadow: var(--tk-shadow-sm);
+  padding: 1rem 1.15rem !important;
+}
+
+/* =========================================================
+   Pagination cards (prev / next at bottom of doc)
+   ========================================================= */
+.pagination-nav__link {
+  border: 1px solid var(--tk-border);
+  border-radius: var(--tk-radius);
+  background: var(--tk-bg-elevated);
+  padding: 1rem 1.25rem;
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+  box-shadow: var(--tk-shadow-sm);
+}
+
+.pagination-nav__link:hover {
+  border-color: var(--ifm-color-primary);
+  transform: translateY(-3px);
+  box-shadow: var(--tk-shadow-lg);
+}
+
+.pagination-nav__sublabel {
+  color: var(--tk-text-subtle);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.pagination-nav__label {
+  font-weight: 600;
+  color: var(--tk-text);
+}
+
+/* =========================================================
+   Table of contents (right rail)
+   ========================================================= */
+.table-of-contents {
+  font-size: 0.85rem;
+  border-left: 1px solid var(--tk-border-soft);
+  padding-left: 0.75rem;
+}
+
+.table-of-contents__link {
+  color: var(--tk-text-muted);
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+  transition: color 150ms ease, background 150ms ease;
+  display: block;
+}
+
+.table-of-contents__link:hover {
+  color: var(--ifm-color-primary);
+  background: var(--tk-accent-soft);
+}
+
+.table-of-contents__link--active {
+  color: var(--ifm-color-primary) !important;
+  font-weight: 600;
+  background: var(--tk-accent-soft);
+}
+
+/* =========================================================
+   Breadcrumbs
+   ========================================================= */
+.breadcrumbs__link {
+  font-size: 0.85rem;
+  color: var(--tk-text-muted);
+  border-radius: 6px;
+  padding: 0.2rem 0.5rem;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.breadcrumbs__link:hover {
+  background: var(--tk-accent-soft);
+  color: var(--ifm-color-primary);
+}
+
+.breadcrumbs__item--active .breadcrumbs__link {
+  background: var(--tk-accent-soft);
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+/* =========================================================
+   Buttons
+   ========================================================= */
+.button {
+  border-radius: 8px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.button--primary {
+  background: linear-gradient(135deg, var(--ifm-color-primary), var(--ifm-color-primary-dark));
+  border: none;
+  box-shadow: 0 4px 14px var(--tk-accent-glow);
+}
+
+.button--primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px var(--tk-accent-glow);
+}
+
+/* =========================================================
+   Footer
+   ========================================================= */
+.footer--dark {
+  background: linear-gradient(180deg, #0E1424 0%, #060A14 100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.footer__copyright {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.85rem;
+}
+
+/* =========================================================
+   Responsive niceties
+   ========================================================= */
+@media (max-width: 996px) {
+  :root {
+    --ifm-h1-font-size: 2rem;
+  }
+
+  .menu {
+    padding: 0.75rem 0.5rem !important;
+  }
+}
+
+/* =========================================================
+   Hide sidebar entirely on landings - make main content full-width.
+   Pages set `displayed_sidebar: null` in frontmatter, but Docusaurus
+   may still reserve sidebar gutter space; tighten the layout.
+   ========================================================= */
+.docs-doc-page article {
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+/* =========================================================
+   Page transition animation
+   ========================================================= */
+@keyframes tk-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.main-wrapper {
+  animation: tk-page-enter 0.28s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+/* =========================================================
+   Gateway docs specifics
+   ========================================================= */
+/* The config-key and route tables are wide; let them scroll on narrow
+   screens instead of breaking the page width. */
+@media (max-width: 768px) {
+  .markdown table {
+    display: block;
+    overflow-x: auto;
+  }
+}

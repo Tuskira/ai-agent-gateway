@@ -1,0 +1,122 @@
+{
+  "wire": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 512,
+    "container": "container_011CN",
+    "mcp_servers": [
+      {
+        "type": "url",
+        "url": "https://mcp.example.com/sse",
+        "name": "example"
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": "Search for it."
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "server_tool_use",
+            "id": "srvtoolu_01",
+            "name": "web_search",
+            "input": {
+              "query": "claude"
+            }
+          },
+          {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_01",
+            "content": []
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "search_result",
+            "source": "https://e.x",
+            "title": "T",
+            "content": [
+              {
+                "type": "text",
+                "text": "r"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "neutral": {
+    "model": "claude-sonnet-4-5",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Search for it."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "server_tool_use",
+            "raw": {
+              "type": "server_tool_use",
+              "id": "srvtoolu_01",
+              "name": "web_search",
+              "input": {
+                "query": "claude"
+              }
+            }
+          },
+          {
+            "type": "web_search_tool_result",
+            "raw": {
+              "type": "web_search_tool_result",
+              "tool_use_id": "srvtoolu_01",
+              "content": []
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "search_result",
+            "raw": {
+              "type": "search_result",
+              "source": "https://e.x",
+              "title": "T",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "r"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "max_tokens": 512,
+    "extra": {
+      "container": "container_011CN",
+      "mcp_servers": [
+        {
+          "type": "url",
+          "url": "https://mcp.example.com/sse",
+          "name": "example"
+        }
+      ]
+    }
+  }
+}

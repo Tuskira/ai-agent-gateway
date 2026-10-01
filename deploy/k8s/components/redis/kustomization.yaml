@@ -1,0 +1,34 @@
+# Redis-backed MCP sessions (sessions.store: redis), packaged as a
+# kustomize Component so it can be added to ANY overlay -- production
+# (overlays/redis = base + this), local kind (overlays/kind-redis =
+# overlays/kind + this), or your own overlay that already pulls in
+# analytics. A plain overlay could not do that: kustomize refuses to
+# combine two overlays of the same base, so every combination would have
+# to be hand-composed.
+#
+# What it adds:
+#   - redis-deployment.yaml + redis-service.yaml: a single dev-grade Valkey
+#     (BSD-3, Redis-compatible).
+#     In production point GATEWAY_REDIS_ADDR at a managed Redis instead
+#     (see the comment in redis-deployment.yaml) and drop those two files
+#     from the list below in a copy of this component.
+#   - gateway-mcp-redis-patch.yaml: GATEWAY_SESSIONS_STORE=redis,
+#     GATEWAY_REDIS_ENABLED/ADDR on the mcp Deployment, and replicas: 2.
+#     base/pdb-mcp.yaml (maxUnavailable: 1) stays valid at two replicas.
+#   - networkpolicy-redis-patch.yaml: APPENDS an egress rule to the redis
+#     pods on 6379. A JSON patch, because NetworkPolicy rules have no
+#     merge key and a strategic merge would replace the whole egress list
+#     (same pattern as examples/10-kubernetes/overlay).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - redis-deployment.yaml
+  - redis-service.yaml
+
+patches:
+  - path: gateway-mcp-redis-patch.yaml
+  - path: networkpolicy-redis-patch.yaml
+    target:
+      kind: NetworkPolicy
+      name: gateway

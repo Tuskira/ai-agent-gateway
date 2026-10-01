@@ -1,0 +1,44 @@
+# Mounted at /etc/gateway/config.yaml (CONFIG_PATH) on every plane
+# Deployment and the gateway-migrate Job.
+#
+# Deliberately does NOT set mcp.enabled / api.enabled / llm_proxy.enabled or
+# any database.host/port/user/password/database field here. Config
+# precedence is: built-in defaults -> this file -> GATEWAY_<SECTION>_<FIELD>
+# environment variables (internal/config.Load / config.go's overlayEnv), so:
+#   - which plane(s) a given Deployment runs is set per-Deployment via
+#     GATEWAY_MCP_ENABLED / GATEWAY_API_ENABLED / GATEWAY_LLM_PROXY_ENABLED
+#     env vars on that Deployment (see deployment-*.yaml) -- one image,
+#     three Deployments, each running a different subset of planes.
+#   - database connection details come from the gateway-env ConfigMap
+#     (GATEWAY_DATABASE_HOST/PORT/USER/DATABASE) and the gateway-secrets
+#     Secret (GATEWAY_DATABASE_PASSWORD), both applied via envFrom.
+# The fields below ARE already the binary's built-in defaults
+# (config.Default() in internal/config/config.go); they're pinned here
+# explicitly for clarity/future-proofing rather than left implicit.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/part-of: ai-gateway
+data:
+  config.yaml: |
+    service:
+      name: tusk-ai-secured-gateway
+
+    database:
+      # require | disable | verify-ca | verify-full. Use "require" or
+      # stronger against any real Postgres. The kind overlay patches this
+      # to "disable" for the in-cluster, no-TLS dev Postgres.
+      ssl_mode: require
+
+    sinks:
+      stdout:
+        enabled: true
+      clickhouse:
+        enabled: false
+
+    logging:
+      level: info
+      development: false

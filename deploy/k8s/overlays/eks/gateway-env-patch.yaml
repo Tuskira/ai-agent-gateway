@@ -1,0 +1,20 @@
+# The externally-owned gateway-secrets Secret carries the whole database
+# block (GATEWAY_DATABASE_HOST/PORT/USER/DATABASE/PASSWORD), so drop base's
+# CHANGE-ME placeholders rather than leave two sources for the same key
+# (null removes a key in a strategic-merge patch).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-env
+  namespace: ai-gateway
+data:
+  GATEWAY_DATABASE_HOST: null
+  GATEWAY_DATABASE_PORT: null
+  GATEWAY_DATABASE_USER: null
+  GATEWAY_DATABASE_DATABASE: null
+  # The internal ALB (target-type: ip) connects from ENIs inside the VPC and
+  # appends the client's address to X-Forwarded-For. Trust the VPC CIDR so
+  # the rate limiters see the real client instead of one shared ALB address.
+  # Narrow it to the ALB subnets' CIDRs if other VPC workloads can reach the
+  # pods directly (see overlays/eks/README.md).
+  GATEWAY_API_TRUSTED_PROXIES: "${GW_VPC_CIDR}"

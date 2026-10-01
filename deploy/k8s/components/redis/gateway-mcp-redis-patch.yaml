@@ -1,0 +1,36 @@
+# Switches the mcp Deployment to the Redis session store and lets it scale.
+#
+# Strategic-merge patch on gateway-mcp: the env entries merge by name into
+# the container's list (env has a merge key; NetworkPolicy egress does
+# not, hence the JSON patch next to this file). Only the mcp plane needs
+# these: sessions are its state. The api pods build the data plane too
+# (for connector health/discover) but serve no sessions, so they stay on
+# the in-process default and need no Redis egress. If you want a connector
+# edit in the console to push tools/list_changed to agents connected on
+# the mcp replicas, give gateway-api the same three variables (and the
+# same egress) -- its plane then publishes through Redis as well.
+#
+# GATEWAY_REDIS_PASSWORD, when your Redis has one, belongs in the
+# gateway-secrets Secret (already mounted via envFrom), never here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-mcp
+  namespace: ai-gateway
+spec:
+  # Two replicas behind one Service. With sessions in Redis any replica
+  # can serve any session, and base/pdb-mcp.yaml's maxUnavailable: 1 now
+  # keeps one replica up through a voluntary eviction instead of merely
+  # permitting the outage. Add an HPA if you want more.
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: gateway
+          env:
+            - name: GATEWAY_SESSIONS_STORE
+              value: "redis"
+            - name: GATEWAY_REDIS_ENABLED
+              value: "true"
+            - name: GATEWAY_REDIS_ADDR
+              value: "redis:6379"

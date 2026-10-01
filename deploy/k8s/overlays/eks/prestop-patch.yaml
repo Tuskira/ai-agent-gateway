@@ -1,0 +1,13 @@
+# On a rolling update the ALB keeps routing new requests to a
+# terminating pod until its target finishes deregistering (a few seconds).
+# A preStop sleep holds SIGTERM back for that window, so no request lands
+# on a pod that has already stopped listening. The image is distroless
+# (no /bin/sleep), hence the native sleep action (Kubernetes >= 1.30).
+# The pods' terminationGracePeriodSeconds (30s api/mcp, 900s llm) still
+# bounds the total shutdown, sleep included.
+- op: add
+  path: /spec/template/spec/containers/0/lifecycle
+  value:
+    preStop:
+      sleep:
+        seconds: 15

@@ -1,0 +1,80 @@
+name: Docs
+
+# Builds the docs site (website/ = Docusaurus over docs/) on pull requests
+# that touch it, and builds + publishes it to GitHub Pages on every merge
+# to main. Live at https://community.tuskira.ai once Pages is enabled for
+# the repo (Settings -> Pages -> Source: GitHub Actions) -- the site is
+# public the moment it is switched on, so that step is done at launch, by
+# hand, not here.
+#
+# A broken link or anchor in docs/ fails the build (docusaurus.config.js
+# throws on both), so a PR cannot merge a dead link.
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "website/**"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "website/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+# One publish at a time; a newer push waits for the current deploy to end.
+concurrency:
+  group: docs-pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+    working-directory: website
+
+jobs:
+  build:
+    name: build site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
+
+      # Only a main push needs the artifact; PR builds stop at "it builds".
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: website/build
+
+  deploy:
+    name: publish to GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write # deploy to Pages
+      id-token: write # Pages verifies the deployment's OIDC token
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

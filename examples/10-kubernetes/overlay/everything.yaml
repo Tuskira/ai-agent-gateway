@@ -1,0 +1,85 @@
+# Reference MCP server this example registers as a connector, run
+# in-cluster (see kustomization.yaml for why). @modelcontextprotocol/
+# server-everything's streamableHttp transport reads the PORT env var and
+# defaults to 3001 if unset (upstream src/everything/transports/
+# streamableHttp.ts: `const PORT = process.env.PORT || 3001`) -- set it
+# explicitly anyway so this manifest doesn't depend on that default holding.
+#
+# Not covered by deploy/k8s/base/networkpolicy.yaml: that policy's egress
+# rules for the gateway pods (podSelector app.kubernetes.io/name: gateway)
+# only allow ports 53/5432/9000/8123/443, not this Service's 3001.
+# networkpolicy-everything-patch.yaml appends the :3001 rule, since kindnet
+# enforces NetworkPolicy.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: everything
+  labels:
+    app.kubernetes.io/name: everything
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: everything
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: everything
+    spec:
+      containers:
+        - name: everything
+          image: node:22-alpine
+          command: ["npx", "-y", "@modelcontextprotocol/server-everything", "streamableHttp"]
+          env:
+            - name: PORT
+              value: "3001"
+          ports:
+            - name: http
+              containerPort: 3001
+          # `npx -y` downloads the package fresh on every cold start (no
+          # cache baked into node:22-alpine); give it real time before
+          # readiness/liveness start counting failures.
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          # Not hardened to the gateway containers' standard (allowPrivilegeEscalation:
+          # false only): npx needs to write its package cache under $HOME
+          # (~/.npm), so this container can't run with readOnlyRootFilesystem
+          # or a non-default non-root UID without also wiring an HOME/writable
+          # volume for it -- not worth it for a throwaway reference server.
+          securityContext:
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: everything
+  labels:
+    app.kubernetes.io/name: everything
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: everything
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http

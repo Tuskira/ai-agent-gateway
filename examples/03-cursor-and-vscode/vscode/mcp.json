@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "tusk-ai-gateway": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer gk_REPLACE_ME",
+        "X-Agent-Profile-Name": "Full Access"
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "neutral": {
+    "status": 400,
+    "type": "invalid_request_error",
+    "message": "This model's maximum context length is 128000 tokens.",
+    "code": "context_length_exceeded"
+  },
+  "wire": {
+    "type": "error",
+    "error": {
+      "type": "invalid_request_error",
+      "message": "prompt is too long: This model's maximum context length is 128000 tokens."
+    }
+  }
+}

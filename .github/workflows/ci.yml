@@ -1,0 +1,397 @@
+name: CI
+
+on:
+  pull_request:
+    # 'labeled' so adding the 'k8s' label re-runs CI and the examples-k8s
+    # job's condition can see it.
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: ci-go-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "$out"
+            echo "::error::gofmt found unformatted files (run 'gofmt -w .')"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go vet (e2e build tag)
+        run: go vet -tags e2e ./test/...
+
+      - name: go build
+        run: go build ./...
+
+      # Classifies every third-party Go module's license and fails if any
+      # of them isn't on the allow list in tools/notices/main.go -- the
+      # same check .goreleaser.yaml's before.hooks runs before a real
+      # release. Network access (go-licenses + go list both resolve
+      # modules), like the gitleaks download in the security job below.
+      - name: license notices
+        run: make notices
+
+      # -coverpkg=./... credits code exercised from another package's
+      # tests too; the profile goes to Codecov as flag "unit".
+      - name: go test -race
+        run: go test -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-unit.out ./...
+
+      - name: upload unit coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-unit.out
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      # golangci-lint-action v8 requires golangci-lint >= v2.1.0 (our
+      # .golangci.yml is the "version: 2" config schema); pinned to the
+      # exact golangci-lint release verified locally for this change.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.14.0
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: ci-web-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:coverage
+      - run: npm run build
+
+      - name: upload web coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: web/coverage/lcov.info
+          flags: web
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      # internal/api/ui/dist is go:embed'd into the binary (see
+      # internal/api/ui/ui.go); the integration job needs it on disk
+      # before it builds/tests the Go side.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: internal/api/ui/dist
+          retention-days: 7
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    needs: [go, web]
+    permissions:
+      contents: read
+    concurrency:
+      group: ci-integration-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gateway
+          POSTGRES_PASSWORD: gateway
+          POSTGRES_DB: gateway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gateway -d gateway"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      clickhouse:
+        image: clickhouse/clickhouse-server:24
+        ports:
+          - 9000:9000
+          - 8123:8123
+        options: >-
+          --health-cmd "wget --spider -q localhost:8123/ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: valkey/valkey:9.0-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      GATEWAY_TEST_DATABASE_URL: postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable
+      GATEWAY_TEST_CLICKHOUSE_ADDR: localhost:9000
+      GATEWAY_TEST_REDIS_ADDR: 127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: internal/api/ui/dist
+
+      - name: generate a master key for this run
+        run: echo "GATEWAY_MASTER_KEY=$(go run ./cmd/gateway secrets genkey)" >> "$GITHUB_ENV"
+
+      - name: postgres conformance suite
+        run: go test -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-postgres.out ./internal/store/postgres/... -run TestConformance -v
+
+      - name: session driver conformance (memory + redis) and the tools/list_changed bridge
+        run: go test -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-session.out ./pkg/session/... ./internal/dataplane/transport/... -run 'Conformance|Redis|Bridge|TTL|Share|Unreachable' -v
+
+      - name: e2e (build tag e2e)
+        run: go test -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-e2e.out -tags e2e ./test/e2e/... -v
+
+      - name: clickhouse sink (build tag integration)
+        run: go test -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-clickhouse.out -tags integration ./pkg/sink/clickhouse/... -run Integration -v
+
+      - name: upload e2e coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-e2e.out
+          flags: e2e
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: upload integration coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-postgres.out,coverage-session.out,coverage-clickhouse.out
+          flags: integration
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: ci-security-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+
+      # gitleaks-action requires a paid license for organization repos, so
+      # run the (MIT) CLI directly with the repo's own config. Scans the
+      # full history (fetch-depth: 0 above).
+      - name: gitleaks
+        run: |
+          set -euo pipefail
+          VERSION=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+          gitleaks git --config .gitleaks.toml --redact --verbose --exit-code 1 .
+
+  examples:
+    name: examples
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: ci-examples-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: start the compose stack
+        run: docker compose -f deploy/docker-compose.yml up --build -d
+
+      - name: wait for the control plane to become healthy
+        run: |
+          for _ in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/v1/health || true)"
+            if [ "$code" = "200" ]; then
+              echo "control plane is healthy"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::control plane never became healthy"
+          exit 1
+
+      - name: examples smoke
+        run: make examples-smoke
+
+      - if: failure()
+        run: docker compose -f deploy/docker-compose.yml --profile analytics logs gateway otel-collector
+
+      - if: always()
+        # 08 adds the analytics profile and an overlay file; tear down both.
+        run: docker compose -f deploy/docker-compose.yml -f examples/08-observability/docker-compose.observability.yml --profile analytics down -v
+
+  examples-k8s:
+    name: examples-k8s
+    # Slow (kind cluster + image build): only when the manifests or the
+    # example itself change.
+    if: >-
+      github.event_name == 'push' ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'k8s')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: ci-examples-k8s-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: examples k8s
+        run: make examples-k8s
+
+      - if: failure()
+        run: |
+          kubectl get pods -n ai-gateway -o wide || true
+          kubectl logs -n ai-gateway deploy/gateway-api --tail=100 || true
+          kubectl logs -n ai-gateway deploy/gateway-mcp --tail=100 || true
+          kubectl logs -n ai-gateway deploy/everything --tail=50 || true
+
+  docker:
+    name: docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: ci-docker-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gateway
+          POSTGRES_PASSWORD: gateway
+          POSTGRES_DB: gateway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gateway -d gateway"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: tusk-ai-secured-gateway:ci-smoke
+
+      # A throwaway key minted per run (rather than the docker-compose
+      # dev default) -- one less "known" secret-shaped literal for
+      # gitleaks to have to allowlist.
+      - name: generate a master key for this run
+        run: echo "GATEWAY_MASTER_KEY=$(go run ./cmd/gateway secrets genkey)" >> "$GITHUB_ENV"
+
+      # --network host puts the container in the runner's network
+      # namespace, so it reaches the postgres service on localhost the
+      # same way the job's own steps do.
+      - name: smoke test
+        run: |
+          docker run -d --network host --name gateway-smoke \
+            -e GATEWAY_DATABASE_HOST=localhost \
+            -e GATEWAY_DATABASE_PORT=5432 \
+            -e GATEWAY_DATABASE_USER=gateway \
+            -e GATEWAY_DATABASE_PASSWORD=gateway \
+            -e GATEWAY_DATABASE_NAME=gateway \
+            -e GATEWAY_DATABASE_SSL_MODE=disable \
+            -e GATEWAY_DATABASE_MIGRATE=true \
+            -e GATEWAY_AUTH_API_KEYS_ENABLED=true \
+            -e GATEWAY_MASTER_KEY="$GATEWAY_MASTER_KEY" \
+            tusk-ai-secured-gateway:ci-smoke
+
+          for _ in $(seq 1 30); do
+            code="$(curl -s -o /tmp/health.json -w '%{http_code}' http://localhost:8081/api/v1/health || true)"
+            if [ "$code" = "200" ]; then
+              echo "health check OK:"; cat /tmp/health.json; exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::gateway did not become healthy"
+          docker logs gateway-smoke
+          exit 1
+
+      - if: always()
+        run: docker rm -f gateway-smoke || true

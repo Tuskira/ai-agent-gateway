@@ -1,0 +1,187 @@
+{
+  "wire": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 16000,
+    "thinking": {
+      "type": "enabled",
+      "budget_tokens": 10000
+    },
+    "output_config": {
+      "effort": "high"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_tool_uses_20250919"
+        }
+      ]
+    },
+    "system": [
+      {
+        "type": "text",
+        "text": "You describe images.",
+        "cache_control": {
+          "type": "ephemeral",
+          "ttl": "1h"
+        }
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/jpeg",
+              "data": "/9j/4AAQSkZJRg=="
+            }
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "url",
+              "url": "https://upload.wikimedia.org/a.jpg"
+            }
+          },
+          {
+            "type": "document",
+            "source": {
+              "type": "text",
+              "media_type": "text/plain",
+              "data": "The grass is green."
+            },
+            "title": "Facts",
+            "citations": {
+              "enabled": true
+            }
+          },
+          {
+            "type": "text",
+            "text": "Describe these."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "Let me look closely.",
+            "signature": "EqQBCgIYAhIM1gbcDa9GJwZA2b3h"
+          },
+          {
+            "type": "redacted_thinking",
+            "data": "EmwKAhgBEgy3va3pzix/LafPsn4a"
+          },
+          {
+            "type": "text",
+            "text": "A cat on grass."
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": "Thanks"
+      }
+    ]
+  },
+  "neutral": {
+    "model": "claude-sonnet-4-5",
+    "system": [
+      {
+        "type": "text",
+        "text": "You describe images.",
+        "extra": {
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        }
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/jpeg",
+              "data": "/9j/4AAQSkZJRg=="
+            }
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "url",
+              "url": "https://upload.wikimedia.org/a.jpg"
+            }
+          },
+          {
+            "type": "document",
+            "source": {
+              "type": "text",
+              "media_type": "text/plain",
+              "data": "The grass is green."
+            },
+            "extra": {
+              "title": "Facts",
+              "citations": {
+                "enabled": true
+              }
+            }
+          },
+          {
+            "type": "text",
+            "text": "Describe these."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "Let me look closely.",
+            "signature": "EqQBCgIYAhIM1gbcDa9GJwZA2b3h"
+          },
+          {
+            "type": "redacted_thinking",
+            "data": "EmwKAhgBEgy3va3pzix/LafPsn4a"
+          },
+          {
+            "type": "text",
+            "text": "A cat on grass."
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Thanks"
+          }
+        ]
+      }
+    ],
+    "max_tokens": 16000,
+    "thinking": {
+      "type": "enabled",
+      "budget_tokens": 10000
+    },
+    "effort": "high",
+    "extra": {
+      "context_management": {
+        "edits": [
+          {
+            "type": "clear_tool_uses_20250919"
+          }
+        ]
+      }
+    }
+  }
+}

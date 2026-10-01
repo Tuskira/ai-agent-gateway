@@ -1,0 +1,19 @@
+# base/networkpolicy.yaml admits traffic only from the ingress-nginx
+# namespace. With target-type: ip the ALB connects straight to pod IPs
+# from its own ENIs inside the VPC (not from any pod), so admit the VPC
+# CIDR on the three plane ports. APPENDED (a JSON patch on
+# /spec/ingress/-) for the same reason components/redis appends its
+# egress rule: NetworkPolicy rules have no merge key.
+- op: add
+  path: /spec/ingress/-
+  value:
+    from:
+      - ipBlock:
+          cidr: ${GW_VPC_CIDR}
+    ports:
+      - protocol: TCP
+        port: 8080 # mcp
+      - protocol: TCP
+        port: 8081 # api
+      - protocol: TCP
+        port: 8082 # llm

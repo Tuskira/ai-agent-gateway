@@ -1,0 +1,29 @@
+# Examples
+
+Worked, end-to-end examples against a real running gateway. Each one has
+its own `README.md` (Goal, Prerequisites, Steps, Expected output,
+Cleanup) and a `run.sh` (`check.sh` for the config-only 02 and 03) that
+performs the same steps and checks its own output, so it doubles as a
+regression test.
+
+| # | Example | Shows | Needs |
+|---|---|---|---|
+| [01-quickstart](01-quickstart/) | Compose up, health on all three planes, bootstrap an admin key, register an MCP server as a connector (the console's **MCPs** page), discover its tools, call one over the MCP plane. | Docker, `curl`, `jq`, Node.js (`npx`). No credentials. |
+| [02-claude-code](02-claude-code/) | Claude Code using the gateway as its only MCP server (project `.mcp.json`), and optionally as its LLM proxy (`ANTHROPIC_BASE_URL` + `X-Gateway-Key`). | Claude Code, your own Anthropic login. `check.sh` validates the config without either. |
+| [03-cursor-and-vscode](03-cursor-and-vscode/) | The same MCP registration for Cursor, VS Code (native `.vscode/mcp.json`) and Codex CLI — config snippets only. | The IDE. `check.sh` validates the JSON/TOML. |
+| [04-python-agent](04-python-agent/) | A Python agent driving both planes at once: the `anthropic` SDK (BYOK) over the LLM plane and the official `mcp` client over the MCP plane, tied together by one session id so Access Logs and LLM Logs show the same run; `--chat` switches model at runtime (`/model`, like Claude Code), e.g. from Claude to the open-weight models Kimi K3 and GLM 5.3 through the model registry. `--mcp-only` mode needs no LLM key. | Docker, `curl`, `jq`, Node.js (`npx`), Python 3.10+. `ANTHROPIC_API_KEY` only for Claude models (full mode or `--chat`); `NEBIUS_API_KEY` or `TOGETHER_API_KEY` only for the open-weight models. |
+| [05-profiles](05-profiles/) | Two agent profiles scoping the same connector to different tool allow-lists, an ungranted `tools/call` denied with `-32003`, an unknown profile name granting nothing, and strict mode (`mcp.require_profile`) rejecting a request with no profile header. | Docker, `curl`, `jq`, Node.js (`npx`). No credentials. |
+| [06-credentials-and-headers](06-credentials-and-headers/) | A backend API key stored once as a credential and injected into a connector header; `token_field`/`static` headers and a per-tool `tool_arg_overrides`; proof at the backend that the secret arrives, the caller's key does not, the API masks it, and a masked round trip keeps it. | Docker, `curl`, `jq`, Python 3 (the echo server). No credentials. |
+| [07-llm-passthrough](07-llm-passthrough/) | The same client hitting Anthropic, OpenAI, Gemini and Bedrock through `:8082` with your own keys (curl + SDK snippets, streaming, both Bedrock modes). Without keys it still proves routing against the real providers (their own auth errors come back through the gateway). | Docker, `curl`, `jq`. Provider keys only for the real-call tier. |
+| [08-observability](08-observability/) | ClickHouse (dashboard + log pages), an OTel collector and Jaeger; one `traceparent` followed through the analytics API, ClickHouse SQL and the collector's spans. | Docker, `curl`, `jq`, Node.js (`npx`). No credentials. |
+| [09-roles-keys-and-rate-limits](09-roles-keys-and-rate-limits/) | A custom read-only role from `auth.roles`, agent vs platform permissions, revoke and rotate taking effect immediately, and the control-plane lockout after 10 bad keys (`429` + `Retry-After`, `locked_ips` in health). | Docker, `curl`, `jq`. No credentials. |
+| [10-kubernetes](10-kubernetes/) | The shipped `deploy/k8s` manifests on a local `kind` cluster: one image, three Deployments (one per plane), in-cluster Postgres and MCP server, port-forward, bootstrap, first tool call, and scaling one plane on its own. | Docker, `kind`, `kubectl`. No credentials. |
+| [11-server-requests](11-server-requests/) | A connector asking the agent mid-call: `metadata.server_requests` turns elicitation and roots on, the agent declares them at `initialize`, the relayed `elicitation/create` is read off `GET /mcp/stream` and answered with a JSON-RPC response `POST`ed to `/mcp`, the tool result carries the answer, and with the policy off the same call is refused `-32601` without reaching the agent. | Docker, `curl`, `jq`, Node.js (`npx`). No credentials. |
+| [12-skills-and-commands](12-skills-and-commands/) | A skill and a command registered in the [skills & commands registry](../docs/skills.md), attached to one agent profile: `initialize`'s instructions carry a skill index, the native `gateway__skill` tool and a `fix-lint` prompt serve them over plain MCP, `skills/list`/`resources/read` serve the same skill over the MCP Skills Extension (SEP-2640) with a verified `sha256` digest, and no profile header means no skills at all. Includes an optional `sync-skills.sh` for pulling attached skills into `.claude/skills/`. | Docker, `curl`, `jq`, `shasum`. No credentials. |
+
+`make examples-smoke` runs every example that needs no external
+credential — 01, 05, 12, 04 (`--mcp-only`), the 02/03 config checks, 06, 07
+(bogus-key tier), 08, 11 and 09, in that order (09 last because its lockout
+step blocks the client IP for 20 s). CI runs it on every PR.
+`make examples-k8s` runs 10 on `kind`; CI runs that only when `deploy/`
+or `examples/10-kubernetes/` change.

@@ -1,0 +1,7 @@
+internal/api/ui/dist/*
+!internal/api/ui/dist/.gitkeep
+.git
+out
+dist
+web/node_modules
+web/dist

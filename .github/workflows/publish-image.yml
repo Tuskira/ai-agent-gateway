@@ -1,0 +1,99 @@
+name: Publish image
+
+# Builds the gateway image from every push to main and publishes it to
+# GHCR as ghcr.io/tuskira/tusk-ai-secured-gateway:sha-<sha7> (immutable,
+# one per commit) and :main (moving). Tagged releases keep publishing
+# :<version> and :latest through release.yml / GoReleaser.
+#
+# This is the only thing this repository does with a built image: there
+# is no deployment from here. Deployments run from a private fork that
+# pulls the :sha-<sha7> image for the commit it is deploying.
+#
+# Runs on GitHub-hosted runners with the repository's own GITHUB_TOKEN
+# (packages: write); no cloud credentials, no self-hosted runner.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "website/**"
+      - "examples/**"
+      - "**/*.md"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/docs.yml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/tuskira/tusk-ai-secured-gateway
+
+jobs:
+  publish:
+    name: build and push to GHCR
+    if: github.repository == 'Tuskira/tusk-ai-secured-gateway'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # git describe needs the release tags
+          persist-credentials: false
+
+      - name: image metadata
+        id: meta
+        run: |
+          short_sha=${GITHUB_SHA::7}
+          {
+            echo "sha_tag=sha-${short_sha}"
+            echo "version=$(git describe --tags --always)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same multi-stage Dockerfile as `make docker-build` and the CI
+      # docker job; linux/amd64 + linux/arm64 like the release images.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.sha_tag }}
+            ${{ env.IMAGE }}:main
+          # org.opencontainers.image.licenses describes the subject
+          # software (tusk-ai-secured-gateway, Apache-2.0), not every file
+          # in the image -- it also bundles third-party components under
+          # their own permissive licenses, notices for which are baked
+          # into the image at /licenses/ (see Dockerfile, THIRD_PARTY_NOTICES
+          # target in Makefile, and docs/third-party-notices.md); .description
+          # points there so the licenses label is never read in isolation.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.description=tusk-ai-secured-gateway is Apache-2.0; third-party license notices for everything else bundled in this image are at /licenses/
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - run: echo "Published ${IMAGE}:${{ steps.meta.outputs.sha_tag }} and ${IMAGE}:main" >> "$GITHUB_STEP_SUMMARY"

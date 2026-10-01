@@ -1,0 +1,79 @@
+name: Bug report
+description: Something in the gateway isn't working as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please don't include
+        API keys, credentials, or customer data anywhere below — redact
+        them from any logs you paste in.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Output of `gateway --version`, the release tag, or the commit SHA you built from.
+      placeholder: v0.3.0 / abc1234
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment method
+      options:
+        - Docker Compose
+        - Kubernetes
+        - Binary (built from source / downloaded release)
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: plane
+    attributes:
+      label: Plane affected
+      description: Which part of the gateway does this bug involve? Select all that apply.
+      options:
+        - label: MCP plane (tools/call, tool discovery, sessions)
+        - label: API plane (console, tenants, connectors, keys, profiles)
+        - label: LLM plane (proxying/translating model calls)
+        - label: Admin console (web UI)
+        - label: Not sure / other
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence of steps that reproduces the problem.
+      placeholder: |
+        1. Configure ...
+        2. Send a request to ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: |
+        Paste relevant log lines or error output. Double-check there are
+        no API keys, tokens, or request/response bodies with sensitive
+        data before posting — redact anything you're not sure about.
+      render: shell

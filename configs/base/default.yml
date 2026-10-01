@@ -1,0 +1,412 @@
+# Default gateway configuration.
+#
+# This file is a sample, not an exhaustive reference: it documents a subset
+# of the fields the binary understands. For the complete, verified key list (every field, type, default, and env var) see
+# docs/configuration.md. An empty/missing config file (or one that omits a
+# section) falls back to internal/config.Default(), not to this file --
+# this file is never loaded unless CONFIG_PATH/--config points at it (or a
+# copy of it). Values can be overridden per-deployment via environment
+# variables of the form GATEWAY_<SECTION>_<FIELD>, e.g.
+# GATEWAY_DATABASE_HOST=postgres.
+
+service:
+  # Service name, reported on the MCP plane's /health.
+  name: tusk-ai-secured-gateway
+  # Ignored: the gateway reports its build version (-ldflags -X main.version=...).
+  version: dev
+
+# MCP plane: proxies MCP tool-server traffic.
+mcp:
+  enabled: true
+  address: "0.0.0.0:8080"
+  read_timeout: 30s
+  # 0 = unlimited (the built-in default). GET /mcp/stream is a long-lived
+  # SSE channel that a non-zero write timeout would sever on a fixed schedule.
+  write_timeout: 0s
+
+# MCP sessions (the Mcp-Session-Id an initialize hands out).
+sessions:
+  # The pkg/session driver sessions live in.
+  # memory (default): in-process, so the mcp plane runs as ONE replica.
+  # redis: sessions live in Redis and tools/list_changed is relayed
+  # between replicas over Redis pub/sub, so gateway-mcp can scale out
+  # behind one Service. Needs the redis section below enabled.
+  # Any other name: a driver a custom binary registered with
+  # pkg/session.Register (see CONTRIBUTING.md, "Adding a session backend").
+  # Env: GATEWAY_SESSIONS_STORE.
+  store: memory
+  # Idle lifetime: a session unused for this long is gone.
+  ttl: 1h
+  # How often the memory store sweeps expired sessions (Redis expires
+  # keys on its own and ignores this).
+  cleanup_interval: 5m
+  # Driver-specific settings for a third-party driver, passed verbatim as
+  # pkg/session.Config.Options. YAML only (no GATEWAY_* override); the
+  # built-in drivers ignore it.
+  # options:
+  #   dsn: "..."
+
+# Redis: read only when sessions.store is redis. A single node (managed
+# or self-hosted); cluster: true is rejected at startup for now.
+redis:
+  enabled: false
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+  # true dials with TLS 1.2+ (e.g. a managed Redis with in-transit
+  # encryption).
+  tls: false
+  cluster: false
+
+# API plane: control-plane REST API, and optionally the bundled UI.
+api:
+  enabled: true
+  address: "0.0.0.0:8081"
+  serve_ui: true
+  # Proxies (single IPs or CIDRs) whose X-Forwarded-For is believed, for the
+  # rate limiters and the logged client_ip of EVERY plane. The client is the
+  # first address, walking X-Forwarded-For from the right, outside this set.
+  # Empty: X-Forwarded-For is ignored and clients are keyed on the TCP peer
+  # -- behind a load balancer/ingress that is one shared identity, so set it
+  # to the CIDR your proxies connect from, e.g. the VPC or pod CIDR:
+  #   trusted_proxies: ["10.0.0.0/16"]
+  # (also GATEWAY_API_TRUSTED_PROXIES="10.0.0.0/16,10.1.0.0/16")
+  trusted_proxies: []
+
+# LLM proxy plane: fronts LLM providers (Claude direct or via Bedrock).
+# Disabled by default; enable once an upstream is configured.
+llm_proxy:
+  enabled: false
+  address: "0.0.0.0:8082"
+  upstream_base_url: "https://api.anthropic.com"
+
+  capture:
+    # Durable capture store for every proxied call: "postgres" (default)
+    # inserts each call into Postgres llm_calls synchronously and idempotently,
+    # before the request completes -- the audit source of record. Anything
+    # else falls back to best-effort stdout, not durable. A best-effort copy
+    # is ALSO teed into sinks.* below (ClickHouse/OTel), independently of
+    # this setting -- see docs/llm-plane.md, "Capture: durable write vs. analytics tee".
+    store: postgres
+
+  # Optional path to a JSON file, in the same shape as
+  # pkg/pricing/prices.json, that overrides the embedded per-model cost
+  # rate card. At startup, if set, its models are merged OVER the embedded
+  # card (a model present in the file replaces the embedded entry; models
+  # absent from the file keep their embedded price); a malformed file
+  # fails startup rather than being silently ignored. Empty (the default)
+  # means the embedded card alone. See docs/llm-plane.md, "Cost estimates
+  # and pricing_file".
+  pricing_file: ""
+
+# Database: required. The gateway will not start if it cannot connect.
+database:
+  # Selects the registered store backend (pkg/store.Open). "postgres" is
+  # the only backend shipped in this module.
+  driver: postgres
+  host: localhost
+  port: 5432
+  user: gateway
+  password: gateway
+  database: gateway
+  # require | disable | verify-ca | verify-full. Local/dev compose overrides
+  # this to "disable"; use "require" or stronger in any shared environment.
+  ssl_mode: require
+  # When true, pending migrations are applied at startup. Also runnable
+  # standalone via `gateway migrate`.
+  migrate: true
+
+# Auth: how inbound requests are authenticated before reaching a plane
+# handler. See internal/auth.
+auth:
+  # api_keys: the primary Authenticator, backed by hashed, tenant-bound
+  # bearer credentials issued via `gateway bootstrap-key` or
+  # POST /api/v1/api-keys. Requests present a key as either
+  # "Authorization: Bearer gk_..." or "X-Gateway-Key: gk_...".
+  api_keys:
+    enabled: true
+    # How long a successful key lookup is cached in memory before being
+    # re-fetched from the store. A revoked/rotated key is evicted from every
+    # replica at once (Postgres LISTEN/NOTIFY); this TTL is the backstop for
+    # a replica whose listener connection is down.
+    cache_ttl: 30s
+
+  # Tenant the console login form is prefilled with (and a login with no
+  # tenant uses); when exactly one tenant exists, that tenant instead.
+  # bootstrap-key does not read this (its -tenant flag defaults to "default").
+  default_tenant: default
+
+  # Console username/password login (see docs/authentication.md). Create
+  # the first user with `gateway create-user`.
+  #
+  # console_api_key_login: also offer "sign in with an API key" on the
+  # console login page. An emergency fallback, on by default in this
+  # release and planned for removal; it only steers the console, API keys
+  # keep working for API calls either way.
+  console_api_key_login: true
+  # cookie_secure: Secure flag on the session cookie. auto = when the
+  # request is TLS or X-Forwarded-Proto is https; true/false force it.
+  cookie_secure: auto
+  # A console session expires after session_idle without use, and
+  # session_max after login regardless of use.
+  session_idle: 8h
+  session_max: 24h
+
+  # roles: custom role -> permission-pattern grants, merged over the
+  # built-in roles (admin: "*"; platform-admin: "platform.*"; agent:
+  # "mcp.*", "llm.*", "*.read"; viewer: "*.read"; interceptor: "ingest.write")
+  # at startup. A role name here that matches a built-in REPLACES it entirely;
+  # any other name adds a new role that POST /api-keys will then accept.
+  # Empty/omitted (the default) means only the built-ins exist. Example:
+  #
+  #   roles:
+  #     reader: ["*.read"]
+  #
+  # Not overridable via GATEWAY_* environment variables (it's a nested
+  # map) -- set it from this file, or a deployment-specific one passed
+  # via CONFIG_PATH.
+  #
+  # platform.admin: a permission namespace carved out from the ordinary
+  # wildcard rules -- a bare "*" or "*.read" grant does NOT imply
+  # "platform.*", only an explicit "platform.*"/"platform.admin" pattern
+  # does (see pkg/auth.RoleAuthorizer.Allow). It gates platform-wide
+  # concerns that aren't scoped to any one tenant, starting with GET/POST
+  # /tenants (tenant enumeration/creation). The built-in admin role is a
+  # TENANT admin and does not hold it; the built-in platform-admin role
+  # ("platform.*") does. `gateway bootstrap-key` gives the first key ever
+  # created both roles; later keys need `--platform`.
+  roles: {}
+
+  # dev_mode: a gap-filling Authenticator for local development only. When
+  # enabled, any request carrying NO credential at all (no Authorization
+  # header, no X-Gateway-Key) is granted an admin principal instead of
+  # being rejected, and a WARN is logged every time this happens. Never
+  # enable this outside local development. Startup logs a WARN, and the
+  # gateway refuses to start if a plane listens on a non-loopback address
+  # unless allow_remote is true. The principal is a tenant admin only.
+  dev_mode:
+    enabled: false
+    # Tenant slug (or UUID) the manufactured dev-mode principal is scoped
+    # to. Required when enabled; it must already exist.
+    tenant: default
+    allow_remote: false
+    # Also grant platform-admin to the dev principal.
+    platform: false
+
+# Secret store: the encrypted credential store (internal/secrets) backing
+# connectors' "secret_store" outbound-header provider.
+secret_store:
+  # Name of the environment variable holding the master key ring used to
+  # encrypt/decrypt every stored credential. Required -- the gateway will
+  # not start without it. Generate a value with `openssl rand -base64 32`
+  # (or `gateway secrets genkey`), and set it as GATEWAY_MASTER_KEY, e.g.
+  #   export GATEWAY_MASTER_KEY=$(gateway secrets genkey)
+  # For rotation, set it instead to a comma-separated "id:key" list, e.g.
+  # "k1:<old-key>,k2:<new-key>", and set active_key_id to the new id; see
+  # `gateway secrets rekey`.
+  master_key_env: GATEWAY_MASTER_KEY
+  # Alternative to master_key_env: a file path to read the key ring from
+  # instead. Only consulted when master_key_env is unset in the process
+  # environment.
+  master_key_file: ""
+  # Which key in the ring new writes encrypt under.
+  active_key_id: k1
+
+  # allow_env_provider enables the "env" external header provider, which
+  # reads a header's value straight out of the gateway process's own
+  # environment. Default false: in a shared/multi-tenant deployment, this
+  # would let any tenant admin who can configure a connector's headers
+  # read ANY environment variable visible to the process -- including
+  # GATEWAY_MASTER_KEY itself -- simply by pointing a header at it. Only
+  # enable this on a single-tenant deployment, or one where every tenant
+  # is already trusted with the host environment.
+  allow_env_provider: false
+  # allow_file_provider enables the "file" external header provider, which
+  # reads a header's value from a file on the gateway's local filesystem.
+  # Default false; when enabled, file_provider_root is also required, and
+  # every configured path must resolve underneath it.
+  allow_file_provider: false
+  # Directory the "file" provider's paths must resolve under. Required
+  # when allow_file_provider is true.
+  file_provider_root: ""
+
+logging:
+  # debug | info | warn | error
+  level: info
+  # true selects human-readable text logs instead of JSON.
+  development: false
+
+# Platform MCP catalog: curated MCP servers a tenant admin can "Add to
+# tenant" from the console (POST /api/v1/mcp-catalog/{slug}/add), which
+# creates an ordinary tenant connector. Entries are inert until added.
+# Upserted by slug at startup; entries not listed here are left alone.
+# This list is built into the gateway, so it is seeded even without a
+# CONFIG_PATH. A loaded config file that sets `seed` replaces it; `seed: []`
+# stops seeding (rows already seeded stay).
+# auth.kind: none | bearer | basic | header | oauth (oauth is listed but
+# not yet addable). A field with `query` is appended to the URL as that
+# query parameter instead of going into the credential.
+mcp_catalog:
+  seed:
+    - slug: langfuse
+      name: Langfuse
+      description: Query traces, prompts, datasets and scores from Langfuse LLM observability.
+      icon: activity
+      category: observability
+      url: https://us.cloud.langfuse.com/api/public/mcp
+      # Other regions: https://cloud.langfuse.com/api/public/mcp (EU),
+      # https://jp.cloud.langfuse.com/api/public/mcp (Japan),
+      # https://hipaa.cloud.langfuse.com/api/public/mcp (HIPAA US), or
+      # https://<your-domain>/api/public/mcp when self-hosted.
+      url_overridable: true
+      docs_url: https://langfuse.com/docs/api-and-data-platform/features/mcp-server
+      auth:
+        kind: basic
+        fields:
+          - name: public_key
+            label: Public key
+            required: true
+            placeholder: pk-lf-...
+            help: Project API public key (Project settings, API keys).
+          - name: secret_key
+            label: Secret key
+            secret: true
+            required: true
+            placeholder: sk-lf-...
+            help: Project API secret key. Sent as HTTP Basic auth with the public key.
+    - slug: supabase
+      name: Supabase
+      description: Manage Supabase projects, run SQL, inspect schemas and read logs.
+      icon: database
+      category: database
+      url: https://mcp.supabase.com/mcp
+      docs_url: https://supabase.com/docs/guides/getting-started/mcp
+      auth:
+        kind: bearer
+        fields:
+          - name: access_token
+            label: Personal access token
+            secret: true
+            required: true
+            placeholder: sbp_...
+            help: Create one in the Supabase dashboard under Account, Access tokens.
+          - name: project_ref
+            label: Project ref (optional)
+            query: project_ref
+            placeholder: abcdefghijklmnop
+            help: Scope the server to one project. Account-level tools are disabled when set.
+          - name: read_only
+            label: Read only (optional)
+            query: read_only
+            placeholder: "true"
+            help: Enter true to run queries as a read-only database user.
+    - slug: drawio
+      name: Draw.io
+      description: Create and edit draw.io diagrams.
+      icon: shapes
+      category: diagramming
+      url: https://mcp.draw.io/mcp
+      docs_url: https://github.com/jgraph/drawio-mcp
+      auth:
+        kind: none
+    - slug: google-drive
+      name: Google Drive
+      description: Search and read files in Google Drive.
+      icon: hard-drive
+      category: storage
+      url: https://drivemcp.googleapis.com/mcp/v1
+      docs_url: https://developers.google.com/workspace/drive/api/guides/configure-mcp-server
+      auth:
+        # Google documents OAuth 2.0 only (no API key or service account).
+        kind: oauth
+    - slug: atlassian
+      name: Atlassian
+      description: Work with Jira and Confluence through the Atlassian Rovo MCP server.
+      icon: kanban
+      category: collaboration
+      url: https://mcp.atlassian.com/v2/mcp
+      docs_url: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/configuring-authentication-via-api-token/
+      auth:
+        kind: basic
+        fields:
+          - name: email
+            label: Atlassian account email
+            required: true
+            placeholder: you@example.com
+            help: API-token authentication must be enabled by your Atlassian organization admin.
+          - name: api_token
+            label: API token
+            secret: true
+            required: true
+            help: Create one at id.atlassian.com under Security, API tokens. Some tools are unavailable with API-token auth.
+    - slug: context7
+      name: Context7
+      description: Up-to-date library documentation and code examples for prompts.
+      icon: book-open
+      category: documentation
+      url: https://mcp.context7.com/mcp
+      docs_url: https://github.com/upstash/context7
+      auth:
+        kind: bearer
+        fields:
+          - name: api_key
+            label: API key (optional)
+            secret: true
+            placeholder: ctx7sk-...
+            help: Optional. Works without a key at lower rate limits; get one free at context7.com/dashboard.
+    - slug: github
+      name: GitHub
+      description: Work with repositories, issues, pull requests and Actions through the remote GitHub MCP server.
+      icon: git-branch
+      category: developer
+      url: https://api.githubcopilot.com/mcp/
+      docs_url: https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp/set-up-the-github-mcp-server
+      auth:
+        kind: bearer
+        fields:
+          - name: token
+            label: Personal access token
+            secret: true
+            required: true
+            placeholder: github_pat_...
+            help: Tools are limited to the scopes the token carries.
+    - slug: stripe
+      name: Stripe
+      description: Search Stripe docs and read or change Stripe data through the Stripe API.
+      icon: credit-card
+      category: payments
+      url: https://mcp.stripe.com
+      docs_url: https://docs.stripe.com/mcp
+      auth:
+        kind: bearer
+        fields:
+          - name: api_key
+            label: Agent API key
+            secret: true
+            required: true
+            placeholder: rk_...
+            help: Must be a Stripe agent API key. From October 31, 2026 Stripe no longer accepts full-access secret keys or restricted keys without the Agent tag.
+    - slug: huggingface
+      name: Hugging Face
+      description: Search models, datasets, Spaces and papers on the Hugging Face Hub.
+      icon: smile
+      category: machine-learning
+      url: https://huggingface.co/mcp
+      docs_url: https://huggingface.co/docs/hub/agents-mcp
+      auth:
+        kind: bearer
+        fields:
+          - name: token
+            label: Access token (optional)
+            secret: true
+            placeholder: hf_...
+            help: Optional. Anonymous access gets the public tool set; a token unlocks the tools tied to your account.
+    - slug: deepwiki
+      name: DeepWiki
+      description: Ask questions about public GitHub repositories and read their generated wikis.
+      icon: library
+      category: documentation
+      url: https://mcp.deepwiki.com/mcp
+      docs_url: https://docs.devin.ai/work-with-devin/deepwiki-mcp
+      auth:
+        kind: none

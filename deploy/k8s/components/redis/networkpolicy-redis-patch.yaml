@@ -1,0 +1,21 @@
+# deploy/k8s/base/networkpolicy.yaml only lets gateway pods egress to DNS,
+# Postgres, ClickHouse and port 443, so the mcp pods could not reach the
+# session store without this rule. APPEND it (a JSON patch on
+# /spec/egress/-): NetworkPolicy rules have no merge key, so a
+# strategic-merge patch would replace the whole egress list instead of
+# extending it. Same pattern as
+# examples/10-kubernetes/overlay/networkpolicy-everything-patch.yaml.
+#
+# With a managed Redis outside the cluster, replace the podSelector with
+# an ipBlock for its endpoint (and keep the port, or the TLS port your
+# provider uses).
+- op: add
+  path: /spec/egress/-
+  value:
+    to:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: redis
+    ports:
+      - protocol: TCP
+        port: 6379

@@ -1,0 +1,16 @@
+# Local testing with Redis-backed MCP sessions:
+# `kubectl apply -k deploy/k8s/overlays/kind-redis`.
+#
+# overlays/kind (dev Postgres, dev secrets, local image tag, NodePort
+# Services) plus the Redis component (dev Redis, gateway-mcp on
+# GATEWAY_SESSIONS_STORE=redis with 2 replicas, NetworkPolicy egress to
+# :6379). Build and load the image exactly as deploy/README.md's "Local
+# testing (kind)" describes; only the apply target changes.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../kind
+
+components:
+  - ../../components/redis

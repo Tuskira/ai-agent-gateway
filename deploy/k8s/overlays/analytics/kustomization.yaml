@@ -1,0 +1,17 @@
+# Adds ClickHouse (backs the console's dashboard/LLM-logs read side) on top
+# of base: `kubectl apply -k deploy/k8s/overlays/analytics`.
+#
+# This overlay extends ../../base, the same as overlays/kind does -- it is
+# not layered on kind. To exercise analytics inside a local kind cluster,
+# see deploy/README.md's "Run the analytics overlay" section.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - clickhouse-statefulset.yaml
+  - clickhouse-service.yaml
+
+patches:
+  - path: gateway-env-clickhouse-patch.yaml
+  - path: gateway-secrets-clickhouse-patch.yaml

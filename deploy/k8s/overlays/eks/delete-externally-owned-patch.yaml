@@ -1,0 +1,17 @@
+# Both objects exist before the first deploy and are owned elsewhere:
+#   - the Namespace (so a namespace-scoped deploy identity can apply into
+#     it, and so it can carry the ALB pod-readiness-gate label);
+#   - gateway-secrets (GATEWAY_MASTER_KEY + GATEWAY_DATABASE_* ), which
+#     must never be overwritten by base/secret.yaml's REPLACE_ME template.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-gateway
+$patch: delete
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gateway-secrets
+  namespace: ai-gateway
+$patch: delete

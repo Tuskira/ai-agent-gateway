@@ -1,0 +1,46 @@
+# Split from ingress.yaml (rather than one Ingress with all three hosts)
+# because the SSE-friendly annotations below are per-Ingress-object in
+# ingress-nginx, not per-host/per-rule, and only the mcp/llm hosts need
+# them: mcp's GET /mcp/stream and the llm plane's streamed completions are
+# long-lived SSE/chunked responses that ingress-nginx's defaults (60s read
+# timeout, response buffering) would sever or stall.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-stream
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: ai-gateway
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mcp.gateway.example.com
+        - llm.gateway.example.com
+      secretName: gateway-tls
+  rules:
+    - host: mcp.gateway.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-mcp
+                port:
+                  number: 8080
+    - host: llm.gateway.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-llm
+                port:
+                  number: 8082

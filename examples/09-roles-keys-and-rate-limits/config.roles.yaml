@@ -1,0 +1,52 @@
+# Config overlay for example 09: adds a "reader" role and shortens the
+# auth-failure lockout so the rate-limit demo (run.sh, "lockout") finishes
+# in well under a minute.
+#
+# internal/config.Load (internal/config/config.go) starts from Default(),
+# then unmarshals this file ON TOP of that struct -- a section or field
+# left out here keeps its Default() value, it is not wiped out. GATEWAY_*
+# environment variables are applied AFTER this file (same function,
+# overlayEnv), so every GATEWAY_DATABASE_*, GATEWAY_AUTH_API_KEYS_ENABLED,
+# etc. env var deploy/docker-compose.yml already sets for the "gateway"
+# service still takes effect on top of this file. Of the two things this
+# example adds, only auth.roles has no GATEWAY_* env var equivalent -- it
+# is a map, and overlayEnv only sets string/int/bool/duration/[]string
+# leaves (see config.go's Auth.Roles doc comment). The rate_limit fields
+# could be env vars (GATEWAY_AUTH_RATE_LIMIT_LOCKOUT=20s); they live here
+# because the file is needed anyway.
+
+auth:
+  # A role name that doesn't collide with a built-in (admin,
+  # platform-admin, agent, viewer, interceptor) is
+  # added alongside them: pkg/auth.NewRoleAuthorizer seeds the built-ins
+  # first, then cmd/gateway/main.go's run() merges this map over them --
+  # a name that DID collide with a built-in would replace it outright,
+  # not merge into it (see config.go's Auth.Roles doc comment).
+  #
+  # "reader" is granted exactly these four read permissions -- not a
+  # blanket "*.read" -- so the grant is explicit and easy to audit. It
+  # still cannot: write anything (no *.create/*.update/*.delete grant);
+  # reach the MCP plane (missing "mcp.access", the one permission
+  # internal/dataplane/transport/auth.go requires); manage api-keys or
+  # credentials (those routes are gated on "admin.manage", not an
+  # "apikey.*"/"*.read" pattern, precisely so a read-only role can never
+  # list or mint keys -- see internal/api/handlers/apikeys.go's doc
+  # comment); or enumerate tenants (GET/POST /tenants is gated on
+  # "platform.admin", a namespace no "*"/"*.read"-style pattern can ever
+  # satisfy -- see pkg/auth.matchPermission's platform carve-out).
+  roles:
+    reader:
+      - "connector.read"
+      - "profile.read"
+      - "cache.read"
+      - "analytics.read"
+
+  rate_limit:
+    # Left at Default()'s value (10) but pinned explicitly so this
+    # example's contract -- "10 bad keys trip the lockout" -- doesn't
+    # silently drift if the built-in default ever changes.
+    max_failures: 10
+    # Shortened from Default()'s 5m so run.sh's lockout step doesn't have
+    # to wait that long before proving the locked-out key works again.
+    # window (1m) and requests_per_minute (600) are left at Default().
+    lockout: 20s

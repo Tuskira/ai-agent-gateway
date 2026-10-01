@@ -1,0 +1,72 @@
+# Composes with deploy/docker-compose.yml under the "analytics" profile
+# (same profile ClickHouse itself is gated behind -- see that file). Adds:
+#
+#   - otel-collector -- receives OTLP from the gateway (http :4318, grpc
+#     :4317), prints every span to its own container logs via the "debug"
+#     exporter (verbosity: detailed -- see otel-collector.yaml), and
+#     forwards the same spans on to Jaeger.
+#   - jaeger         -- Jaeger v2 (jaegertracing/jaeger; v2 is itself built
+#     on the OTel Collector core), UI at http://localhost:16686. v2
+#     accepts OTLP directly with no extra config -- there is no v1-style
+#     COLLECTOR_OTLP_ENABLED switch to set.
+#
+# deploy/docker-compose.yml's own environment block forwards
+# GATEWAY_SINKS_CLICKHOUSE_* but has no GATEWAY_SINKS_OTEL_* entries at
+# all (internal/config/config.go's OtelSink has no default there to
+# override), so this file is the only place those four env vars get
+# set. GATEWAY_SINKS_CLICKHOUSE_ENABLED still comes from the shell -- see
+# run.sh, and the same pattern in docs/observability.md.
+#
+# Usage (see run.sh):
+#   GATEWAY_SINKS_CLICKHOUSE_ENABLED=true docker compose \
+#     -f deploy/docker-compose.yml \
+#     -f examples/08-observability/docker-compose.observability.yml \
+#     --profile analytics up -d
+
+services:
+  gateway:
+    environment:
+      GATEWAY_SINKS_OTEL_ENABLED: "true"
+      GATEWAY_SINKS_OTEL_ENDPOINT: "otel-collector:4318"   # host:port, no scheme
+      GATEWAY_SINKS_OTEL_INSECURE: "true"                # plaintext OTLP inside the compose network
+      GATEWAY_SINKS_OTEL_PROTOCOL: "http"
+    # depends_on entries from multiple compose files are merged by key
+    # (https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/),
+    # so this adds to -- not replaces -- the base file's
+    # "postgres: service_healthy". Unlike the base file (which tolerates
+    # ClickHouse starting after the gateway via its own restart:
+    # on-failure loop), this example asserts against ClickHouse and the
+    # collector within seconds of startup, so it waits for both to avoid
+    # a needless first-boot restart.
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.159.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      # Relative paths in an overlay file resolve against the PROJECT
+      # directory, which Compose takes from the FIRST -f file
+      # (deploy/docker-compose.yml, i.e. deploy/) -- not against this
+      # overlay file's own directory. Hence "../examples/...", one level
+      # up from deploy/ (same gotcha, same fix, as
+      # examples/09-roles-keys-and-rate-limits/docker-compose.roles.yml).
+      # Verified with:
+      #   docker compose -f deploy/docker-compose.yml \
+      #     -f examples/08-observability/docker-compose.observability.yml \
+      #     config
+      - ../examples/08-observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "127.0.0.1:4317:4317"   # OTLP/gRPC (not used by the gateway, exposed for manual probing)
+      - "127.0.0.1:4318:4318"   # OTLP/HTTP -- the gateway exports here
+      - "127.0.0.1:13133:13133" # health_check extension
+    depends_on:
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    ports:
+      - "127.0.0.1:16686:16686" # UI

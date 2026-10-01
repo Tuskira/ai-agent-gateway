@@ -1,0 +1,32 @@
+# Non-secret env, applied via envFrom to all three plane Deployments and
+# the gateway-migrate Job. GATEWAY_DATABASE_PASSWORD (and any other secret
+# value) lives in the gateway-secrets Secret instead, never here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-env
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/part-of: ai-gateway
+data:
+  # Postgres is required (internal/config.Config.Database) -- point this at
+  # your own instance. The kind overlay patches HOST to the in-cluster dev
+  # StatefulSet's Service name.
+  GATEWAY_DATABASE_HOST: "postgres.CHANGE-ME.svc.cluster.local"
+  GATEWAY_DATABASE_PORT: "5432"
+  GATEWAY_DATABASE_USER: "gateway"
+  GATEWAY_DATABASE_DATABASE: "gateway"
+  # Migrations run exactly once, via the gateway-migrate Job (see
+  # job-migrate.yaml), not per-replica at plane startup -- three
+  # Deployments each racing `database.migrate: true` on boot is exactly
+  # what running the Job first avoids. See deploy/README.md.
+  GATEWAY_DATABASE_MIGRATE: "false"
+  # Proxies whose X-Forwarded-For is believed by the rate limiters and the
+  # logged client_ip (comma-separated IPs/CIDRs). UNSET here because the
+  # right value is cluster-specific: with ingress-nginx it is the cluster's
+  # POD CIDR (the controller pods connect from there); with an ALB
+  # (target-type: ip) it is the VPC CIDR. Left empty, X-Forwarded-For is
+  # ignored and every client behind the ingress shares the ingress pod's
+  # address -- one bad client then locks everyone out. The kind and eks
+  # overlays set it.
+  # GATEWAY_API_TRUSTED_PROXIES: "10.244.0.0/16"

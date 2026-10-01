@@ -1,0 +1,38 @@
+# Minimal OTel Collector pipeline for this example: receive OTLP from the
+# gateway, print every span (so run.sh can grep the shared trace id out of
+# `docker compose logs otel-collector`), and forward on to Jaeger.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    send_batch_size: 100
+    timeout: 2s
+
+exporters:
+  # verbosity: detailed prints each span's attributes -- including the
+  # trace id -- to the container's own stdout; "normal" verbosity only
+  # summarizes counts and would give run.sh nothing to grep for.
+  debug:
+    verbosity: detailed
+  otlphttp/jaeger:
+    endpoint: http://jaeger:4318
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, otlphttp/jaeger]

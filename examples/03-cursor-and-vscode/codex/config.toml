@@ -1,0 +1,14 @@
+# Codex CLI's streamable-HTTP MCP server config. Requires a Codex CLI
+# release with HTTP transport support (url + bearer_token_env_var /
+# http_headers) -- verify against `codex mcp --help` / the Codex docs if
+# your installed version predates it; older releases only support stdio
+# (command = "...") servers.
+[mcp_servers.tusk-ai-gateway]
+url = "http://localhost:8080/mcp"
+# bearer_token_env_var names an environment variable Codex reads at
+# connect time and sends as "Authorization: Bearer <value>" -- export it
+# yourself first: export GATEWAY_KEY=gk_...
+bearer_token_env_var = "GATEWAY_KEY"
+
+[mcp_servers.tusk-ai-gateway.http_headers]
+X-Agent-Profile-Name = "Full Access"

@@ -1,0 +1,475 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import './styles/tokens.css';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Tailwind v4 theme registration.
+ *
+ * `inline` is required for every entry below: each one aliases a Tailwind
+ * theme key to a raw design token custom property declared in
+ * styles/tokens.css (`:root` / `.dark`). Without `inline`, Tailwind would
+ * ALSO emit its own `:root { --the-same-name: ... }` declaration for the
+ * theme key; for keys whose Tailwind namespace happens to equal the raw
+ * token's own name one-for-one (`--shadow-1`, `--font-mono`, `--font-ui`),
+ * that second declaration would reference itself (`var(--shadow-1)` inside
+ * the definition of `--shadow-1`) — a circular reference, which the browser
+ * treats as invalid and drops. `inline` tells Tailwind to use the given
+ * expression directly when generating utility CSS instead of re-declaring
+ * the variable, which sidesteps the cycle and matches how the shadcn-
+ * generated `--color-border: var(--border)` entries below already behave.
+ */
+@theme inline {
+  --font-heading: var(--font-display);
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-mono);
+  --font-ui: var(--font-ui);
+  --font-display: var(--font-display);
+
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Design-system surface tokens -> bg-*, text-*, border-* utilities */
+  --color-bg: var(--bg);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-bg-muted: var(--bg-muted);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-subtle: var(--text-subtle);
+  --color-text-link: var(--text-link);
+
+  /* Indigo scale -> bg-indigo-9, text-indigo-11, border-indigo-9, etc. */
+  --color-indigo-1: var(--indigo-1);
+  --color-indigo-2: var(--indigo-2);
+  --color-indigo-3: var(--indigo-3);
+  --color-indigo-4: var(--indigo-4);
+  --color-indigo-5: var(--indigo-5);
+  --color-indigo-6: var(--indigo-6);
+  --color-indigo-7: var(--indigo-7);
+  --color-indigo-8: var(--indigo-8);
+  --color-indigo-9: var(--indigo-9);
+  --color-indigo-10: var(--indigo-10);
+  --color-indigo-11: var(--indigo-11);
+  --color-indigo-12: var(--indigo-12);
+  --color-indigo-d-1: var(--indigo-d-1);
+  --color-indigo-d-2: var(--indigo-d-2);
+  --color-indigo-d-3: var(--indigo-d-3);
+  --color-indigo-d-4: var(--indigo-d-4);
+  --color-indigo-d-5: var(--indigo-d-5);
+  --color-indigo-d-6: var(--indigo-d-6);
+  --color-indigo-d-7: var(--indigo-d-7);
+  --color-indigo-d-8: var(--indigo-d-8);
+  --color-indigo-d-9: var(--indigo-d-9);
+  --color-indigo-d-10: var(--indigo-d-10);
+  --color-indigo-d-11: var(--indigo-d-11);
+  --color-indigo-d-12: var(--indigo-d-12);
+
+  /* Slate scale */
+  --color-slate-1: var(--slate-1);
+  --color-slate-2: var(--slate-2);
+  --color-slate-3: var(--slate-3);
+  --color-slate-4: var(--slate-4);
+  --color-slate-5: var(--slate-5);
+  --color-slate-6: var(--slate-6);
+  --color-slate-7: var(--slate-7);
+  --color-slate-8: var(--slate-8);
+  --color-slate-9: var(--slate-9);
+  --color-slate-10: var(--slate-10);
+  --color-slate-11: var(--slate-11);
+  --color-slate-12: var(--slate-12);
+  --color-slate-d-1: var(--slate-d-1);
+  --color-slate-d-2: var(--slate-d-2);
+  --color-slate-d-3: var(--slate-d-3);
+  --color-slate-d-4: var(--slate-d-4);
+  --color-slate-d-5: var(--slate-d-5);
+  --color-slate-d-6: var(--slate-d-6);
+  --color-slate-d-7: var(--slate-d-7);
+  --color-slate-d-8: var(--slate-d-8);
+  --color-slate-d-9: var(--slate-d-9);
+  --color-slate-d-10: var(--slate-d-10);
+  --color-slate-d-11: var(--slate-d-11);
+  --color-slate-d-12: var(--slate-d-12);
+
+  /* Severity */
+  --color-sev-critical: var(--sev-critical);
+  --color-sev-critical-bg: var(--sev-critical-bg);
+  --color-sev-critical-fg: var(--sev-critical-fg);
+  --color-sev-high: var(--sev-high);
+  --color-sev-high-bg: var(--sev-high-bg);
+  --color-sev-high-fg: var(--sev-high-fg);
+  --color-sev-medium: var(--sev-medium);
+  --color-sev-medium-bg: var(--sev-medium-bg);
+  --color-sev-medium-fg: var(--sev-medium-fg);
+  --color-sev-low: var(--sev-low);
+  --color-sev-low-bg: var(--sev-low-bg);
+  --color-sev-low-fg: var(--sev-low-fg);
+  --color-sev-info: var(--sev-info);
+  --color-sev-info-bg: var(--sev-info-bg);
+  --color-sev-info-fg: var(--sev-info-fg);
+
+  /* Status */
+  --color-status-open: var(--status-open);
+  --color-status-open-bg: var(--status-open-bg);
+  --color-status-resolved: var(--status-resolved);
+  --color-status-resolved-bg: var(--status-resolved-bg);
+  --color-status-suppressed: var(--status-suppressed);
+  --color-status-suppressed-bg: var(--status-suppressed-bg);
+  --color-status-escalated: var(--status-escalated);
+  --color-status-escalated-bg: var(--status-escalated-bg);
+  --color-status-deferred: var(--status-deferred);
+  --color-status-deferred-bg: var(--status-deferred-bg);
+
+  /* Brand */
+  --color-brand-cyan-from: var(--brand-cyan-from);
+  --color-brand-cyan-to: var(--brand-cyan-to);
+  --color-brand-action-from: var(--brand-action-from);
+  --color-brand-action-to: var(--brand-action-to);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-bright: var(--brand-bright);
+  --color-brand-tusk: var(--brand-tusk);
+
+  /* Radius scale -> rounded-r-1 .. rounded-r-6, rounded-r-pill */
+  --radius-r-1: var(--r-1);
+  --radius-r-2: var(--r-2);
+  --radius-r-3: var(--r-3);
+  --radius-r-4: var(--r-4);
+  --radius-r-5: var(--r-5);
+  --radius-r-6: var(--r-6);
+  --radius-r-pill: var(--r-pill);
+
+  /* Shadow scale -> shadow-1 .. shadow-4 */
+  --shadow-1: var(--shadow-1);
+  --shadow-2: var(--shadow-2);
+  --shadow-3: var(--shadow-3);
+  --shadow-4: var(--shadow-4);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  /* Tuskira product blue (#2563eb), the same in both themes. */
+  --primary: oklch(0.546 0.215 262.9);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: var(--primary);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: var(--primary);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.546 0.215 262.9);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: var(--primary);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  /* Lightened primary: the base blue is too dim as text on the dark rail. */
+  --sidebar-primary: oklch(0.72 0.14 262.9);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.72 0.14 262.9);
+}
+
+/*
+ * The two blocks above are the stock shadcn neutral theme, except for
+ * --primary, --ring and --sidebar-primary (with their foreground/ring
+ * partners), which are Tuskira's product blue. The design
+ * system's surface tokens (--bg-*, --text-*, --border-strong) in
+ * styles/tokens.css are defined in terms of these variables, so they follow
+ * the theme in both modes. Severity, status, brand and the indigo/slate
+ * scales are independent of it.
+ */
+
+/*
+ * Dashboard card surface + hover effect. These are effect-specific values
+ * with no equivalent in tokens.json, so they live here rather than in the
+ * generated styles/tokens.css.
+ */
+:root {
+  --shadow-widget:
+    0 0 0 1px rgba(9, 30, 66, 0.14), 0 1px 2px rgba(9, 30, 66, 0.08),
+    0 4px 12px rgba(9, 30, 66, 0.1);
+  --hover-glow: rgba(59, 130, 246, 0.16);
+  --hover-sheen: rgba(255, 255, 255, 0.75);
+  --border-hover-accent: #dbeafe;
+}
+
+.dark {
+  --shadow-widget: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --hover-glow: rgba(87, 157, 255, 0.14);
+  --hover-sheen: rgba(255, 255, 255, 0.06);
+  --border-hover-accent: rgba(87, 157, 255, 0.35);
+}
+
+@layer components {
+  /* On hover a blue radial glow (::before) fades in, a soft sheen (::after)
+     sweeps across and the border picks up a blue tint. The shadow stays as
+     it is at rest. */
+  .dash-card {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    box-shadow: var(--shadow-widget);
+    transition: border-color 300ms ease-out;
+  }
+  /* content sits above the glow/sheen pseudo-layers */
+  .dash-card > * {
+    position: relative;
+    z-index: 1;
+  }
+  .dash-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    background: radial-gradient(
+      120% 90% at 12% 0%,
+      var(--hover-glow) 0%,
+      transparent 60%
+    );
+    opacity: 0;
+    transition: opacity 500ms ease;
+  }
+  .dash-card::after {
+    content: '';
+    position: absolute;
+    left: -6rem;
+    top: -5rem;
+    height: 7rem;
+    width: 11rem;
+    pointer-events: none;
+    border-radius: 9999px;
+    transform: rotate(6deg);
+    background: var(--hover-sheen);
+    opacity: 0;
+    /* No blur at rest: a permanent blur filter forces a raster layer per
+       card. It is applied on hover only, below. */
+    transition:
+      transform 700ms ease-out,
+      opacity 700ms ease-out,
+      filter 700ms ease-out;
+  }
+  .dash-card:hover::before {
+    opacity: 1;
+  }
+  .dash-card:hover::after {
+    opacity: 0.7;
+    transform: translateX(9rem) rotate(6deg);
+    filter: blur(18px);
+  }
+
+  /* Shiny button: a glint that follows the `--x` custom property, which
+     the button animates. The label is masked so the glint passes through
+     the text; the border layer paints it around the edge only. */
+  .shiny-label {
+    mask-image: linear-gradient(
+      -75deg,
+      #000 calc(var(--x) + 20%),
+      transparent calc(var(--x) + 30%),
+      #000 calc(var(--x) + 100%)
+    );
+  }
+  .shiny-border {
+    mask:
+      linear-gradient(#000, #000) content-box exclude,
+      linear-gradient(#000, #000);
+    background-image: linear-gradient(
+      -75deg,
+      color-mix(in oklch, var(--primary-foreground) 10%, transparent) calc(var(--x) + 20%),
+      color-mix(in oklch, var(--primary-foreground) 70%, transparent) calc(var(--x) + 25%),
+      color-mix(in oklch, var(--primary-foreground) 10%, transparent)
+        calc(var(--x) + 100%)
+    );
+  }
+
+  /* Ranked-bar fill: wipes in from the left on mount, then eases to a new
+     width when the data changes. Rows inside a `.bar-list` start in turn. */
+  .bar-fill {
+    transition: width 500ms ease-out;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .bar-fill {
+      animation: bar-reveal 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    .bar-list > :nth-child(2) .bar-fill {
+      animation-delay: 60ms;
+    }
+    .bar-list > :nth-child(3) .bar-fill {
+      animation-delay: 120ms;
+    }
+    .bar-list > :nth-child(4) .bar-fill {
+      animation-delay: 180ms;
+    }
+    .bar-list > :nth-child(5) .bar-fill {
+      animation-delay: 240ms;
+    }
+    .bar-list > :nth-child(6) .bar-fill {
+      animation-delay: 300ms;
+    }
+    .bar-list > :nth-child(n + 7) .bar-fill {
+      animation-delay: 360ms;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dash-card,
+    .dash-card::before,
+    .dash-card::after,
+    .bar-fill {
+      transition: none;
+    }
+    .dash-card:hover::after {
+      transform: rotate(6deg);
+    }
+  }
+}
+
+/* Unlayered on purpose: inside a layer the `border-transparent` utility
+   would win over this hover colour. */
+.dash-card:hover {
+  border-color: var(--border-hover-accent);
+}
+
+/*
+ * Theme switch: circular reveal. hooks/use-theme.ts flips the `.dark` class
+ * inside a view transition and animates the incoming snapshot's clip-path as
+ * a circle growing from the toggle. Here the browser's default root
+ * cross-fade is switched off, so the old theme holds still underneath while
+ * the new one wipes in over it.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) {
+    animation: none;
+    z-index: 0;
+  }
+  ::view-transition-new(root) {
+    animation: none;
+    z-index: 1;
+  }
+}
+
+/* Entrance: the direct children of a `.rise-in` container rise and fade
+   in. Off under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .rise-in > * {
+    animation: rise-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.05s both;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bar-reveal {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

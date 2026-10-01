@@ -79,7 +79,7 @@ compose-down:
 
 # examples-smoke runs run.sh for every example that needs no external
 # credential (today: 01-quickstart, 05-profiles, 12-skills-and-commands,
-# and 04-python-agent -- see examples/README.md). Each run.sh brings up what it needs itself (the
+# 13-claude-desktop (gateway side only), and 04-python-agent -- see examples/README.md). Each run.sh brings up what it needs itself (the
 # compose stack, a local MCP server) and is safe to re-run. 04-python-agent
 # runs in its --mcp-only mode here, since no ANTHROPIC_API_KEY is set in CI.
 examples-smoke:
@@ -93,6 +93,8 @@ examples-smoke:
 	./examples/07-llm-passthrough/run.sh
 	./examples/08-observability/run.sh
 	./examples/11-server-requests/run.sh
+	./examples/13-claude-desktop/check.sh
+	./examples/13-claude-desktop/run.sh
 	./examples/09-roles-keys-and-rate-limits/run.sh
 
 # examples-k8s runs the Kubernetes example on a local kind cluster

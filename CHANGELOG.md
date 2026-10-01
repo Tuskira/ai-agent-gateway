@@ -217,6 +217,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `examples/13-claude-desktop`: Claude Desktop (macOS) in the console via the
+  public [claude-desktop-utility](https://github.com/Tuskira/claude-desktop-utility)
+  and `POST /api/v1/ingest`. The walkthrough covers enabling ingest, an
+  `interceptor`-role key, installing the utility and pointing Claude Desktop
+  at it; `run.sh` checks the gateway side (roles, dedup, logs API, session
+  timeline) with no Mac, and runs in `make examples-smoke`.
 - Third-party license notices now ship everywhere the gateway does.
   `make notices` (`tools/notices`) classifies every Go module's license,
   fails the build if one falls outside an allow list (MIT, BSD-2-Clause,

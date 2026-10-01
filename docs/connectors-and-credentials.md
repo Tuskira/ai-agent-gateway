@@ -51,7 +51,7 @@ resolves only to such addresses (a name that does not resolve yet is
 accepted and checked at dial time), not just a literal IP — unless that range or host is
 allowlisted via `egress.allowed_cidrs` / `egress.allowed_hosts`. This is
 the gateway's outbound-request (SSRF) guard; see the [README's "MCP
-servers on localhost or private networks"](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/README.md#mcp-servers-on-localhost-or-private-networks)
+servers on localhost or private networks"](https://github.com/Tuskira/ai-agent-gateway/blob/main/README.md#mcp-servers-on-localhost-or-private-networks)
 for how to allow a local or private MCP server, and
 [security-model.md#outbound-requests-ssrf](security-model.md#outbound-requests-ssrf)
 for what it blocks and why.

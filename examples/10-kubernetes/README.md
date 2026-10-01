@@ -125,7 +125,7 @@ reused/reconciled rather than recreated. What it does, in order:
    depends on GHCR being reachable or public. Set `GATEWAY_IMAGE` to skip
    the build and pull an existing image instead:
    ```sh
-   GATEWAY_IMAGE=ghcr.io/tuskira/tusk-ai-secured-gateway:0.3.0 ./run.sh
+   GATEWAY_IMAGE=ghcr.io/tuskira/ai-agent-gateway:0.3.0 ./run.sh
    ```
 3. **Render and apply `overlay/`** (`kubectl kustomize overlay/ | kubectl
    apply -f -`) — the local-build path uses the image tag the overlay

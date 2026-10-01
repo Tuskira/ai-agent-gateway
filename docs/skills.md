@@ -15,7 +15,7 @@ Neither is visible or usable on its own — see
 [Attachment = grant](#attachment--grant) below. A skill or command is
 never forwarded to a connector (an MCP server registered with the gateway;
 the console's **MCPs** page); it is served entirely by the gateway
-itself. See [example 12](https://github.com/Tuskira/tusk-ai-secured-gateway/tree/main/examples/12-skills-and-commands) for a
+itself. See [example 12](https://github.com/Tuskira/ai-agent-gateway/tree/main/examples/12-skills-and-commands) for a
 worked, runnable walkthrough of everything on this page.
 
 ## Skill vs. command vs. instructions
@@ -225,7 +225,7 @@ attached skill. Full shapes, pagination, caching and error codes:
 Neither of the above requires a client to keep anything on disk. Some
 tools — Claude Code among them — read skills from plain files under
 `.claude/skills/<name>/` instead of over MCP. For that case,
-[`examples/12-skills-and-commands/sync-skills.sh`](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/examples/12-skills-and-commands/sync-skills.sh)
+[`examples/12-skills-and-commands/sync-skills.sh`](https://github.com/Tuskira/ai-agent-gateway/blob/main/examples/12-skills-and-commands/sync-skills.sh)
 pulls a profile's attached skills straight from the control-plane API
 (`GET /profiles/{id}/skills` + `GET /skills/{id}/versions/{v}`) into that
 layout — no MCP round trip, and safe to wire into a `SessionStart` hook

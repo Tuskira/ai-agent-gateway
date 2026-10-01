@@ -1,6 +1,6 @@
 version: 2
 
-project_name: tusk-ai-secured-gateway
+project_name: ai-agent-gateway
 
 # The React admin console is go:embed'd into the binary at compile time
 # (internal/api/ui/ui.go, //go:embed dist/*), so internal/api/ui/dist must
@@ -85,7 +85,7 @@ changelog:
 release:
   github:
     owner: Tuskira
-    name: tusk-ai-secured-gateway
+    name: ai-agent-gateway
   draft: false
   prerelease: auto
 
@@ -110,12 +110,12 @@ dockers:
       - NOTICE
       - THIRD_PARTY_NOTICES
     image_templates:
-      - "ghcr.io/tuskira/tusk-ai-secured-gateway:{{ .Version }}-amd64"
+      - "ghcr.io/tuskira/ai-agent-gateway:{{ .Version }}-amd64"
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
       - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.source=https://github.com/Tuskira/tusk-ai-secured-gateway"
+      - "--label=org.opencontainers.image.source=https://github.com/Tuskira/ai-agent-gateway"
       # tusk-ai-secured-gateway itself is Apache-2.0 (this label describes
       # the subject software, per the OCI annotations spec, not every file in
       # the image). The image also bundles third-party components under their
@@ -142,12 +142,12 @@ dockers:
       - NOTICE
       - THIRD_PARTY_NOTICES
     image_templates:
-      - "ghcr.io/tuskira/tusk-ai-secured-gateway:{{ .Version }}-arm64"
+      - "ghcr.io/tuskira/ai-agent-gateway:{{ .Version }}-arm64"
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
       - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.source=https://github.com/Tuskira/tusk-ai-secured-gateway"
+      - "--label=org.opencontainers.image.source=https://github.com/Tuskira/ai-agent-gateway"
       # tusk-ai-secured-gateway itself is Apache-2.0 (this label describes
       # the subject software, per the OCI annotations spec, not every file in
       # the image). The image also bundles third-party components under their
@@ -160,11 +160,11 @@ dockers:
       - "--label=org.opencontainers.image.description=tusk-ai-secured-gateway is Apache-2.0; third-party license notices for everything else bundled in this image are at /licenses/"
 
 docker_manifests:
-  - name_template: "ghcr.io/tuskira/tusk-ai-secured-gateway:{{ .Version }}"
+  - name_template: "ghcr.io/tuskira/ai-agent-gateway:{{ .Version }}"
     image_templates:
-      - "ghcr.io/tuskira/tusk-ai-secured-gateway:{{ .Version }}-amd64"
-      - "ghcr.io/tuskira/tusk-ai-secured-gateway:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/tuskira/tusk-ai-secured-gateway:latest"
+      - "ghcr.io/tuskira/ai-agent-gateway:{{ .Version }}-amd64"
+      - "ghcr.io/tuskira/ai-agent-gateway:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/tuskira/ai-agent-gateway:latest"
     image_templates:
-      - "ghcr.io/tuskira/tusk-ai-secured-gateway:{{ .Version }}-amd64"
-      - "ghcr.io/tuskira/tusk-ai-secured-gateway:{{ .Version }}-arm64"
+      - "ghcr.io/tuskira/ai-agent-gateway:{{ .Version }}-amd64"
+      - "ghcr.io/tuskira/ai-agent-gateway:{{ .Version }}-arm64"

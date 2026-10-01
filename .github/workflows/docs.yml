@@ -57,24 +57,28 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      # Only a main push needs the artifact; PR builds stop at "it builds".
-      - if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: website/build
+      # GitHub Pages publishing is switched off for now (the site is not
+      # launched yet). The build check above still runs. To publish again,
+      # uncomment this step and the deploy job below, enable Pages
+      # (Settings -> Pages -> Source: GitHub Actions) and set the domain.
+#      # Only a main push needs the artifact; PR builds stop at "it builds".
+#      - if: github.event_name != 'pull_request'
+#        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+#        with:
+#          path: website/build
 
-  deploy:
-    name: publish to GitHub Pages
-    if: github.event_name != 'pull_request'
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      pages: write # deploy to Pages
-      id-token: write # Pages verifies the deployment's OIDC token
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+#  deploy:
+#    name: publish to GitHub Pages
+#    if: github.event_name != 'pull_request'
+#    needs: build
+#    runs-on: ubuntu-latest
+#    timeout-minutes: 10
+#    permissions:
+#      pages: write # deploy to Pages
+#      id-token: write # Pages verifies the deployment's OIDC token
+#    environment:
+#      name: github-pages
+#      url: ${{ steps.deployment.outputs.page_url }}
+#    steps:
+#      - id: deployment
+#        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

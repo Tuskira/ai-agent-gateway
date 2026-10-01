@@ -21,6 +21,6 @@ patches:
   - path: delete-ingresses-patch.yaml
 
 images:
-  - name: ghcr.io/tuskira/tusk-ai-secured-gateway
+  - name: ghcr.io/tuskira/ai-agent-gateway
     newName: tusk-ai-secured-gateway
     newTag: dev

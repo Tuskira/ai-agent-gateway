@@ -1,7 +1,7 @@
 name: Publish image
 
 # Builds the gateway image from every push to main and publishes it to
-# GHCR as ghcr.io/tuskira/tusk-ai-secured-gateway:sha-<sha7> (immutable,
+# GHCR as ghcr.io/tuskira/ai-agent-gateway:sha-<sha7> (immutable,
 # one per commit) and :main (moving). Tagged releases keep publishing
 # :<version> and :latest through release.yml / GoReleaser.
 #
@@ -32,12 +32,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/tuskira/tusk-ai-secured-gateway
+  IMAGE: ghcr.io/tuskira/ai-agent-gateway
 
 jobs:
   publish:
     name: build and push to GHCR
-    if: github.repository == 'Tuskira/tusk-ai-secured-gateway'
+    if: github.repository == 'Tuskira/ai-agent-gateway'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

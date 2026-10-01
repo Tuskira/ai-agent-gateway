@@ -46,11 +46,11 @@ Operating the gateway:
 
 Project:
 
-- **[SECURITY.md](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/SECURITY.md)** — supported versions and how to
+- **[SECURITY.md](https://github.com/Tuskira/ai-agent-gateway/blob/main/SECURITY.md)** — supported versions and how to
   report a vulnerability.
-- **[CONTRIBUTING.md](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/CONTRIBUTING.md)** — dev setup, `make` targets,
+- **[CONTRIBUTING.md](https://github.com/Tuskira/ai-agent-gateway/blob/main/CONTRIBUTING.md)** — dev setup, `make` targets,
   and conventions for a pull request.
-- **[CODEOWNERS](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/CODEOWNERS)** — who reviews what.
+- **[CODEOWNERS](https://github.com/Tuskira/ai-agent-gateway/blob/main/CODEOWNERS)** — who reviews what.
 
 ## Status
 
@@ -58,4 +58,4 @@ The gateway is pre-1.0. The current release ships all three
 planes, the encrypted credential store, agent profiles, the control-plane
 API, OTel/ClickHouse sinks with analytics, and the embedded admin console.
 CI, tagged releases to GHCR, and Kubernetes manifests (`deploy/k8s`,
-see [deploy/README.md](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/deploy/README.md)) are in place.
+see [deploy/README.md](https://github.com/Tuskira/ai-agent-gateway/blob/main/deploy/README.md)) are in place.

@@ -1,0 +1,18 @@
+# Composes with deploy/docker-compose.yml under the "analytics" profile.
+# Turns on POST /api/v1/ingest, which is off by default
+# (ingest.enabled: false). deploy/docker-compose.yml has no GATEWAY_INGEST_*
+# entries of its own, so this file is the only place the variable reaches the
+# gateway container. Ingest also needs the ClickHouse sink
+# (GATEWAY_SINKS_CLICKHOUSE_ENABLED=true) -- that one still comes from the
+# shell, as in docs/observability.md.
+#
+# Usage (see run.sh and README.md):
+#   GATEWAY_SINKS_CLICKHOUSE_ENABLED=true docker compose \
+#     -f deploy/docker-compose.yml \
+#     -f examples/13-claude-desktop/docker-compose.ingest.yml \
+#     --profile analytics up -d
+
+services:
+  gateway:
+    environment:
+      GATEWAY_INGEST_ENABLED: "true"

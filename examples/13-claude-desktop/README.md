@@ -32,7 +32,7 @@ and `run.sh`) runs on any machine that runs Docker.
 
 - A Mac with Claude Desktop installed, and your Mac admin password (needed once
   to trust the utility's local certificate authority).
-- Go and `jq` on the Mac, to build the utility.
+- Go 1.27 or newer (the utility's `go.mod` requires `go 1.27`) and `jq` on the Mac, to build the utility.
 - Docker and the `docker compose` plugin, and `curl` and `jq`, for the gateway.
   The gateway can run on the same Mac or anywhere the Mac can reach.
 
@@ -97,10 +97,20 @@ rate limit is per key.
 
 ### 3. Install the utility
 
-Follow the utility's own guide, which is the supported install and is kept
-current there:
+Clone and build the utility first:
+
+```sh
+git clone https://github.com/Tuskira/claude-desktop-utility.git
+cd claude-desktop-utility
+make build
+```
+
+Run the remaining parts of the guide (the CA trust, `make install-agent
+GATEWAY_URL=http://localhost:8081`, and the `egressProxyUrl` setting) from that
+`claude-desktop-utility` directory. Then follow the utility's own guide, which
+is the supported install and is kept current there:
 **[deploy/macos/README.md](https://github.com/Tuskira/claude-desktop-utility/blob/main/deploy/macos/README.md)**.
-In short: Part 1 builds it, Part 2 creates a local certificate authority and
+In short: Part 1 builds it (done above), Part 2 creates a local certificate authority and
 trusts it system-wide, Part 3 is the gateway key (you already did it above, so
 skip to saving it at `~/.interceptor/gateway.key`), and Part 4 installs a
 launchd service that starts at login. Do not duplicate those commands from

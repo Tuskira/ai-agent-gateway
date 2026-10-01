@@ -45,7 +45,7 @@ spec:
           # which subset is selected below via env. Pin this to a release
           # tag or digest before production use -- ":latest" is for the
           # quickstart only.
-          image: ghcr.io/tuskira/tusk-ai-secured-gateway:latest
+          image: ghcr.io/tuskira/ai-agent-gateway:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http-api

@@ -33,5 +33,5 @@ resources:
 # the deploy script) take precedence over this for their own builds, so
 # this only changes what base/, analytics/ and redis/ render.
 images:
-  - name: ghcr.io/tuskira/tusk-ai-secured-gateway
+  - name: ghcr.io/tuskira/ai-agent-gateway
     newTag: "0.3.0"

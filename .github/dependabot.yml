@@ -31,6 +31,13 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # website/ pins React 18: @easyops-cn/docusaurus-search-local's peer
+    # range; a React 19 bump fails `npm ci` (ERESOLVE).
+    ignore:
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
     groups:

@@ -49,6 +49,6 @@ patches:
       labelSelector: app.kubernetes.io/name=gateway
 
 images:
-  - name: ghcr.io/tuskira/tusk-ai-secured-gateway
+  - name: ghcr.io/tuskira/ai-agent-gateway
     newName: ${GW_IMAGE_REPOSITORY}
     newTag: ${GW_IMAGE_TAG}

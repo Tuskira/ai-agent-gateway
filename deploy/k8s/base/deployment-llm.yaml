@@ -46,7 +46,7 @@ spec:
                     app.kubernetes.io/component: llm
       containers:
         - name: gateway
-          image: ghcr.io/tuskira/tusk-ai-secured-gateway:latest # overridden by the images: pin in kustomization.yaml when applied via kustomize
+          image: ghcr.io/tuskira/ai-agent-gateway:latest # overridden by the images: pin in kustomization.yaml when applied via kustomize
           imagePullPolicy: IfNotPresent
           ports:
             - name: http-llm

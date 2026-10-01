@@ -221,11 +221,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
+      # No separate setup-go here: govulncheck-action installs Go itself,
+      # and a second setup-go (with its module cache) collides with it on
+      # cache restore ("tar: Cannot open: File exists").
       - name: govulncheck
         uses: golang/govulncheck-action@v1
         with:
@@ -356,7 +354,7 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: tusk-ai-secured-gateway:ci-smoke
+          tags: ai-agent-gateway:ci-smoke
 
       # A throwaway key minted per run (rather than the docker-compose
       # dev default) -- one less "known" secret-shaped literal for
@@ -379,7 +377,7 @@ jobs:
             -e GATEWAY_DATABASE_MIGRATE=true \
             -e GATEWAY_AUTH_API_KEYS_ENABLED=true \
             -e GATEWAY_MASTER_KEY="$GATEWAY_MASTER_KEY" \
-            tusk-ai-secured-gateway:ci-smoke
+            ai-agent-gateway:ci-smoke
 
           for _ in $(seq 1 30); do
             code="$(curl -s -o /tmp/health.json -w '%{http_code}' http://localhost:8081/api/v1/health || true)"

@@ -1,4 +1,4 @@
-# gitleaks config for tusk-ai-secured-gateway.
+# gitleaks config for ai-agent-gateway (formerly tusk-ai-secured-gateway).
 #
 # Extends gitleaks' built-in default ruleset (AWS keys, private keys,
 # generic high-entropy secrets, etc.) and adds one project-specific rule
@@ -25,7 +25,7 @@
 #     to exercise many different fake secret shapes, so there is no
 #     fixed regex list to also require -- the path scoping alone keeps
 #     this from masking a real secret anywhere else in the repo.
-title = "tusk-ai-secured-gateway gitleaks config"
+title = "ai-agent-gateway gitleaks config"
 
 [extend]
 useDefault = true
@@ -63,4 +63,41 @@ regexes = [
 description = "internal/skills scanner test vectors (fake secrets used to test the skills secret scan)"
 paths = [
   '''internal/skills/validate_test\.go''',
+]
+
+[[allowlists]]
+description = "docs/observability.md sample analytics payload: a connector UUID under a JSON field named \"key\" (a node key, not a credential)"
+matchCondition = "AND"
+paths = [
+  '''docs/observability\.md''',
+]
+regexes = [
+  '''"key": "6f1d0c2e-1b7a-4c1e-9a52-0d3c8e2f4b11"''',
+]
+
+[[allowlists]]
+description = "web/src/test/UsersPage.test.tsx fixtures: fake one-time temporary passwords returned by the mocked users API"
+matchCondition = "AND"
+paths = [
+  '''web/src/test/UsersPage\.test\.tsx''',
+]
+regexes = [
+  '''temporary_password: '(Tmp-Pass-2345-xyz|Reset-Me-9876-abc)'''',
+]
+
+[[allowlists]]
+description = "pkg/rules secret-egress eval vectors (fake AWS keys, sample private keys, tokens) used to test the rule engine, not credentials"
+paths = [
+  '''pkg/rules/engine_test\.go''',
+  '''pkg/rules/testdata/evals/.*\.ya?ml''',
+]
+
+[[allowlists]]
+description = "web/src/test/model-catalog.test.ts: model catalog row keys (model ids under a field named key)"
+matchCondition = "AND"
+paths = [
+  '''web/src/test/model-catalog\.test\.ts''',
+]
+regexes = [
+  '''key: '[a-z0-9.-]+\'''',
 ]

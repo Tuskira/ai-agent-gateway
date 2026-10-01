@@ -43,7 +43,7 @@ const config = {
           path: '../docs',
           routeBasePath: '/',
           sidebarPath: './sidebars.js',
-          editUrl: 'https://github.com/Tuskira/tusk-ai-secured-gateway/edit/main/',
+          editUrl: 'https://github.com/Tuskira/ai-agent-gateway/edit/main/',
           exclude: ['**/.gitkeep'],
           showLastUpdateTime: false,
         },
@@ -83,9 +83,9 @@ const config = {
         },
         items: [
           { to: '/', label: 'Gateway Docs', position: 'left' },
-          { href: 'https://github.com/Tuskira/tusk-ai-secured-gateway/tree/main/examples', label: 'Examples', position: 'left' },
+          { href: 'https://github.com/Tuskira/ai-agent-gateway/tree/main/examples', label: 'Examples', position: 'left' },
           { href: 'https://app.tuskira.ai/documentation', label: 'Tuskira Help', position: 'left' },
-          { href: 'https://github.com/Tuskira/tusk-ai-secured-gateway', label: 'GitHub', position: 'right' },
+          { href: 'https://github.com/Tuskira/ai-agent-gateway', label: 'GitHub', position: 'right' },
           { type: 'search', position: 'right' },
         ],
       },
@@ -94,15 +94,15 @@ const config = {
         links: [
           {
             items: [
-              { label: 'Source', href: 'https://github.com/Tuskira/tusk-ai-secured-gateway' },
-              { label: 'Releases', href: 'https://github.com/Tuskira/tusk-ai-secured-gateway/releases' },
-              { label: 'Contributing', href: 'https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/CONTRIBUTING.md' },
-              { label: 'Security policy', href: 'https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/SECURITY.md' },
+              { label: 'Source', href: 'https://github.com/Tuskira/ai-agent-gateway' },
+              { label: 'Releases', href: 'https://github.com/Tuskira/ai-agent-gateway/releases' },
+              { label: 'Contributing', href: 'https://github.com/Tuskira/ai-agent-gateway/blob/main/CONTRIBUTING.md' },
+              { label: 'Security policy', href: 'https://github.com/Tuskira/ai-agent-gateway/blob/main/SECURITY.md' },
               { label: 'tuskira.ai', href: 'https://www.tuskira.ai' },
             ],
           },
         ],
-        copyright: `© ${new Date().getFullYear()} Tuskira, Inc. Licensed under the Apache License 2.0. AI Agent Gateway and Tuskira are trademarks of Tuskira, Inc. — <a href="https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/TRADEMARKS.md">Trademark policy</a>`,
+        copyright: `© ${new Date().getFullYear()} Tuskira, Inc. Licensed under the Apache License 2.0. AI Agent Gateway and Tuskira are trademarks of Tuskira, Inc. — <a href="https://github.com/Tuskira/ai-agent-gateway/blob/main/TRADEMARKS.md">Trademark policy</a>`,
       },
       prism: {
         theme: prismThemes.github,

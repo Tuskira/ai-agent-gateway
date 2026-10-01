@@ -758,7 +758,7 @@ Text, images (inline and URL), plain-text documents, custom tools, tool
 results (with images and `tool_reference`), `tool_choice` (`auto`, `any`,
 `tool`, `none`, `disable_parallel_tool_use`), stop sequences, thinking output
 and streaming are translated. A new vendor format is one `pkg/llm` provider
-package; see [CONTRIBUTING.md, "Adding an LLM provider adapter"](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/CONTRIBUTING.md#adding-an-llm-provider-adapter).
+package; see [CONTRIBUTING.md, "Adding an LLM provider adapter"](https://github.com/Tuskira/ai-agent-gateway/blob/main/CONTRIBUTING.md#adding-an-llm-provider-adapter).
 
 ### Fallback, capture, seed
 

@@ -15,7 +15,7 @@ Requires:
 
 ```sh
 git clone <repo>
-cd tusk-ai-secured-gateway
+cd ai-agent-gateway
 docker compose -f deploy/docker-compose.yml up --build -d   # Postgres + gateway
 make ui-install && make ui-dev                                # console, separately, with hot reload
 ```
@@ -124,7 +124,7 @@ Releases are cut from `main` and driven entirely by
    runs GoReleaser to cross-compile `cmd/gateway` for
    linux/darwin × amd64/arm64, publish checksummed archives and a
    GitHub Release with generated notes, and build + push multi-arch
-   Docker images to `ghcr.io/tuskira/tusk-ai-secured-gateway` tagged
+   Docker images to `ghcr.io/tuskira/ai-agent-gateway` tagged
    `X.Y.Z` and `latest`.
 
 A tag that doesn't match `v*` (e.g. a pre-release branch build) never

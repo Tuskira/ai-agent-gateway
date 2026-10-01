@@ -1,9 +1,9 @@
 # AI Agent Gateway
 
-[![CI](https://github.com/Tuskira/tusk-ai-secured-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/Tuskira/tusk-ai-secured-gateway/actions/workflows/ci.yml)
+[![CI](https://github.com/Tuskira/ai-agent-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/Tuskira/ai-agent-gateway/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Tuskira/tusk-ai-secured-gateway/graph/badge.svg)](https://codecov.io/gh/Tuskira/tusk-ai-secured-gateway)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Tuskira/tusk-ai-secured-gateway)](https://goreportcard.com/report/github.com/Tuskira/tusk-ai-secured-gateway)
-[![Release](https://img.shields.io/github/v/release/Tuskira/tusk-ai-secured-gateway)](https://github.com/Tuskira/tusk-ai-secured-gateway/releases)
+[![Release](https://img.shields.io/github/v/release/Tuskira/tusk-ai-secured-gateway)](https://github.com/Tuskira/ai-agent-gateway/releases)
 [![Go version](https://img.shields.io/github/go-mod/go-version/Tuskira/tusk-ai-secured-gateway)](go.mod)
 [![License](https://img.shields.io/github/license/Tuskira/tusk-ai-secured-gateway)](LICENSE)
 
@@ -198,7 +198,7 @@ minor versions) — see
 [docs/architecture.md](docs/architecture.md#what-is-and-isnt-supported)
 for exactly what is and isn't in the current release. CI
 (`.github/workflows/ci.yml`) and tagged
-releases (`release.yml` → GoReleaser → `ghcr.io/tuskira/tusk-ai-secured-gateway`)
+releases (`release.yml` → GoReleaser → `ghcr.io/tuskira/ai-agent-gateway`)
 are in place; see [CONTRIBUTING.md](CONTRIBUTING.md#release-process).
 Kubernetes manifests live under [deploy/k8s](deploy/README.md); a Helm
 chart is planned.

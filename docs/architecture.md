@@ -44,7 +44,7 @@ can also run three separate deployments of the same image (MCP-only,
 API-only, LLM-only) behind three different services — toggling only
 `GATEWAY_MCP_ENABLED`/`GATEWAY_API_ENABLED`/`GATEWAY_LLM_PROXY_ENABLED`;
 see [configuration.md](configuration.md)'s single-plane examples for the
-bare env-var form, or [`deploy/README.md`](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/deploy/README.md) for the
+bare env-var form, or [`deploy/README.md`](https://github.com/Tuskira/ai-agent-gateway/blob/main/deploy/README.md) for the
 `deploy/k8s` shape of the same idea (one image, three Deployments —
 `gateway-mcp`/`gateway-api`/`gateway-llm`). This works because `main.go`'s
 `run()` builds the MCP **data plane** whenever `mcp.enabled`
@@ -122,7 +122,7 @@ SQLite store backend means implementing `pkg/store.Store` and passing
 Likewise a session backend implements `pkg/session.Store` (and
 `pkg/session.Notifier` if it can carry a broadcast), passes
 `pkg/session/sessiontest`, and is selected with `sessions.store: <name>`.
-See [CONTRIBUTING.md](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/CONTRIBUTING.md) for the concrete steps.
+See [CONTRIBUTING.md](https://github.com/Tuskira/ai-agent-gateway/blob/main/CONTRIBUTING.md) for the concrete steps.
 
 The session seam is what lets the MCP plane scale out. `internal/
 dataplane/session.Manager` keeps the session logic — minting the id,
@@ -715,12 +715,12 @@ own `CREATE TABLE IF NOT EXISTS`) rather than by a migration — see
 
 The examples under `examples/` are runnable, self-checking walkthroughs
 against a real gateway — see
-[examples/README.md](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/examples/README.md). `make examples-smoke` drives
+[examples/README.md](https://github.com/Tuskira/ai-agent-gateway/blob/main/examples/README.md). `make examples-smoke` drives
 every example except `10-kubernetes` (compose); `make examples-k8s` drives
 10 (`kind`). CI runs `go`, `web`, `integration`, `security` (govulncheck,
 gitleaks), `docker` and `examples` on every PR, plus `examples-k8s` on
 pushes to `main` or PRs labelled `k8s`. Tagged releases build with GoReleaser and publish
-multi-arch, distroless images to `ghcr.io/tuskira/tusk-ai-secured-gateway`;
+multi-arch, distroless images to `ghcr.io/tuskira/ai-agent-gateway`;
 `v0.1.0`, `v0.2.0`, and `v0.3.0` are released.
 
 ## What is and isn't supported

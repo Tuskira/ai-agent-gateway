@@ -56,7 +56,7 @@ outside that local stack. Generate a real one:
 # from a checkout
 go run ./cmd/gateway secrets genkey
 # or against the image
-docker run --rm ghcr.io/tuskira/tusk-ai-secured-gateway:latest secrets genkey
+docker run --rm ghcr.io/tuskira/ai-agent-gateway:latest secrets genkey
 ```
 
 Put the result in `deploy/k8s/base/secret.yaml`'s `GATEWAY_MASTER_KEY`

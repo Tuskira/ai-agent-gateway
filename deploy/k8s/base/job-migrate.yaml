@@ -47,7 +47,7 @@ spec:
       containers:
         - name: migrate
           # Keep this in sync with the plane Deployments' image/tag.
-          image: ghcr.io/tuskira/tusk-ai-secured-gateway:latest
+          image: ghcr.io/tuskira/ai-agent-gateway:latest
           imagePullPolicy: IfNotPresent
           args: ["migrate"] # entrypoint is ["/gateway"]; this runs `/gateway migrate`
           env:

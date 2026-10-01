@@ -548,7 +548,7 @@ it's published. The Scalar configuration itself (`data-url=` pointing at
 tag that loads the pinned bundle, not as a separate executed inline
 script — so the docs page's CSP needs no script hash either. Bumping the
 pin is a maintainer task; see
-[CONTRIBUTING.md](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/CONTRIBUTING.md#bumping-the-pinned-scalar-build).
+[CONTRIBUTING.md](https://github.com/Tuskira/ai-agent-gateway/blob/main/CONTRIBUTING.md#bumping-the-pinned-scalar-build).
 
 ## Known limits
 
@@ -612,5 +612,5 @@ pin is a maintainer task; see
 
 ## Disclosure process
 
-See [SECURITY.md](https://github.com/Tuskira/tusk-ai-secured-gateway/blob/main/SECURITY.md) for how to report a vulnerability,
+See [SECURITY.md](https://github.com/Tuskira/ai-agent-gateway/blob/main/SECURITY.md) for how to report a vulnerability,
 response targets, and what's in scope.

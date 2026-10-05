@@ -217,6 +217,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Token Monitoring** console page (`/token-monitoring`): token usage and
+  cost by model, by caller (API key, with its role: agent, admin,
+  interceptor or other) and by role, for Today / Last 7 Days / Last 30 Days
+  (UTC), with the change against the previous period, a usage series, Cost
+  by model cards (input / output / cache read / cache write split) and
+  drill-downs per model and per key down to sessions. Backed by a new
+  ClickHouse view, `llm_usage_canonical` (one definition of usage: input
+  excludes cache reads for every provider, total = input + output, refused
+  and failed calls excluded), and three read-only routes under
+  `GET /api/v1/analytics/token-monitoring`. Visibility only: no limits.
+
 - `examples/13-claude-desktop`: Claude Desktop (macOS) in the console via the
   public [claude-desktop-utility](https://github.com/Tuskira/claude-desktop-utility)
   and `POST /api/v1/ingest`. The walkthrough covers enabling ingest, an

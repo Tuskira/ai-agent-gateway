@@ -92,6 +92,12 @@ import { fetchSessionTimeline, type TimelineOrder } from '@/lib/session-timeline
 import { fetchSkillsSummary, SKILLS_TRAFFIC_RANGE } from '@/lib/analytics'
 import { fetchTrafficFlow } from '@/lib/sankey'
 import {
+  fetchTokenMonitoring,
+  fetchTokenMonitoringKey,
+  fetchTokenMonitoringModel,
+  type MonitoringWindow,
+} from '@/lib/token-monitoring'
+import {
   createModel,
   deleteModel,
   fetchModelsSummary,
@@ -1076,4 +1082,35 @@ export function useRevokeUserSessions() {
 
 export function useAuthAudit() {
   return useQuery({ queryKey: ['auth-audit', 'list'], queryFn: listAudit, retry: false })
+}
+
+/* ---------------------------------------------------------------------- */
+/* Token Monitoring                                                        */
+/* ---------------------------------------------------------------------- */
+
+export function useTokenMonitoring(window: MonitoringWindow) {
+  return useQuery({
+    queryKey: ['token-monitoring', window],
+    queryFn: () => fetchTokenMonitoring(window),
+    staleTime: 30_000,
+  })
+}
+
+export function useTokenMonitoringDetail(
+  kind: 'model' | 'key',
+  subject: string,
+  window: MonitoringWindow,
+  limit: number,
+  offset: number,
+) {
+  return useQuery({
+    queryKey: ['token-monitoring', kind, subject, window, limit, offset],
+    queryFn: () =>
+      kind === 'model'
+        ? fetchTokenMonitoringModel(subject, window, limit, offset)
+        : fetchTokenMonitoringKey(subject, window, limit, offset),
+    enabled: subject !== '',
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  })
 }

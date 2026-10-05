@@ -1,5 +1,6 @@
 import {
   Bot,
+  ChartPie,
   Clock,
   Database,
   KeyRound,
@@ -111,6 +112,12 @@ export const navGroups: NavGroup[] = [
         icon: Clock,
         description: 'Follow the LLM and MCP calls of one session in order.',
       },
+      {
+        label: 'Token Monitoring',
+        path: '/token-monitoring',
+        icon: ChartPie,
+        description: 'Token usage and cost by model, caller and role.',
+      },
     ],
   },
   {
@@ -151,6 +158,12 @@ export const navGroups: NavGroup[] = [
 
 export const navItems: NavItem[] = navGroups.flatMap((group) => group.items)
 
+/** The nav item for path: an exact match, else the deepest item the path
+ * sits under by whole segments (a drill-down names its section). */
 export function findNavItem(path: string): NavItem | undefined {
-  return navItems.find((item) => item.path === path)
+  const exact = navItems.find((item) => item.path === path)
+  if (exact) return exact
+  return navItems
+    .filter((item) => item.path !== OVERVIEW_PATH && path.startsWith(item.path + '/'))
+    .sort((a, b) => b.path.length - a.path.length)[0]
 }

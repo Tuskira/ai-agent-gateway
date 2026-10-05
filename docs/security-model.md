@@ -309,6 +309,8 @@ body and the first 1 MiB of its response, unredacted. Run it as a trusted
 local process (same host or pod, loopback), never as a shared or remote
 service. The tee is detection only: an agent that is down or slow costs
 dropped turns, never a delayed or refused call.
+What the shipped agent then sends onward, and what it removes first, is in
+[detection-agent.md](detection-agent.md#what-leaves-the-host).
 
 ### Forwarding the caller's credential to a connector
 

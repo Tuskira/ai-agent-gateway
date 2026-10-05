@@ -99,7 +99,13 @@ func run() error {
 	pkg := flag.String("pkg", "./cmd/gateway", "Go package to compute the dependency closure of (as passed to `go list -deps` and `go-licenses report`)")
 	repoRoot := flag.String("repo-root", ".", "gateway module root (where go.mod lives); -pkg is resolved relative to this")
 	out := flag.String("out", "THIRD_PARTY_NOTICES", "output file path, relative to -repo-root unless absolute")
+	allow := flag.String("allow", "", "comma-separated extra SPDX ids to accept on top of the built-in allow list, for one artifact whose closure needs them (the gateway's own run passes none)")
 	flag.Parse()
+	for _, id := range strings.Split(*allow, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			allowedLicenses[id] = true
+		}
+	}
 
 	root, err := filepath.Abs(*repoRoot)
 	if err != nil {

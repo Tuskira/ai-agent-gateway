@@ -662,7 +662,9 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
 13. With `llm_proxy.detection.agent_url` set, the detection tee queues the
     full request body and the first 1 MiB of the response (a complete 2xx
     relay only) and posts them to a local detection agent asynchronously;
-    nothing waits on it — see [llm-plane.md](llm-plane.md#detection-agent).
+    nothing waits on it — see [llm-plane.md](llm-plane.md#detection-agent)
+    and, for the agent this repository ships (a separate Go module,
+    `detection/`), [detection-agent.md](detection-agent.md).
 
 ### LLM plane hardening
 

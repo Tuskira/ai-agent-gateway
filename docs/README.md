@@ -36,6 +36,9 @@ Operating the gateway:
   profile's skills/commands reach an MCP client.
 - **[llm-plane.md](llm-plane.md)** — the LLM proxy: provider routes, BYOK
   setup, Bedrock credential modes, limits, streaming, and capture.
+- **[detection-agent.md](detection-agent.md)** — the optional detection agent
+  sidecar: what leaves the host, local secret redaction, the
+  `POST /v1/turns` contract with the gateway's tee, background judging, every setting, and the agent-to-engine contract.
 - **[observability.md](observability.md)** — sinks, the analytics API, the
   console, trace propagation, and sample ClickHouse queries.
 - **[api.md](api.md)** — the control-plane REST API: auth, error shape,

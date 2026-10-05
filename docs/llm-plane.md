@@ -295,7 +295,10 @@ because of it. Off when `agent_url` is empty (the default).
 What leaves the host: nothing. The agent gets each call's raw request body
 and the start of its response, unredacted, so it must be a trusted process
 on the same host or pod, reached over loopback; see
-[security-model.md](security-model.md#outbound-requests-ssrf).
+[security-model.md](security-model.md#outbound-requests-ssrf). This
+repository ships an agent that redacts secrets locally and forwards the
+turn to a remote detection engine, and the contract it speaks to that
+engine (no engine is included): [detection-agent.md](detection-agent.md).
 
 Which calls are sent: every `POST` the plane relays to an upstream, on
 every provider route (Anthropic `/v1/messages`, OpenAI

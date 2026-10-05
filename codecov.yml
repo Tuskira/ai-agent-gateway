@@ -27,7 +27,7 @@ flag_management:
     carryforward: true
   individual_flags:
     - name: unit
-      paths: [cmd/, internal/, pkg/]
+      paths: [cmd/, internal/, pkg/, detection/]
     - name: integration
       paths: [cmd/, internal/, pkg/]
     - name: e2e
@@ -40,6 +40,7 @@ flag_management:
 ignore:
   - "**/*_test.go"
   - "cmd/gateway/**"
+  - "detection/cmd/**"
   - "test/**"
   - "internal/dataplane/dptest/**"
   - "pkg/llm/llmtest/**"

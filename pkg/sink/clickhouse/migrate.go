@@ -1,6 +1,11 @@
 package clickhouse
 
-import "context"
+import (
+	"context"
+	"strings"
+
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/pricing"
+)
 
 // migrationMCPAccessLogs and migrationLLMCalls are the sink's one baseline
 // migration: two idempotent CREATE TABLE IF NOT EXISTS statements, applied
@@ -211,11 +216,12 @@ var alterLLMCallsDiscovery = []string{
 //   - total_tokens = prompt + completion; cache reads/writes are separate;
 //   - only usage counts: calls refused before any target (fallback_index
 //     -1), failed calls, and the free token-count / batch-management paths
-//     (internal/llmplane unpricedPath) are excluded.
+//     are excluded -- the same list the LLM plane leaves unpriced
+//     (pricing.UnpricedPath), so the two cannot drift.
 //
 // CREATE OR REPLACE keeps it current on every startup; it reads columns
 // added by the ALTERs above, so it runs after them.
-const migrationUsageCanonical = `
+var migrationUsageCanonical = `
 CREATE OR REPLACE VIEW llm_usage_canonical AS
 SELECT
 	timestamp,
@@ -244,11 +250,20 @@ FROM (
 	FROM llm_calls
 	WHERE fallback_index != -1
 		AND status_code < 400
-		AND NOT (endsWith(path, '/count_tokens') OR endsWith(path, '/count-tokens')
-			OR endsWith(path, ':countTokens') OR endsWith(path, '/input_tokens')
-			OR endsWith(path, '/messages/batches') OR position(path, '/messages/batches/') > 0)
+		AND NOT (` + unpricedPathSQL() + `)
 )
 `
+
+// unpricedPathSQL is pricing.UnpricedPath as a ClickHouse condition on path.
+// ponytail: the list is Go constants with no quotes or backslashes, so plain
+// quoting is enough; escape here if it ever takes outside input.
+func unpricedPathSQL() string {
+	conds := make([]string, 0, len(pricing.UnpricedPathSuffixes)+1)
+	for _, s := range pricing.UnpricedPathSuffixes {
+		conds = append(conds, "endsWith(path, '"+s+"')")
+	}
+	return strings.Join(append(conds, "position(path, '"+pricing.UnpricedPathSegment+"') > 0"), " OR ")
+}
 
 // applyMigrations creates both tables if they don't already exist, then
 // applies in-place column upgrades. Idempotent: safe to run on every startup.

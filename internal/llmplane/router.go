@@ -447,7 +447,7 @@ func (rt *router) emit(r *http.Request, info callInfo, reqBody []byte, start tim
 	// A registry row's own price wins over the rate card; the vendor model
 	// actually called (not the alias) is what the card is looked up by.
 	usageUnknown := resp.StatusCode/100 == 2 && usage.empty()
-	if !unpricedPath(r.URL.Path) && !usageUnknown {
+	if !pricing.UnpricedPath(r.URL.Path) && !usageUnknown {
 		u := pricing.Usage{
 			Input:             usage.InputTokens,
 			Output:            usage.OutputTokens,
@@ -525,21 +525,6 @@ func mergeUsage(a, b Usage) Usage {
 		StopReason:            firstNonEmpty(a.StopReason, b.StopReason),
 		ProviderRequestID:     firstNonEmpty(a.ProviderRequestID, b.ProviderRequestID),
 	}
-}
-
-// unpricedPath reports free utility endpoints — token counting on each provider
-// and Anthropic's Message Batches management/results API (batch work is billed
-// by the batch, not by these calls; results JSONL would otherwise price its
-// last line as a full-rate call). The batches match is on whole path SEGMENTS:
-// a bare substring test also swallowed anything merely PREFIXED by it
-// (/v1/messages/batches-export), silently zeroing a billable call.
-func unpricedPath(path string) bool {
-	return strings.HasSuffix(path, "/count_tokens") || // Anthropic
-		strings.HasSuffix(path, "/count-tokens") || // Bedrock CountTokens
-		strings.HasSuffix(path, ":countTokens") || // Gemini
-		strings.HasSuffix(path, "/input_tokens") || // OpenAI Responses input-token count
-		strings.HasSuffix(path, "/messages/batches") || // Anthropic Message Batches: the collection
-		strings.Contains(path, "/messages/batches/") // ... and anything under one batch
 }
 
 // pricingTier maps a provider service tier onto the rate card's tier rows; the

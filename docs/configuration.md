@@ -238,7 +238,7 @@ plane's access-log body capture, not the LLM plane's.
 | `sinks.clickhouse.host` | string | `""` (required when enabled) | `GATEWAY_SINKS_CLICKHOUSE_HOST` | ClickHouse host. |
 | `sinks.clickhouse.port` | int | `9000` | `GATEWAY_SINKS_CLICKHOUSE_PORT` | ClickHouse native port. |
 | `sinks.clickhouse.database` | string | `default` | `GATEWAY_SINKS_CLICKHOUSE_DATABASE` | Database name. |
-| `sinks.clickhouse.username` | string | `""` | `GATEWAY_SINKS_CLICKHOUSE_USERNAME` | — |
+| `sinks.clickhouse.username` | string | `""` | `GATEWAY_SINKS_CLICKHOUSE_USERNAME` | On startup the gateway creates and upgrades its tables and the `llm_usage_canonical` view in `database`, so this user needs `CREATE TABLE`, `ALTER TABLE` and `CREATE VIEW` there, plus `INSERT` and `SELECT`. If any of these fails, the gateway does not start. |
 | `sinks.clickhouse.password` | string | `""` | `GATEWAY_SINKS_CLICKHOUSE_PASSWORD` | — |
 | `sinks.clickhouse.secure` | bool | `false` | `GATEWAY_SINKS_CLICKHOUSE_SECURE` | TLS to ClickHouse. |
 | `sinks.clickhouse.batch_size` | int | `100` | `GATEWAY_SINKS_CLICKHOUSE_BATCH_SIZE` | Buffered record count that triggers an immediate flush. |

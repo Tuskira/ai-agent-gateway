@@ -227,6 +227,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   excludes cache reads for every provider, total = input + output, refused
   and failed calls excluded), and three read-only routes under
   `GET /api/v1/analytics/token-monitoring`. Visibility only: no limits.
+  **Upgrade note:** the gateway creates the view on startup, so its
+  ClickHouse user now also needs `CREATE VIEW`; without it the gateway does
+  not start.
 
 - `examples/13-claude-desktop`: Claude Desktop (macOS) in the console via the
   public [claude-desktop-utility](https://github.com/Tuskira/claude-desktop-utility)

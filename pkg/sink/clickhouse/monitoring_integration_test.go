@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/analytics"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/pricing"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/sink"
 )
 
@@ -61,7 +62,17 @@ func TestIntegration_UsageCanonicalView(t *testing.T) {
 		{RequestID: "f-refused", Provider: "anthropic", Model: "claude-sonnet-4-5", FallbackIndex: -1, StatusCode: 429},
 		{RequestID: "g-count", Provider: "anthropic", Model: "claude-sonnet-4-5", Path: "/v1/messages/count_tokens", InputTokens: 900, StatusCode: 200},
 		{RequestID: "h-failed", Provider: "anthropic", Model: "claude-sonnet-4-5", InputTokens: 7, StatusCode: 500},
+		// Billable although it starts like a batch path: still usage.
+		{RequestID: "i-near-miss", Provider: "anthropic", Model: "claude-sonnet-4-5", Path: "/v1/messages/batches-export", InputTokens: 3, OutputTokens: 1, StatusCode: 200, CostUSD: &cost},
 	}
+	// Every free endpoint the LLM plane leaves unpriced is also not usage:
+	// the view's filter is built from the same list (pricing.UnpricedPath).
+	for i, suffix := range pricing.UnpricedPathSuffixes {
+		rows = append(rows, &sink.LLMCall{RequestID: fmt.Sprintf("j-free-%d", i), Provider: "anthropic", Model: "claude-sonnet-4-5",
+			Path: "/v1/x" + suffix, InputTokens: 900, StatusCode: 200})
+	}
+	rows = append(rows, &sink.LLMCall{RequestID: "j-free-under", Provider: "anthropic", Model: "claude-sonnet-4-5",
+		Path: "/v1" + pricing.UnpricedPathSegment + "msgbatch_1/results", InputTokens: 900, StatusCode: 200})
 	for i, r := range rows {
 		r.Timestamp, r.TenantID = now.Add(time.Duration(i)*time.Millisecond), tenantID
 		r.RequestID = tenantID + "-" + r.RequestID
@@ -96,9 +107,10 @@ func TestIntegration_UsageCanonicalView(t *testing.T) {
 		"c-alias":     {Model: "my-alias", Provider: "openai", PromptTokens: 300, CompletionTokens: 10, CacheReadTokens: 100, TotalTokens: 310, Priced: true},
 		"d-label":     {Model: "llama", Provider: "groq", PromptTokens: 50, CompletionTokens: 5, CacheReadTokens: 20, TotalTokens: 55, Priced: true},
 		"e-gemini":    {Model: "gemini-2.5-pro", Provider: "gemini", PromptTokens: 0, CompletionTokens: 1, CacheReadTokens: 20, TotalTokens: 1, Priced: false},
+		"i-near-miss": {Model: "claude-sonnet-4-5", Provider: "anthropic", PromptTokens: 3, CompletionTokens: 1, TotalTokens: 4, Priced: true},
 	}
 	if len(got) != len(want) {
-		t.Errorf("view rows = %v, want exactly %v (refused, count_tokens and failed calls excluded)", keysOf(got), keysOf(want))
+		t.Errorf("view rows = %v, want exactly %v (refused calls, free endpoints and failed calls excluded)", keysOf(got), keysOf(want))
 	}
 	for id, w := range want {
 		g, ok := got[id]

@@ -351,3 +351,34 @@ func (c *Card) logMiss(provider, model string) {
 		slog.Warn("pricing: no rate-card entry; cost stored as NULL", "provider", provider, "model", model)
 	}
 }
+
+// UnpricedPathSuffixes and UnpricedPathSegment name the free utility
+// endpoints: token counting on each provider and Anthropic's Message Batches
+// management/results API (batch work is billed by the batch, not by these
+// calls; results JSONL would otherwise price its last line as a full-rate
+// call). The LLM plane stores no cost for them and the ClickHouse usage view
+// (pkg/sink/clickhouse llm_usage_canonical) leaves them out of token usage;
+// both read this one list.
+var UnpricedPathSuffixes = []string{
+	"/count_tokens",     // Anthropic
+	"/count-tokens",     // Bedrock CountTokens
+	":countTokens",      // Gemini
+	"/input_tokens",     // OpenAI Responses input-token count
+	"/messages/batches", // Anthropic Message Batches: the collection
+}
+
+// UnpricedPathSegment matches anything under one batch. It is a whole path
+// segment: a bare "/messages/batches" substring test also swallowed anything
+// merely PREFIXED by it (/v1/messages/batches-export), silently zeroing a
+// billable call.
+const UnpricedPathSegment = "/messages/batches/"
+
+// UnpricedPath reports whether path is a free utility endpoint.
+func UnpricedPath(path string) bool {
+	for _, s := range UnpricedPathSuffixes {
+		if strings.HasSuffix(path, s) {
+			return true
+		}
+	}
+	return strings.Contains(path, UnpricedPathSegment)
+}

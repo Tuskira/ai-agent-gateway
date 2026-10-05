@@ -465,7 +465,9 @@ no limits are enforced from it (the LLM plane's own budgets are in
 
 Every figure comes from one ClickHouse view, **`llm_usage_canonical`**,
 created over `llm_calls` on startup (`pkg/sink/clickhouse/migrate.go`), so
-totals, breakdowns and the chart always add up:
+totals, breakdowns and the chart always add up. The ClickHouse user therefore
+needs `CREATE VIEW` as well as the table privileges (see
+[configuration](configuration.md#sinks)):
 
 | Column | Definition |
 |---|---|

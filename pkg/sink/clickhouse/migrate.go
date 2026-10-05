@@ -196,6 +196,60 @@ var alterLLMCallsDiscovery = []string{
 	`ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS mcp_tools_used Array(String)`,
 }
 
+// migrationUsageCanonical is the one definition of LLM token usage that
+// every token-monitoring query reads, so totals, breakdowns and charts can
+// never disagree:
+//
+//   - model is the name the caller asked for (requested_model, else model),
+//     so a registry alias is one row whatever target answered;
+//   - provider is the one the call was costed as -- the registry target's
+//     vendor (openai_compat costs as openai; a label as itself), else the
+//     client's dialect -- and stored tokens follow its convention: for
+//     openai and gemini input INCLUDES the cache reads (pkg/pricing
+//     tokenCost, internal/llmplane foldsCache), so prompt_tokens subtracts
+//     them back, never below zero;
+//   - total_tokens = prompt + completion; cache reads/writes are separate;
+//   - only usage counts: calls refused before any target (fallback_index
+//     -1), failed calls, and the free token-count / batch-management paths
+//     (internal/llmplane unpricedPath) are excluded.
+//
+// CREATE OR REPLACE keeps it current on every startup; it reads columns
+// added by the ALTERs above, so it runs after them.
+const migrationUsageCanonical = `
+CREATE OR REPLACE VIEW llm_usage_canonical AS
+SELECT
+	timestamp,
+	request_id,
+	tenant_id,
+	key_id,
+	session_id,
+	source,
+	caller_model AS model,
+	pricing_provider AS provider,
+	if(pricing_provider IN ('openai', 'gemini'),
+		if(input_tokens > cache_read_tokens, toUInt64(input_tokens - cache_read_tokens), toUInt64(0)),
+		input_tokens) AS prompt_tokens,
+	output_tokens AS completion_tokens,
+	cache_read_tokens,
+	cache_creation_tokens AS cache_write_tokens,
+	prompt_tokens + completion_tokens AS total_tokens,
+	cost_usd,
+	toBool(isNotNull(cost_usd)) AS priced
+FROM (
+	SELECT
+		timestamp, request_id, tenant_id, key_id, session_id, source,
+		if(requested_model != '', requested_model, model) AS caller_model,
+		multiIf(resolved_vendor = '', provider, resolved_vendor = 'openai_compat', 'openai', resolved_vendor) AS pricing_provider,
+		input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd
+	FROM llm_calls
+	WHERE fallback_index != -1
+		AND status_code < 400
+		AND NOT (endsWith(path, '/count_tokens') OR endsWith(path, '/count-tokens')
+			OR endsWith(path, ':countTokens') OR endsWith(path, '/input_tokens')
+			OR endsWith(path, '/messages/batches') OR position(path, '/messages/batches/') > 0)
+)
+`
+
 // applyMigrations creates both tables if they don't already exist, then
 // applies in-place column upgrades. Idempotent: safe to run on every startup.
 func applyMigrations(ctx context.Context, c conn) error {
@@ -210,6 +264,7 @@ func applyMigrations(ctx context.Context, c conn) error {
 	stmts = append(stmts, alterMCPAccessLogsSkillName...)
 	stmts = append(stmts, alterMCPAccessLogsIngest...)
 	stmts = append(stmts, alterLLMCallsIngest...)
+	stmts = append(stmts, migrationUsageCanonical)
 	for _, stmt := range stmts {
 		if err := c.Exec(ctx, stmt); err != nil {
 			return err

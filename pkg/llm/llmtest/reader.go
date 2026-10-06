@@ -1,6 +1,8 @@
 package llmtest
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,16 +15,20 @@ import (
 )
 
 // readerCase is one reader golden, testdata/readers/<reader name>/<case>.json.
-// Each part is optional: a null or missing request, response or sse is not
-// exercised.
+// Each part is optional: a null or missing request, response or stream is
+// not exercised.
 type readerCase struct {
 	// Request is the client's wire request body.
 	Request json.RawMessage `json:"request"`
 	// Response is the client-visible non-stream response body.
 	Response json.RawMessage `json:"response"`
 	// SSE is the client-visible response stream, raw.
-	SSE    *string `json:"sse"`
-	Expect struct {
+	SSE *string `json:"sse"`
+	// StreamB64 is the client-visible response stream, base64 (standard
+	// encoding), for a binary stream such as an AWS event stream. At most
+	// one of SSE and StreamB64 is set.
+	StreamB64 *string `json:"stream_b64"`
+	Expect    struct {
 		// Request is the neutral llm.Request; RequestError instead a
 		// substring of the *llm.RequestError the request must fail with.
 		Request      json.RawMessage `json:"request"`
@@ -117,9 +123,21 @@ func runReaderCase(t *testing.T, r llm.Reader, c readerCase) {
 			sameJSON(t, got, x.Response)
 		})
 	}
-	if c.SSE != nil {
+	if c.SSE != nil || c.StreamB64 != nil {
 		t.Run("stream", func(t *testing.T) {
-			dec := r.NewResponseDecoder(strings.NewReader(*c.SSE))
+			var stream []byte
+			switch {
+			case c.SSE != nil && c.StreamB64 != nil:
+				t.Fatal("golden sets both sse and stream_b64")
+			case c.SSE != nil:
+				stream = []byte(*c.SSE)
+			default:
+				var err error
+				if stream, err = base64.StdEncoding.DecodeString(*c.StreamB64); err != nil {
+					t.Fatalf("stream_b64: %v", err)
+				}
+			}
+			dec := r.NewResponseDecoder(bytes.NewReader(stream))
 			var evs []llm.Event
 			var err error
 			for {

@@ -18,11 +18,12 @@
 // anyone: what a client sent and what it received, whatever the format, so
 // the gateway can look at every call the same way.
 //
-// Three adapters ship in this module and register themselves from an
+// Four adapters ship in this module and register themselves from an
 // init(): pkg/llm/anthropic (Dialect, Provider and Reader "anthropic"),
-// pkg/llm/openaicompat (Provider "openai_compat", Reader "openai_chat") and
-// pkg/llm/gemini (Reader "gemini"). A binary blank-imports
-// the adapters it wants, exactly as cmd/gateway does. A new vendor is one
+// pkg/llm/openaicompat (Provider "openai_compat", Reader "openai_chat"),
+// pkg/llm/gemini (Reader "gemini") and pkg/llm/bedrock (Readers
+// "bedrock-converse" and "bedrock-invoke"). A binary blank-imports the
+// adapters it wants, exactly as cmd/gateway does. A new vendor is one
 // package that implements Provider, registers it, and passes
 // pkg/llm/llmtest -- see CONTRIBUTING.md, "Adding an LLM provider adapter".
 package llm

@@ -1,0 +1,143 @@
+{
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "hi"
+          },
+          {
+            "guardContent": {
+              "text": {
+                "text": "check me"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "inferenceConfig": {
+      "maxTokens": 10,
+      "futureKnob": 1
+    },
+    "additionalModelRequestFields": {
+      "top_k": 5
+    },
+    "guardrailConfig": {
+      "guardrailIdentifier": "gr-1",
+      "guardrailVersion": "1"
+    },
+    "requestMetadata": {
+      "team": "a"
+    }
+  },
+  "response": {
+    "output": {
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "text": "ok"
+          },
+          {
+            "citationsContent": {
+              "content": [
+                {
+                  "text": "cited"
+                }
+              ],
+              "citations": []
+            }
+          }
+        ]
+      }
+    },
+    "stopReason": "guardrail_intervened",
+    "usage": {
+      "inputTokens": 3,
+      "outputTokens": 1,
+      "totalTokens": 4
+    },
+    "additionalModelResponseFields": {
+      "x": 1
+    },
+    "trace": {
+      "guardrail": {}
+    },
+    "performanceConfig": {
+      "latency": "standard"
+    }
+  },
+  "expect": {
+    "request": {
+      "model": "",
+      "max_tokens": 10,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi"
+            },
+            {
+              "type": "guardContent",
+              "raw": {
+                "guardContent": {
+                  "text": {
+                    "text": "check me"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "inferenceConfig": {
+          "futureKnob": 1
+        },
+        "additionalModelRequestFields": {
+          "top_k": 5
+        },
+        "guardrailConfig": {
+          "guardrailIdentifier": "gr-1",
+          "guardrailVersion": "1"
+        },
+        "requestMetadata": {
+          "team": "a"
+        }
+      }
+    },
+    "response": {
+      "id": "",
+      "model": "",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "ok"
+        },
+        {
+          "type": "citationsContent",
+          "raw": {
+            "citationsContent": {
+              "content": [
+                {
+                  "text": "cited"
+                }
+              ],
+              "citations": []
+            }
+          }
+        }
+      ],
+      "stop_reason": "refusal",
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1
+      }
+    }
+  }
+}

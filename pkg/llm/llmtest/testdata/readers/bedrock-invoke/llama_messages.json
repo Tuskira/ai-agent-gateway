@@ -1,0 +1,66 @@
+{
+  "request": {
+    "prompt": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nAnswer briefly.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nHi<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\nHello.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nWhat is the capital of France?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+    "max_gen_len": 128,
+    "temperature": 0.1,
+    "top_p": 0.9
+  },
+  "response": {
+    "generation": "The capital is Paris.",
+    "prompt_token_count": 40,
+    "generation_token_count": 5,
+    "stop_reason": "stop"
+  },
+  "stream_frames": [
+    {
+      "event": "chunk",
+      "chunk": "{\"generation\":\"The capital\",\"prompt_token_count\":40,\"generation_token_count\":2,\"stop_reason\":null}"
+    },
+    {
+      "event": "chunk",
+      "chunk": "{\"generation\":\" is Paris.\",\"prompt_token_count\":null,\"generation_token_count\":5,\"stop_reason\":\"stop\",\"amazon-bedrock-invocationMetrics\":{\"inputTokenCount\":40,\"outputTokenCount\":5,\"invocationLatency\":300,\"firstByteLatency\":120}}"
+    }
+  ],
+  "stream_b64": "AAAA6wAAAEvbKLG/DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAFY2h1bmsNOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJieXRlcyI6ImV5Sm5aVzVsY21GMGFXOXVJam9pVkdobElHTmhjR2wwWVd3aUxDSndjbTl0Y0hSZmRHOXJaVzVmWTI5MWJuUWlPalF3TENKblpXNWxjbUYwYVc5dVgzUnZhMlZ1WDJOdmRXNTBJam95TENKemRHOXdYM0psWVhOdmJpSTZiblZzYkgwPSJ9j8TwawAAAZcAAABLLFZv1A06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcABWNodW5rDTptZXNzYWdlLXR5cGUHAAVldmVudHsiYnl0ZXMiOiJleUpuWlc1bGNtRjBhVzl1SWpvaUlHbHpJRkJoY21sekxpSXNJbkJ5YjIxd2RGOTBiMnRsYmw5amIzVnVkQ0k2Ym5Wc2JDd2laMlZ1WlhKaGRHbHZibDkwYjJ0bGJsOWpiM1Z1ZENJNk5Td2ljM1J2Y0Y5eVpXRnpiMjRpT2lKemRHOXdJaXdpWVcxaGVtOXVMV0psWkhKdlkyc3RhVzUyYjJOaGRHbHZiazFsZEhKcFkzTWlPbnNpYVc1d2RYUlViMnRsYmtOdmRXNTBJam8wTUN3aWIzVjBjSFYwVkc5clpXNURiM1Z1ZENJNk5Td2lhVzUyYjJOaGRHbHZia3hoZEdWdVkza2lPak13TUN3aVptbHljM1JDZVhSbFRHRjBaVzVqZVNJNk1USXdmWDA9In067diC",
+  "expect": {
+    "request": {
+      "model": "",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nAnswer briefly.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nHi<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\nHello.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nWhat is the capital of France?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+            }
+          ]
+        }
+      ],
+      "max_tokens": 128,
+      "temperature": 0.1,
+      "top_p": 0.9,
+      "extra": {
+        "history": "prompt"
+      }
+    },
+    "response": {
+      "id": "",
+      "model": "",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "The capital is Paris."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 40,
+        "output_tokens": 5
+      }
+    },
+    "stream_text": "The capital is Paris.",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

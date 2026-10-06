@@ -1,0 +1,41 @@
+{
+  "request": {
+    "inputText": "Tell me a story."
+  },
+  "response": null,
+  "stream_frames": [
+    {
+      "event": "chunk",
+      "chunk": "{\"outputText\":\"Once upon \",\"index\":0,\"totalOutputTextTokenCount\":3,\"completionReason\":null,\"inputTextTokenCount\":4}"
+    },
+    {
+      "event": "chunk",
+      "chunk": "{\"outputText\":\"a time\",\"index\":0,\"totalOutputTextTokenCount\":5,\"completionReason\":null}",
+      "cut": true
+    }
+  ],
+  "stream_b64": "AAABAwAAAEsI0O4EDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAFY2h1bmsNOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJieXRlcyI6ImV5SnZkWFJ3ZFhSVVpYaDBJam9pVDI1alpTQjFjRzl1SUNJc0ltbHVaR1Y0SWpvd0xDSjBiM1JoYkU5MWRIQjFkRlJsZUhSVWIydGxia052ZFc1MElqb3pMQ0pqYjIxd2JHVjBhVzl1VW1WaGMyOXVJanB1ZFd4c0xDSnBibkIxZEZSbGVIUlViMnRsYmtOdmRXNTBJam8wZlE9PSJ9P2JrVwAAANsAAABLegkJOQ06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcABWNodW5rDTptZXNzYWdlLXR5cGUHAAVldmVudHsiYnl0ZXMiOiJleUp2ZFhSd2RYUlU=",
+  "expect": {
+    "request": {
+      "model": "",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Tell me a story."
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "history": "prompt"
+      }
+    },
+    "stream_text": "Once upon ",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "",
+    "stream_error": "unexpected EOF"
+  }
+}

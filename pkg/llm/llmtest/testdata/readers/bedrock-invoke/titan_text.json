@@ -1,0 +1,78 @@
+{
+  "request": {
+    "inputText": "Say hello.",
+    "textGenerationConfig": {
+      "maxTokenCount": 50,
+      "temperature": 0.5,
+      "topP": 0.9,
+      "stopSequences": [
+        "User:"
+      ]
+    }
+  },
+  "response": {
+    "inputTextTokenCount": 5,
+    "results": [
+      {
+        "tokenCount": 4,
+        "outputText": "Hello there!",
+        "completionReason": "FINISH"
+      }
+    ]
+  },
+  "stream_frames": [
+    {
+      "event": "chunk",
+      "chunk": "{\"outputText\":\"Hello\",\"index\":0,\"totalOutputTextTokenCount\":2,\"completionReason\":null,\"inputTextTokenCount\":5}"
+    },
+    {
+      "event": "chunk",
+      "chunk": "{\"outputText\":\" there!\",\"index\":0,\"totalOutputTextTokenCount\":4,\"completionReason\":\"FINISH\",\"inputTextTokenCount\":null,\"amazon-bedrock-invocationMetrics\":{\"inputTokenCount\":5,\"outputTokenCount\":4,\"invocationLatency\":400,\"firstByteLatency\":200}}"
+    }
+  ],
+  "stream_b64": "AAAA+wAAAEu7yCY9DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAFY2h1bmsNOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJieXRlcyI6ImV5SnZkWFJ3ZFhSVVpYaDBJam9pU0dWc2JHOGlMQ0pwYm1SbGVDSTZNQ3dpZEc5MFlXeFBkWFJ3ZFhSVVpYaDBWRzlyWlc1RGIzVnVkQ0k2TWl3aVkyOXRjR3hsZEdsdmJsSmxZWE52YmlJNmJuVnNiQ3dpYVc1d2RYUlVaWGgwVkc5clpXNURiM1Z1ZENJNk5YMD0ifYSuudUAAAGvAAAAS70HnJMNOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24LOmV2ZW50LXR5cGUHAAVjaHVuaw06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImJ5dGVzIjoiZXlKdmRYUndkWFJVWlhoMElqb2lJSFJvWlhKbElTSXNJbWx1WkdWNElqb3dMQ0owYjNSaGJFOTFkSEIxZEZSbGVIUlViMnRsYmtOdmRXNTBJam8wTENKamIyMXdiR1YwYVc5dVVtVmhjMjl1SWpvaVJrbE9TVk5JSWl3aWFXNXdkWFJVWlhoMFZHOXJaVzVEYjNWdWRDSTZiblZzYkN3aVlXMWhlbTl1TFdKbFpISnZZMnN0YVc1MmIyTmhkR2x2YmsxbGRISnBZM01pT25zaWFXNXdkWFJVYjJ0bGJrTnZkVzUwSWpvMUxDSnZkWFJ3ZFhSVWIydGxia052ZFc1MElqbzBMQ0pwYm5adlkyRjBhVzl1VEdGMFpXNWplU0k2TkRBd0xDSm1hWEp6ZEVKNWRHVk1ZWFJsYm1ONUlqb3lNREI5ZlE9PSJ9jYoKBg==",
+  "expect": {
+    "request": {
+      "model": "",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Say hello."
+            }
+          ]
+        }
+      ],
+      "max_tokens": 50,
+      "temperature": 0.5,
+      "top_p": 0.9,
+      "stop_sequences": [
+        "User:"
+      ],
+      "extra": {
+        "history": "prompt"
+      }
+    },
+    "response": {
+      "id": "",
+      "model": "",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello there!"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 5,
+        "output_tokens": 4
+      }
+    },
+    "stream_text": "Hello there!",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

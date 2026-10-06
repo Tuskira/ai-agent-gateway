@@ -1,0 +1,117 @@
+{
+  "request": {
+    "schemaVersion": "messages-v1",
+    "system": [
+      {
+        "text": "Answer with a number."
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "What is 2+2?"
+          }
+        ]
+      }
+    ],
+    "inferenceConfig": {
+      "max_new_tokens": 20,
+      "temperature": 0.1,
+      "top_p": 0.9,
+      "top_k": 20
+    }
+  },
+  "response": {
+    "output": {
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "text": "Four."
+          }
+        ]
+      }
+    },
+    "stopReason": "end_turn",
+    "usage": {
+      "inputTokens": 12,
+      "outputTokens": 2,
+      "totalTokens": 14,
+      "cacheReadInputTokenCount": 0,
+      "cacheWriteInputTokenCount": 0
+    }
+  },
+  "stream_frames": [
+    {
+      "event": "chunk",
+      "chunk": "{\"messageStart\":{\"role\":\"assistant\"}}"
+    },
+    {
+      "event": "chunk",
+      "chunk": "{\"contentBlockDelta\":{\"delta\":{\"text\":\"Four.\"},\"contentBlockIndex\":0}}"
+    },
+    {
+      "event": "chunk",
+      "chunk": "{\"contentBlockStop\":{\"contentBlockIndex\":0}}"
+    },
+    {
+      "event": "chunk",
+      "chunk": "{\"messageStop\":{\"stopReason\":\"end_turn\"}}"
+    },
+    {
+      "event": "chunk",
+      "chunk": "{\"metadata\":{\"usage\":{\"inputTokens\":12,\"outputTokens\":2}},\"amazon-bedrock-invocationMetrics\":{\"inputTokenCount\":12,\"outputTokenCount\":2,\"invocationLatency\":150,\"firstByteLatency\":80}}"
+    }
+  ],
+  "stream_b64": "AAAAmwAAAEsi+lFwDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAFY2h1bmsNOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJieXRlcyI6ImV5SnRaWE56WVdkbFUzUmhjblFpT25zaWNtOXNaU0k2SW1GemMybHpkR0Z1ZENKOWZRPT0ifem/0Z8AAADHAAAAS98Zc7oNOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24LOmV2ZW50LXR5cGUHAAVjaHVuaw06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImJ5dGVzIjoiZXlKamIyNTBaVzUwUW14dlkydEVaV3gwWVNJNmV5SmtaV3gwWVNJNmV5SjBaWGgwSWpvaVJtOTFjaTRpZlN3aVkyOXVkR1Z1ZEVKc2IyTnJTVzVrWlhnaU9qQjlmUT09In3XFvfUAAAAowAAAEuzq6I3DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAFY2h1bmsNOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJieXRlcyI6ImV5SmpiMjUwWlc1MFFteHZZMnRUZEc5d0lqcDdJbU52Ym5SbGJuUkNiRzlqYTBsdVpHVjRJam93ZlgwPSJ964m1+QAAAJ8AAABL13r3sA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcABWNodW5rDTptZXNzYWdlLXR5cGUHAAVldmVudHsiYnl0ZXMiOiJleUp0WlhOellXZGxVM1J2Y0NJNmV5SnpkRzl3VW1WaGMyOXVJam9pWlc1a1gzUjFjbTRpZlgwPSJ9XtvqUgAAAVsAAABLALNqDg06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcABWNodW5rDTptZXNzYWdlLXR5cGUHAAVldmVudHsiYnl0ZXMiOiJleUp0WlhSaFpHRjBZU0k2ZXlKMWMyRm5aU0k2ZXlKcGJuQjFkRlJ2YTJWdWN5STZNVElzSW05MWRIQjFkRlJ2YTJWdWN5STZNbjE5TENKaGJXRjZiMjR0WW1Wa2NtOWpheTFwYm5adlkyRjBhVzl1VFdWMGNtbGpjeUk2ZXlKcGJuQjFkRlJ2YTJWdVEyOTFiblFpT2pFeUxDSnZkWFJ3ZFhSVWIydGxia052ZFc1MElqb3lMQ0pwYm5adlkyRjBhVzl1VEdGMFpXNWplU0k2TVRVd0xDSm1hWEp6ZEVKNWRHVk1ZWFJsYm1ONUlqbzRNSDE5In3HME6h",
+  "expect": {
+    "request": {
+      "model": "",
+      "system": [
+        {
+          "type": "text",
+          "text": "Answer with a number."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What is 2+2?"
+            }
+          ]
+        }
+      ],
+      "max_tokens": 20,
+      "temperature": 0.1,
+      "top_p": 0.9,
+      "top_k": 20,
+      "extra": {
+        "schemaVersion": "messages-v1"
+      }
+    },
+    "response": {
+      "id": "",
+      "model": "",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Four."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 2
+      }
+    },
+    "stream_text": "Four.",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

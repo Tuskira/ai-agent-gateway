@@ -52,6 +52,10 @@ func secretDetector() *detect.Detector {
 			panic("turn: secrets.toml: " + err.Error())
 		}
 		secretsDet = detect.NewDetector(cfg)
+		// An inline allow comment marks a known false positive in a
+		// repository; in a call it is text the sender wrote, and honouring
+		// it would let anyone keep a secret on its line from being removed.
+		secretsDet.IgnoreGitleaksAllow = true
 	})
 	return secretsDet
 }

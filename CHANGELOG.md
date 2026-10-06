@@ -120,6 +120,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Detection agent: an inline allow comment no longer hides a secret.**
+  The secret scan honoured gitleaks' inline allow comment, so a key on a
+  line that also carried the comment was neither found nor redacted and
+  left the host in the turn. The agent (and `PreparedTurn.Normalized`) now
+  ignores the comment: in a call it is only text the sender wrote.
 - A credential pasted with a trailing newline is sent without it; only line
   breaks inside the value (a PEM key) are escaped.
 - An MCP catalog entry's `default_headers` need a non-empty, single-line

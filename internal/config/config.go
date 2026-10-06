@@ -504,8 +504,9 @@ type LLMDetection struct {
 	Timeout time.Duration `yaml:"timeout"`
 	// QueueSize caps turns waiting to be posted; past it a turn is dropped.
 	QueueSize int `yaml:"queue_size"`
-	// QueueBytes caps the request and response bytes the tee holds
-	// (waiting or being posted); past it a turn is dropped.
+	// QueueBytes caps the bytes the tee holds: a waiting turn's request and
+	// response bodies, a posting turn's posted JSON; past it a turn is
+	// dropped.
 	QueueBytes int64 `yaml:"queue_bytes"`
 	// MaxInFlight caps turns being posted at once.
 	MaxInFlight int `yaml:"max_in_flight"`

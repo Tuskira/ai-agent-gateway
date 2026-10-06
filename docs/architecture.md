@@ -110,7 +110,7 @@ implementations:
 | Connector/cache/profile ops | `pkg/ops.ConnectorOps` / `CacheOps` / `ProfileOps` | `internal/dataplane`'s `opsAdapter` | API plane's health/discover/cache routes and profile-cache invalidation |
 | Analytics read | `pkg/analytics.Reader` / `LLMCallReader` | `pkg/sink/clickhouse.Sink`; `pkg/sink/postgres.Sink` (`LLMCallReader` only) | `GET /api/v1/analytics/*`; LLM Logs without ClickHouse |
 | Body offload | `pkg/sink.BodyStore` | `pkg/sink/bodystore/{fs,s3}` | LLM capture (`llm_proxy.capture.body_store`), LLM-log detail |
-| LLM translation | `pkg/llm.Dialect` / `Provider` / `Reader` (registry) | `pkg/llm/anthropic`, `pkg/llm/openaicompat` | model-registry targets in another wire format |
+| LLM translation | `pkg/llm.Dialect` / `Provider` / `Reader` (registry) | `pkg/llm/anthropic`, `pkg/llm/openaicompat`; Readers also in `pkg/llm/gemini`, `pkg/llm/bedrock` | model-registry targets in another wire format; the detection tee's canonical conversation |
 | Ingest | `pkg/sink.IngestSink` | `pkg/sink/clickhouse.Sink` | `POST /api/v1/ingest` |
 
 The LLM plane's detection tee (`llm_proxy.detection`) is not a
@@ -140,14 +140,18 @@ The LLM translation seam also has a read-only side: an `llm.Reader` reads
 one wire format into the neutral types — the request a client sent
 (`DecodeRequest`) and the answer it received, whole (`DecodeResponse`) or
 streamed (`NewResponseDecoder`) — without serving anyone. Readers register
-by wire-format name (`llm.RegisterReader`, `llm.ReaderByName`): `anthropic`
-(the Anthropic Messages dialect) and `openai_chat` (OpenAI Chat
-Completions, in `pkg/llm/openaicompat`). They are strict where two parsers
-could disagree (a repeated key, two keys differing only by case, an unknown
-role), so what is read is what the vendor executes. The detection tee
-uses them to hand the detection agent every call as one canonical
-conversation whatever format it was made in; a route whose format has no
-Reader yet is sent raw, with the reason. A new format's Reader passes
+by wire-format name (`llm.RegisterReader`, `llm.ReaderByName`), one per
+generation format the LLM plane relays: `anthropic` (Messages) and
+`anthropic_complete` (legacy Text Completions) in `pkg/llm/anthropic`;
+`openai_chat`, `openai_responses` and `openai_completions` in
+`pkg/llm/openaicompat`; `gemini` in `pkg/llm/gemini`; `bedrock_converse`
+and `bedrock_invoke` in `pkg/llm/bedrock`. `cmd/gateway` blank-imports all
+four packages. Readers are strict where two parsers could disagree (a
+repeated key, two keys differing only by case, an unknown role), so what
+is read is what the vendor executes. The detection tee uses them to hand
+the detection agent every call as one canonical conversation whatever
+format it was made in; a route with no Reader (a batch: `anthropic_batch`
+is reserved) is sent raw, with the reason. A new format's Reader passes
 `pkg/llm/llmtest.RunReader` and, once registered under the name its routes
 already declare, is used with no plane change.
 
@@ -683,8 +687,8 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
 13. With `llm_proxy.detection.agent_url` set, the detection tee queues the
     full request body and the first 1 MiB of the response (a complete 2xx
     relay only) of a generation or batch route, reads them into a
-    canonical conversation in its worker when the route's format has a
-    Reader, and posts them to a local detection agent asynchronously;
+    canonical conversation in its worker (every generation route has a
+    Reader), and posts them to a local detection agent asynchronously;
     nothing waits on it — see [llm-plane.md](llm-plane.md#detection-agent)
     and, for the agent this repository ships (a separate Go module,
     `detection/`), [detection-agent.md](detection-agent.md).

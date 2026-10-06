@@ -98,7 +98,7 @@ llm_proxy:
   #   agent_url: ""            # e.g. http://127.0.0.1:8090
   #   timeout: 5s              # one post to the agent
   #   queue_size: 1024         # turns waiting; more are dropped
-  #   queue_bytes: 268435456   # 256 MiB of bodies held; more are dropped
+  #   queue_bytes: 268435456   # 256 MiB of turns held (bodies; as posted while posting); more are dropped
   #   max_in_flight: 8         # posts at once
 
   # Optional path to a JSON file, in the same shape as

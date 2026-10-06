@@ -90,7 +90,7 @@ Duration values use Go's duration syntax (`30s`, `5m`, `1h`).
 | `llm_proxy.detection.agent_url` | string | `""` (off) | `GATEWAY_LLM_PROXY_DETECTION_AGENT_URL` | Base URL of a local [detection agent](llm-plane.md#detection-agent) (e.g. `http://127.0.0.1:8090`). Set, each relayed generation or batch call is posted to `{agent_url}/v1/turns` asynchronously after it completes; nothing waits on the agent and nothing is blocked. Must be an absolute `http(s)` URL without userinfo (validated at startup). |
 | `llm_proxy.detection.timeout` | duration | `5s` | `GATEWAY_LLM_PROXY_DETECTION_TIMEOUT` | Bound on one post of a turn to the agent. |
 | `llm_proxy.detection.queue_size` | int | `1024` | `GATEWAY_LLM_PROXY_DETECTION_QUEUE_SIZE` | Turns waiting to be posted. Past it a turn is dropped and counted (`/health` `detection.dropped`). |
-| `llm_proxy.detection.queue_bytes` | int | `268435456` (256 MiB) | `GATEWAY_LLM_PROXY_DETECTION_QUEUE_BYTES` | Request and response bytes held by turns waiting or being posted. Past it a turn is dropped and counted. |
+| `llm_proxy.detection.queue_bytes` | int | `268435456` (256 MiB) | `GATEWAY_LLM_PROXY_DETECTION_QUEUE_BYTES` | Bytes held by turns waiting (their request and response bodies) or being posted (the turn as posted: raw bodies and canonical conversation). Past it a turn is dropped and counted. |
 | `llm_proxy.detection.max_in_flight` | int | `8` | `GATEWAY_LLM_PROXY_DETECTION_MAX_IN_FLIGHT` | Turns being posted at once. |
 
 ## database (required)

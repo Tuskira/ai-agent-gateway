@@ -1,6 +1,7 @@
 export { DataTable } from './DataTable'
 export { DataTablePage } from './DataTablePage'
 export { csvCell, downloadCsv, rowsToCsv, tableToCsv } from './csv'
+export { PAGE_SIZES } from './types'
 export type {
   BulkAction,
   CellAction,

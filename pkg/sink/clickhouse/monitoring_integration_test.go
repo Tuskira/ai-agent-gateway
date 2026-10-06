@@ -180,8 +180,9 @@ func TestIntegration_TokenMonitoring(t *testing.T) {
 	tenantID := uniqueTenantID(t)
 	n := monFixture(t, s, tenantID, time.Now().UTC())
 	waitForRowCounts(t, ctx, s.(analytics.Reader), tenantID, 0, n)
+	p7d := analytics.Range7d.Period(time.Now())
 
-	g, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Window: analytics.Window7d})
+	g, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Range: analytics.Range7d, Period: p7d})
 	if err != nil {
 		t.Fatalf("TokenMonitoring() error = %v", err)
 	}
@@ -190,11 +191,14 @@ func TestIntegration_TokenMonitoring(t *testing.T) {
 		tot.Calls != 4 || tot.UnpricedCalls != 1 || tot.PrevTokens != 200 {
 		t.Errorf("totals = %+v, want tokens 555 prompt 410 completion 145 cache_read 300 calls 4 unpriced 1 prev 200", tot)
 	}
+	if tot.PrevTokensWithCache != 200 {
+		t.Errorf("prev tokens with cache = %d, want 200 (the old sonnet row has no cache)", tot.PrevTokensWithCache)
+	}
 	if tot.CostUSD == nil || math.Abs(*tot.CostUSD-0.03) > 1e-9 {
 		t.Errorf("totals cost = %v, want 0.03", tot.CostUSD)
 	}
-	if g.Window != analytics.Window7d || g.Granularity != analytics.GranularityDay {
-		t.Errorf("window/granularity = %s/%s, want 7d/day", g.Window, g.Granularity)
+	if g.Range != analytics.Range7d || g.Granularity != analytics.GranularityDay {
+		t.Errorf("range/granularity = %s/%s, want 7d/day", g.Range, g.Granularity)
 	}
 
 	// Breakdowns: ordered by tokens, and each adds up to the totals.
@@ -229,17 +233,31 @@ func TestIntegration_TokenMonitoring(t *testing.T) {
 		t.Errorf("burn has %d day buckets, want 8 (zero-filled across the 7d window)", len(g.Burn))
 	}
 
-	// Today: only today's rows, hourly buckets, compared with yesterday.
-	today, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Window: analytics.WindowToday})
+	// Last 24h: only the recent rows, hourly buckets, compared with the 24h before.
+	day, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Range: analytics.Range24h, Period: analytics.Range24h.Period(time.Now())})
 	if err != nil {
-		t.Fatalf("TokenMonitoring(today) error = %v", err)
+		t.Fatalf("TokenMonitoring(24h) error = %v", err)
 	}
-	if today.Granularity != analytics.GranularityHour || today.Totals.PrevTokens != 0 {
-		t.Errorf("today = granularity %s prev %d, want hour/0", today.Granularity, today.Totals.PrevTokens)
+	if day.Granularity != analytics.GranularityHour || day.Totals.Tokens != 555 || day.Totals.PrevTokens != 0 {
+		t.Errorf("24h = granularity %s tokens %d prev %d, want hour/555/0", day.Granularity, day.Totals.Tokens, day.Totals.PrevTokens)
+	}
+
+	// Custom dates: the single day 8 days ago holds only the old sonnet row.
+	old := time.Now().UTC().Add(-8 * 24 * time.Hour).Format(time.DateOnly)
+	custom, err := analytics.ParseDateRange(old, old, time.Now())
+	if err != nil {
+		t.Fatalf("ParseDateRange() error = %v", err)
+	}
+	c, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Range: analytics.RangeCustom, Period: custom})
+	if err != nil {
+		t.Fatalf("TokenMonitoring(custom) error = %v", err)
+	}
+	if c.Range != analytics.RangeCustom || c.Totals.Tokens != 200 || c.Totals.Calls != 1 || len(c.Burn) != 24 {
+		t.Errorf("custom = range %s tokens %d calls %d buckets %d, want custom/200/1/24", c.Range, c.Totals.Tokens, c.Totals.Calls, len(c.Burn))
 	}
 
 	// Tenant isolation.
-	other, err := mon.TokenMonitoring(ctx, "nobody-"+tenantID, analytics.TokenMonitoringQuery{Window: analytics.Window7d})
+	other, err := mon.TokenMonitoring(ctx, "nobody-"+tenantID, analytics.TokenMonitoringQuery{Range: analytics.Range7d, Period: p7d})
 	if err != nil {
 		t.Fatalf("TokenMonitoring(other tenant) error = %v", err)
 	}
@@ -261,9 +279,10 @@ func TestIntegration_TokenMonitoringDrillDown(t *testing.T) {
 	tenantID := uniqueTenantID(t)
 	n := monFixture(t, s, tenantID, time.Now().UTC())
 	waitForRowCounts(t, ctx, s.(analytics.Reader), tenantID, 0, n)
+	p7d := analytics.Range7d.Period(time.Now())
 
 	// One model: broken down by caller; sessions paged.
-	m, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Window: analytics.Window7d, Model: "claude-sonnet-4-5", Limit: 1})
+	m, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Range: analytics.Range7d, Period: p7d, Model: "claude-sonnet-4-5", Limit: 1})
 	if err != nil {
 		t.Fatalf("TokenMonitoring(model) error = %v", err)
 	}
@@ -276,13 +295,13 @@ func TestIntegration_TokenMonitoringDrillDown(t *testing.T) {
 	if m.SessionsTotal != 2 || len(m.Sessions) != 1 || m.Sessions[0].SessionID != "s1" || m.Sessions[0].Tokens != 300 || m.Sessions[0].Calls != 2 {
 		t.Errorf("model sessions = %+v (total %d), want first page [s1 300 tokens 2 calls] of 2", m.Sessions, m.SessionsTotal)
 	}
-	page2, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Window: analytics.Window7d, Model: "claude-sonnet-4-5", Limit: 1, Offset: 1})
+	page2, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Range: analytics.Range7d, Period: p7d, Model: "claude-sonnet-4-5", Limit: 1, Offset: 1})
 	if err != nil || len(page2.Sessions) != 1 || page2.Sessions[0].KeyID != "key-b" {
 		t.Errorf("model sessions page 2 = %+v, %v; want key-b's session", page2, err)
 	}
 
 	// One key: broken down by model; each session lists its models.
-	k, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Window: analytics.Window7d, KeyID: "key-a", Limit: 10})
+	k, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Range: analytics.Range7d, Period: p7d, KeyID: "key-a", Limit: 10})
 	if err != nil {
 		t.Fatalf("TokenMonitoring(key) error = %v", err)
 	}
@@ -301,7 +320,7 @@ func TestIntegration_TokenMonitoringDrillDown(t *testing.T) {
 	}
 
 	// A key from another tenant is not visible.
-	x, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Window: analytics.Window7d, KeyID: "key-x", Limit: 10})
+	x, err := mon.TokenMonitoring(ctx, tenantID, analytics.TokenMonitoringQuery{Range: analytics.Range7d, Period: p7d, KeyID: "key-x", Limit: 10})
 	if err != nil || x.Totals.Tokens != 0 || len(x.Sessions) != 0 {
 		t.Errorf("other tenant's key = %+v, %v; want empty", x, err)
 	}

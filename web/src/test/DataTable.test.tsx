@@ -62,6 +62,25 @@ describe('DataTable', () => {
   })
 
   describe('client mode', () => {
+    it('shows 25 rows by default, with 25, 50 and 100 to choose from', async () => {
+      const user = userEvent.setup()
+      render(
+        <DataTable<Item>
+          columns={COLUMNS}
+          data={makeItems(30)}
+          storageKey="test"
+          getRowId={(r) => r.id}
+        />,
+      )
+      expect(visibleNames()).toHaveLength(25)
+      await user.click(screen.getByRole('combobox', { name: /rows per page/i }))
+      expect((await screen.findAllByRole('option')).map((o) => o.textContent)).toEqual([
+        '25',
+        '50',
+        '100',
+      ])
+    })
+
     it('pages locally', async () => {
       const user = userEvent.setup()
       renderTable({ defaultPageSize: 5, pageSizeOptions: [5, 10] })

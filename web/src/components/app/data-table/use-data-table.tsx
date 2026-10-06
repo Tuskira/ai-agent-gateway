@@ -15,10 +15,14 @@ import { ChevronRight } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { LABELS } from './labels'
-import type { DataTableProps, PaginationModel, SortModel } from './types'
+import {
+  PAGE_SIZES,
+  type DataTableProps,
+  type PaginationModel,
+  type SortModel,
+} from './types'
 import { useTableStorage } from './use-table-storage'
 
-const FALLBACK_PAGE_SIZES = [10, 25, 50]
 /** Width, in pixels, of a column that declares no `size`. */
 const DEFAULT_COLUMN_SIZE = 120
 /** Narrowest a column can be dragged. */
@@ -59,7 +63,7 @@ export function useDataTable<TData>(props: DataTableProps<TData>) {
     storageKey,
     storageVersion = 1,
     getRowId,
-    pageSizeOptions = FALLBACK_PAGE_SIZES,
+    pageSizeOptions = PAGE_SIZES,
     defaultPageSize,
     defaultSorting,
     enableRowSelection = false,
@@ -89,13 +93,13 @@ export function useDataTable<TData>(props: DataTableProps<TData>) {
 
   const [clientPagination, setClientPagination] = useState<PaginationModel>({
     page: 0,
-    pageSize: defaultPageSize ?? pageSizeOptions[0] ?? 10,
+    pageSize: defaultPageSize ?? pageSizeOptions[0] ?? 25,
   })
   const totalRows = isServer ? (props.totalRows ?? 0) : data.length
   const requested = props.pagination ?? clientPagination
   // A page size of zero or less would divide by zero below.
   const pageSize =
-    requested.pageSize > 0 ? requested.pageSize : (pageSizeOptions[0] ?? 10)
+    requested.pageSize > 0 ? requested.pageSize : (pageSizeOptions[0] ?? 25)
   const lastPage = Math.max(0, Math.ceil(totalRows / pageSize) - 1)
   // A shorter row set can leave the client's page past the end. Clamp during
   // render instead of stranding the viewer on an empty page.

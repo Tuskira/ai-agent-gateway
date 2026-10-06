@@ -16,8 +16,7 @@ import (
 
 // ClientModelSankey implements analytics.Reader.
 func (s *Sink) ClientModelSankey(ctx context.Context, tenantID string, q analytics.SankeyQuery) (*analytics.Sankey, error) {
-	now := time.Now().UTC()
-	from, to := now.Add(-q.Range.Window()), now
+	from, to := q.Period.Start, q.Period.End
 
 	rows, err := s.sankeyUsage(ctx, tenantID, from, to, q.ClientName)
 	if err != nil {

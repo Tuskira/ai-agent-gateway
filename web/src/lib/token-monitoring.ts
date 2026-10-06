@@ -1,5 +1,10 @@
 import { ApiError, apiFetch } from '@/lib/api'
-import { formatCompactNumber } from '@/lib/overview'
+import {
+  formatCompactNumber,
+  periodParams,
+  periodQuery,
+  type Period,
+} from '@/lib/overview'
 
 /**
  * Token Monitoring — `GET /api/v1/analytics/token-monitoring*`
@@ -9,13 +14,8 @@ import { formatCompactNumber } from '@/lib/overview'
  * (`null` = no priced call in the window). Snake-case, like the API.
  */
 
-export type MonitoringWindow = 'today' | '7d' | '30d'
-
-export const MONITORING_WINDOWS: { value: MonitoringWindow; label: string }[] = [
-  { value: 'today', label: 'Today' },
-  { value: '7d', label: 'Last 7 Days' },
-  { value: '30d', label: 'Last 30 Days' },
-]
+/** How Cost by model is shown: cards, or a sortable table. */
+export type CostView = 'cards' | 'list'
 
 export type CallerRole = 'agent' | 'admin' | 'interceptor' | 'other'
 
@@ -51,6 +51,13 @@ export interface TokenUsage {
 export interface TokenTotals extends TokenUsage {
   /** Change vs the previous period in percent; `null` when it had none. */
   delta_pct: number | null
+}
+
+/** The page's (or a drill-down's) totals, with the headline total: tokens
+ * plus cache reads and writes, and its change on the same measure. */
+export interface PageTotals extends TokenTotals {
+  tokens_with_cache: number
+  tokens_with_cache_delta_pct: number | null
 }
 
 export interface ModelTokens extends TokenTotals {
@@ -89,13 +96,13 @@ export interface SessionTokens extends TokenUsage {
 /** The page (by model, caller and role) or one drill-down: a model
  * (`model`, by caller) or an API key (`key`, by model), with its sessions. */
 export interface TokenMonitoring {
-  window: MonitoringWindow
+  range: Period['range']
   start: string
   end: string
   granularity: 'hour' | 'day'
   model?: string
   key?: { id: string; name: string; role: CallerRole }
-  totals: TokenTotals
+  totals: PageTotals
   by_model: ModelTokens[]
   by_key: CallerTokens[]
   /** The page only. */
@@ -116,19 +123,19 @@ async function orNull(path: string): Promise<TokenMonitoring | null> {
   }
 }
 
-export function fetchTokenMonitoring(window: MonitoringWindow) {
-  return orNull(`/analytics/token-monitoring?window=${window}`)
+export function fetchTokenMonitoring(period: Period) {
+  return orNull(`/analytics/token-monitoring?${periodQuery(period)}`)
 }
 
 export function fetchTokenMonitoringModel(
   model: string,
-  window: MonitoringWindow,
+  period: Period,
   limit: number,
   offset: number,
 ) {
   const q = new URLSearchParams({
     model,
-    window,
+    ...periodParams(period),
     limit: String(limit),
     offset: String(offset),
   })
@@ -137,14 +144,27 @@ export function fetchTokenMonitoringModel(
 
 export function fetchTokenMonitoringKey(
   keyId: string,
-  window: MonitoringWindow,
+  period: Period,
   limit: number,
   offset: number,
 ) {
-  const q = new URLSearchParams({ window, limit: String(limit), offset: String(offset) })
+  const q = new URLSearchParams({
+    ...periodParams(period),
+    limit: String(limit),
+    offset: String(offset),
+  })
   return orNull(
     `/analytics/token-monitoring/keys/${encodeURIComponent(keyId)}?${q.toString()}`,
   )
+}
+
+/** Columns of a laid-out CSS grid, from its computed grid-template-columns
+ * ("300px 300px 300px" -> 3); null when the tracks are not resolved. */
+export function gridColumnCount(template: string): number | null {
+  const tracks = template.trim().split(/\s+/).filter(Boolean)
+  return tracks.length > 0 && tracks.every((t) => /^[\d.]+px$/.test(t))
+    ? tracks.length
+    : null
 }
 
 /** A caller's display name: its key's name, else why it has none. */

@@ -3,7 +3,6 @@ package clickhouse
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/analytics"
 )
@@ -26,7 +25,7 @@ func monBase(filter string) string {
 		WHERE tenant_id = ? AND ((timestamp >= ? AND timestamp < ?) OR (timestamp >= ? AND timestamp < ?))` + filter + `)`
 }
 
-func monArgs(tenantID string, b analytics.MonitoringBounds, filterArgs ...any) []any {
+func monArgs(tenantID string, b analytics.Period, filterArgs ...any) []any {
 	return append([]any{b.Start, tenantID, b.Start, b.End, b.PrevStart, b.PrevEnd}, filterArgs...)
 }
 
@@ -67,7 +66,7 @@ func (s *usageScan) usage() analytics.TokenUsage {
 
 // TokenMonitoring implements analytics.TokenMonitoringReader.
 func (s *Sink) TokenMonitoring(ctx context.Context, tenantID string, q analytics.TokenMonitoringQuery) (*analytics.TokenMonitoring, error) {
-	b := q.Window.Bounds(time.Now())
+	b := q.Period
 	var filter string
 	var args []any
 	switch {
@@ -79,7 +78,7 @@ func (s *Sink) TokenMonitoring(ctx context.Context, tenantID string, q analytics
 	fail := func(part string, err error) (*analytics.TokenMonitoring, error) {
 		return nil, fmt.Errorf("clickhouse: token monitoring %s: %w", part, err)
 	}
-	out := &analytics.TokenMonitoring{Window: q.Window, Start: b.Start, End: b.End, Granularity: b.Granularity,
+	out := &analytics.TokenMonitoring{Range: q.Range, Start: b.Start, End: b.End, Granularity: b.Granularity,
 		ByModel: []analytics.ModelTokenUsage{}, ByKey: []analytics.KeyTokenUsage{}}
 	var err error
 	if out.Totals, err = s.monTotals(ctx, tenantID, b, filter, args...); err != nil {
@@ -106,13 +105,19 @@ func (s *Sink) TokenMonitoring(ctx context.Context, tenantID string, q analytics
 	return out, nil
 }
 
-func (s *Sink) monTotals(ctx context.Context, tenantID string, b analytics.MonitoringBounds, filter string, filterArgs ...any) (analytics.TokenUsage, error) {
+// monTotals also reads the previous period's tokens with cache, which only
+// the headline total compares against.
+func (s *Sink) monTotals(ctx context.Context, tenantID string, b analytics.Period, filter string, filterArgs ...any) (analytics.TokenUsage, error) {
 	var sc usageScan
-	err := s.c.QueryRow(ctx, `SELECT `+usageSelect+` FROM `+monBase(filter), monArgs(tenantID, b, filterArgs...)...).Scan(sc.dest()...)
-	return sc.usage(), err
+	var prevWithCache uint64
+	err := s.c.QueryRow(ctx, `SELECT `+usageSelect+`, sumIf(total_tokens + cache_read_tokens + cache_write_tokens, NOT cur) FROM `+monBase(filter),
+		monArgs(tenantID, b, filterArgs...)...).Scan(append(sc.dest(), &prevWithCache)...)
+	u := sc.usage()
+	u.PrevTokensWithCache = prevWithCache
+	return u, err
 }
 
-func (s *Sink) monByModel(ctx context.Context, tenantID string, b analytics.MonitoringBounds, filter string, filterArgs ...any) ([]analytics.ModelTokenUsage, error) {
+func (s *Sink) monByModel(ctx context.Context, tenantID string, b analytics.Period, filter string, filterArgs ...any) ([]analytics.ModelTokenUsage, error) {
 	rows, err := s.c.Query(ctx, `SELECT model, `+usageSelect+`
 		FROM `+monBase(filter)+`
 		GROUP BY model HAVING u_calls > 0
@@ -134,7 +139,7 @@ func (s *Sink) monByModel(ctx context.Context, tenantID string, b analytics.Moni
 	return out, rows.Err()
 }
 
-func (s *Sink) monByKey(ctx context.Context, tenantID string, b analytics.MonitoringBounds, filter string, filterArgs ...any) ([]analytics.KeyTokenUsage, error) {
+func (s *Sink) monByKey(ctx context.Context, tenantID string, b analytics.Period, filter string, filterArgs ...any) ([]analytics.KeyTokenUsage, error) {
 	rows, err := s.c.Query(ctx, `SELECT key_id, anyHeavy(source), uniqExactIf(model, cur), `+usageSelect+`
 		FROM `+monBase(filter)+`
 		GROUP BY key_id HAVING u_calls > 0
@@ -157,7 +162,7 @@ func (s *Sink) monByKey(ctx context.Context, tenantID string, b analytics.Monito
 }
 
 // monBurn is the current window's tokens per UTC hour or day, zero-filled.
-func (s *Sink) monBurn(ctx context.Context, tenantID string, b analytics.MonitoringBounds, filter string, filterArgs ...any) ([]analytics.TokenBucket, error) {
+func (s *Sink) monBurn(ctx context.Context, tenantID string, b analytics.Period, filter string, filterArgs ...any) ([]analytics.TokenBucket, error) {
 	bucket := "toStartOfDay(timestamp, 'UTC')"
 	if b.Granularity == analytics.GranularityHour {
 		bucket = "toStartOfHour(timestamp, 'UTC')"
@@ -185,7 +190,7 @@ func (s *Sink) monBurn(ctx context.Context, tenantID string, b analytics.Monitor
 
 // monSessions pages the current window's sessions (per session id and key,
 // most tokens first) and counts them all.
-func (s *Sink) monSessions(ctx context.Context, tenantID string, b analytics.MonitoringBounds, filter string, filterArgs []any, limit, offset int) ([]analytics.SessionTokenUsage, int, error) {
+func (s *Sink) monSessions(ctx context.Context, tenantID string, b analytics.Period, filter string, filterArgs []any, limit, offset int) ([]analytics.SessionTokenUsage, int, error) {
 	if limit <= 0 {
 		limit = defaultMonitoringSessions
 	}

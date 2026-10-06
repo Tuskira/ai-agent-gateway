@@ -18,6 +18,7 @@ package analytics
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -78,13 +79,75 @@ func (r Range) Window() time.Duration {
 	}
 }
 
-// Bucket returns the trafficOverTime granularity for r: hourly for 24h,
-// daily for 7d/30d.
-func (r Range) Bucket() time.Duration {
-	if r == Range24h {
+// RangeCustom labels a window given as explicit dates (from/to) instead of
+// a preset.
+const RangeCustom Range = "custom"
+
+// Granularity is the bucket size of a usage-over-time series.
+type Granularity string
+
+const (
+	GranularityHour Granularity = "hour"
+	GranularityDay  Granularity = "day"
+)
+
+// Step is g's duration.
+func (g Granularity) Step() time.Duration {
+	if g == GranularityHour {
 		return time.Hour
 	}
 	return 24 * time.Hour
+}
+
+// Period is a resolved time window: usage is counted in [Start, End) and
+// compared with [PrevStart, PrevEnd), the window of the same length just
+// before it. Series are hourly for windows up to 48h, daily beyond. UTC.
+type Period struct {
+	Start, End, PrevStart, PrevEnd time.Time
+	Granularity                    Granularity
+}
+
+// NewPeriod is the Period [start, end).
+func NewPeriod(start, end time.Time) Period {
+	start, end = start.UTC(), end.UTC()
+	span := end.Sub(start)
+	g := GranularityDay
+	if span <= 48*time.Hour {
+		g = GranularityHour
+	}
+	return Period{Start: start, End: end, PrevStart: start.Add(-span), PrevEnd: start, Granularity: g}
+}
+
+// Period resolves r at now: the window of r's length ending now.
+func (r Range) Period(now time.Time) Period { return NewPeriod(now.Add(-r.Window()), now) }
+
+// MaxCustomRange bounds a from/to window, keeping its queries cheap.
+const MaxCustomRange = 366 * 24 * time.Hour
+
+// ParseDateRange resolves a custom window from two YYYY-MM-DD dates: whole
+// UTC days, both inclusive, ending no later than now.
+func ParseDateRange(from, to string, now time.Time) (Period, error) {
+	start, err := time.Parse(time.DateOnly, from)
+	if err != nil {
+		return Period{}, fmt.Errorf("from must be a date (YYYY-MM-DD)")
+	}
+	last, err := time.Parse(time.DateOnly, to)
+	if err != nil {
+		return Period{}, fmt.Errorf("to must be a date (YYYY-MM-DD)")
+	}
+	end := last.Add(24 * time.Hour)
+	switch {
+	case last.Before(start):
+		return Period{}, fmt.Errorf("to must not be before from")
+	case !start.Before(now):
+		return Period{}, fmt.Errorf("from must not be in the future")
+	case end.Sub(start) > MaxCustomRange:
+		return Period{}, fmt.Errorf("a custom range spans at most 366 days")
+	}
+	if end.After(now) {
+		end = now
+	}
+	return NewPeriod(start, end), nil
 }
 
 // AccessLogFilter narrows GET /analytics/logs. Zero values mean
@@ -136,10 +199,10 @@ type LLMCallReader interface {
 // ClickHouse sink) is represented by a nil Reader; handlers answer 404
 // rather than call through a nil.
 type Reader interface {
-	// Overview computes the Overview page's metrics for tenantID over r,
-	// including deltas against the immediately preceding window of the
-	// same length.
-	Overview(ctx context.Context, tenantID string, r Range) (*Overview, error)
+	// Overview computes the Overview page's metrics for tenantID over p,
+	// including deltas against p's previous period (p.PrevStart..PrevEnd).
+	// The caller sets the result's Range.
+	Overview(ctx context.Context, tenantID string, p Period) (*Overview, error)
 
 	// ListAccessLogs returns a page of access-log rows (bodies/headers
 	// never populated -- this is the "logs" list, not the "get one"
@@ -160,11 +223,11 @@ type Reader interface {
 	ModelsSummary(ctx context.Context, tenantID string, r Range) (*ModelsSummary, error)
 
 	// SkillsSummary computes GET /api/v1/analytics/skills's per
-	// skill/command usage summary for tenantID over r (default 7d, same
-	// as ModelsSummary), from mcp_access_logs rows carrying a non-empty
-	// skill_name. Kind is left "" on every row -- the handler joins it in
-	// from the skill/command registry by name.
-	SkillsSummary(ctx context.Context, tenantID string, r Range) (*SkillsSummary, error)
+	// skill/command usage summary for tenantID over p, from mcp_access_logs
+	// rows carrying a non-empty skill_name. Kind is left "" on every row --
+	// the handler joins it in from the skill/command registry by name, and
+	// sets Range.
+	SkillsSummary(ctx context.Context, tenantID string, p Period) (*SkillsSummary, error)
 
 	// SessionTimeline computes GET
 	// /api/v1/analytics/sessions/{session_id}/timeline's merged,
@@ -195,24 +258,24 @@ type Reader interface {
 	TrafficFlowSankey(ctx context.Context, tenantID string, q SankeyQuery) (*TrafficFlow, error)
 
 	// SkillUsage returns, per skill name, how many LLM calls' responses
-	// asked to use it over r (llm_calls.skills_used; see internal/discovery).
+	// asked to use it over p (llm_calls.skills_used; see internal/discovery).
 	// Names only: registry state (registered, kind) is joined in by the
 	// handler. Ordered by Calls descending, name.
-	SkillUsage(ctx context.Context, tenantID string, r Range) ([]SkillUsage, error)
+	SkillUsage(ctx context.Context, tenantID string, p Period) ([]SkillUsage, error)
 
 	// MCPToolUsage returns, per (server, tool) the model's responses asked
-	// to call over r (llm_calls.mcp_tools_used). The handler folds these
+	// to call over p (llm_calls.mcp_tools_used). The handler folds these
 	// into per-server rows and joins connector registration.
-	MCPToolUsage(ctx context.Context, tenantID string, r Range) ([]MCPToolUsage, error)
+	MCPToolUsage(ctx context.Context, tenantID string, p Period) ([]MCPToolUsage, error)
 
 	// MCPServerCalls returns, per server row, the number of DISTINCT LLM calls
-	// (request_id) that used at least one of its tools over r, so a call using
+	// (request_id) that used at least one of its tools over p, so a call using
 	// two tools of one server counts once. aliases maps a lowercased connector
 	// slug or name to its canonical slug; a tool named "<alias>__<tool>" is
 	// attributed to that connector with Via=true (the gateway's MCP plane),
 	// whatever server alias the client gave the gateway. Entries are keyed the
 	// same way the handler folds MCPToolUsage rows: (Server, Via).
-	MCPServerCalls(ctx context.Context, tenantID string, r Range, aliases map[string]string) ([]MCPServerCalls, error)
+	MCPServerCalls(ctx context.Context, tenantID string, p Period, aliases map[string]string) ([]MCPServerCalls, error)
 }
 
 // MCPServerCalls is the Reader's per-server-row distinct-LLM-call count. For a
@@ -688,7 +751,10 @@ const SankeyDefaultLimit = 10
 
 // SankeyQuery narrows GET /api/v1/analytics/client-models.
 type SankeyQuery struct {
+	// Range labels Period (a preset, or RangeCustom); Period is the
+	// window the graph covers.
 	Range  Range
+	Period Period
 	Metric SankeyMetric
 	// Limit caps the number of distinct MODEL nodes; <= 0 means
 	// SankeyDefaultLimit. Never negative by the time a Reader sees it --

@@ -1,5 +1,5 @@
 import { apiFetch } from '@/lib/api'
-import type { TimeRange } from '@/lib/overview'
+import { periodQuery, type Period, type TimeRange } from '@/lib/overview'
 import type { SkillKind } from '@/lib/skills'
 
 /**
@@ -51,22 +51,15 @@ export interface SkillsSummary {
   most_used: SkillsMostUsed | null
 }
 
-/** The range the Skills page always asks for -- same framing as Models'
- * "Observed from gateway traffic over the last 7 days" footer, so there's
- * no range picker on this page either. */
-export const SKILLS_TRAFFIC_RANGE: TimeRange = '7d'
-
 /**
  * `GET /api/v1/analytics/skills?range=7d`. Like `fetchModelsSummary`, any
  * failure (404 because ClickHouse isn't enabled, or a network error)
  * resolves to `null` rather than throwing -- the page renders its
  * "analytics are off" state instead of an error screen.
  */
-export async function fetchSkillsSummary(
-  range: TimeRange = SKILLS_TRAFFIC_RANGE,
-): Promise<SkillsSummary | null> {
+export async function fetchSkillsSummary(period: Period): Promise<SkillsSummary | null> {
   try {
-    return await apiFetch<SkillsSummary>(`/analytics/skills?range=${range}`)
+    return await apiFetch<SkillsSummary>(`/analytics/skills?${periodQuery(period)}`)
   } catch {
     return null
   }

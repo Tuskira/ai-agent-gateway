@@ -26,13 +26,13 @@ const monitoringFixture = "../../../web/src/test/fixtures/token-monitoring-api.j
 
 type monitoringContract struct {
 	Comment string `json:"_comment"`
-	// Overview7d is GET /analytics/token-monitoring?window=7d.
+	// Overview7d is GET /analytics/token-monitoring?range=7d.
 	Overview7d contractExchange `json:"overview_7d"`
-	// OverviewToday is the same page after switching to Today.
-	OverviewToday contractExchange `json:"overview_today"`
-	// Model is GET /analytics/token-monitoring/model?model=claude-sonnet-4-5&window=7d.
+	// Overview24h is the same page after switching to Last 24h.
+	Overview24h contractExchange `json:"overview_24h"`
+	// Model is GET /analytics/token-monitoring/model?model=claude-sonnet-4-5&range=7d.
 	Model contractExchange `json:"model"`
-	// Key is GET /analytics/token-monitoring/keys/{id}?window=7d.
+	// Key is GET /analytics/token-monitoring/keys/{id}?range=7d.
 	Key contractExchange `json:"key"`
 }
 
@@ -91,9 +91,9 @@ func TestTokenMonitoring_ConsoleContract(t *testing.T) {
 	gpt := analytics.TokenUsage{Tokens: 24000, PromptTokens: 20000, CompletionTokens: 4000, CacheReadTokens: 30000, Calls: 6, UnpricedCalls: 6}
 	tiny := analytics.TokenUsage{Tokens: 12, PromptTokens: 10, CompletionTokens: 2, CostUSD: f(0.0000097), Calls: 1}
 	r.mon = &analytics.TokenMonitoring{
-		Window: analytics.Window7d, Start: start, End: end, Granularity: analytics.GranularityDay,
+		Range: analytics.Range7d, Start: start, End: end, Granularity: analytics.GranularityDay,
 		Totals: analytics.TokenUsage{Tokens: 339012, PromptTokens: 230010, CompletionTokens: 109002, CacheReadTokens: 2430000,
-			CacheWriteTokens: 180000, CostUSD: f(4.1234097), Calls: 49, UnpricedCalls: 6, PrevTokens: 200000},
+			CacheWriteTokens: 180000, CostUSD: f(4.1234097), Calls: 49, UnpricedCalls: 6, PrevTokens: 200000, PrevTokensWithCache: 2000000},
 		ByModel: []analytics.ModelTokenUsage{
 			{Model: "claude-sonnet-4-5", TokenUsage: sonnet},
 			{Model: "gpt-5", TokenUsage: gpt},
@@ -107,11 +107,11 @@ func TestTokenMonitoring_ConsoleContract(t *testing.T) {
 		},
 		Burn: days(40000, 0, 81000, 55000, 60012, 45000, 30000, 28000),
 	}
-	check("overview_7d", &fx.Overview7d, get("/analytics/token-monitoring", "/analytics/token-monitoring?window=7d", h.TokenMonitoring))
+	check("overview_7d", &fx.Overview7d, get("/analytics/token-monitoring", "/analytics/token-monitoring?range=7d", h.TokenMonitoring))
 
-	todayStart := end.Truncate(24 * time.Hour)
+	dayStart := end.Add(-24 * time.Hour)
 	r.mon = &analytics.TokenMonitoring{
-		Window: analytics.WindowToday, Start: todayStart, End: end, Granularity: analytics.GranularityHour,
+		Range: analytics.Range24h, Start: dayStart, End: end, Granularity: analytics.GranularityHour,
 		Totals: analytics.TokenUsage{Tokens: 1500, PromptTokens: 1000, CompletionTokens: 500, CostUSD: f(0.0105), Calls: 3},
 		ByModel: []analytics.ModelTokenUsage{
 			{Model: "claude-sonnet-4-5", TokenUsage: analytics.TokenUsage{Tokens: 1500, PromptTokens: 1000, CompletionTokens: 500, CostUSD: f(0.0105), Calls: 3}},
@@ -120,14 +120,14 @@ func TestTokenMonitoring_ConsoleContract(t *testing.T) {
 			{KeyID: ids["ops"], Source: "gateway", Models: 1, TokenUsage: analytics.TokenUsage{Tokens: 1500, PromptTokens: 1000, CompletionTokens: 500, CostUSD: f(0.0105), Calls: 3}},
 		},
 		Burn: []analytics.TokenBucket{
-			{Bucket: todayStart, Tokens: 0}, {Bucket: todayStart.Add(time.Hour), Tokens: 1500},
+			{Bucket: dayStart.Truncate(time.Hour), Tokens: 0}, {Bucket: end.Truncate(time.Hour), Tokens: 1500},
 		},
 	}
-	check("overview_today", &fx.OverviewToday, get("/analytics/token-monitoring", "/analytics/token-monitoring?window=today", h.TokenMonitoring))
+	check("overview_24h", &fx.Overview24h, get("/analytics/token-monitoring", "/analytics/token-monitoring?range=24h", h.TokenMonitoring))
 
 	seen := end.Add(-time.Hour)
 	r.mon = &analytics.TokenMonitoring{
-		Window: analytics.Window7d, Start: start, End: end, Granularity: analytics.GranularityDay, Totals: sonnet,
+		Range: analytics.Range7d, Start: start, End: end, Granularity: analytics.GranularityDay, Totals: sonnet,
 		ByModel: []analytics.ModelTokenUsage{},
 		ByKey: []analytics.KeyTokenUsage{
 			{KeyID: ids["ci-bot"], Source: "gateway", Models: 1, TokenUsage: analytics.TokenUsage{Tokens: 300000, CostUSD: f(3.9), Calls: 40, PrevTokens: 200000}},
@@ -142,10 +142,10 @@ func TestTokenMonitoring_ConsoleContract(t *testing.T) {
 		},
 		SessionsTotal: 2,
 	}
-	check("model", &fx.Model, get("/analytics/token-monitoring/model", "/analytics/token-monitoring/model?model=claude-sonnet-4-5&window=7d", h.TokenMonitoringModel))
+	check("model", &fx.Model, get("/analytics/token-monitoring/model", "/analytics/token-monitoring/model?model=claude-sonnet-4-5&range=7d", h.TokenMonitoringModel))
 
 	r.mon = &analytics.TokenMonitoring{
-		Window: analytics.Window7d, Start: start, End: end, Granularity: analytics.GranularityDay,
+		Range: analytics.Range7d, Start: start, End: end, Granularity: analytics.GranularityDay,
 		Totals:  analytics.TokenUsage{Tokens: 24000, PromptTokens: 20000, CompletionTokens: 4000, CacheReadTokens: 30000, Calls: 6, UnpricedCalls: 6},
 		ByModel: []analytics.ModelTokenUsage{{Model: "gpt-5", TokenUsage: gpt}},
 		ByKey:   []analytics.KeyTokenUsage{},
@@ -155,7 +155,7 @@ func TestTokenMonitoring_ConsoleContract(t *testing.T) {
 		},
 		SessionsTotal: 1,
 	}
-	check("key", &fx.Key, get("/analytics/token-monitoring/keys/{id}", "/analytics/token-monitoring/keys/"+ids["collector"]+"?window=7d", h.TokenMonitoringKey))
+	check("key", &fx.Key, get("/analytics/token-monitoring/keys/{id}", "/analytics/token-monitoring/keys/"+ids["collector"]+"?range=7d", h.TokenMonitoringKey))
 
 	if update {
 		out, err := json.MarshalIndent(fx, "", "  ")

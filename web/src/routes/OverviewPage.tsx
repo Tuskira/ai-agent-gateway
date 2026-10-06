@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import {
   ArrowRight,
   Bot,
-  Calendar,
   CircleCheck,
   CircleDollarSign,
   Coins,
@@ -28,10 +27,10 @@ import {
   formatPercent,
   MAX_TOOL_COUNT_REQUESTS,
   pctOfMax,
-  TIME_RANGES,
+  periodLabel,
+  periodQuery,
   type ConnectorStatus,
   type CountKpi,
-  type TimeRange,
 } from '@/lib/overview'
 import { colors } from '@/styles/tokens'
 import { cn } from '@/lib/utils'
@@ -54,6 +53,8 @@ import { TrafficAreaChart } from '@/components/app/TrafficAreaChart'
 import { WidgetHelp } from '@/components/app/WidgetHelp'
 import { KPI_HELP, WIDGET_HELP } from '@/lib/overview-help'
 import { Skeleton } from '@/components/ui/skeleton'
+import { PeriodFilter } from '@/components/app/PeriodFilter'
+import { usePeriod } from '@/hooks/use-period'
 import { TrafficFlowCard } from '@/components/app/TrafficFlowCard'
 import {
   Tooltip,
@@ -112,15 +113,15 @@ interface KpiTile {
 }
 
 export default function OverviewPage() {
-  const [range, setRange] = useState<TimeRange>('24h')
+  const [period, setPeriod] = usePeriod('24h')
   const [flowClientName, setFlowClientName] = useState('')
 
   const { principal } = useAuth()
   const { data: health, isLoading: healthLoading } = useHealth()
-  const metricsQuery = useOverviewMetrics(range)
+  const metricsQuery = useOverviewMetrics(period)
   const metrics = metricsQuery.data ?? null
   const metricsLoading = metricsQuery.isLoading
-  const flowQuery = useTrafficFlow(range, flowClientName)
+  const flowQuery = useTrafficFlow(period, flowClientName)
 
   const connectorsQuery = useConnectors()
   const profilesQuery = useProfiles()
@@ -131,9 +132,8 @@ export default function OverviewPage() {
 
   const healthLabel = health ? (health.status === 'ok' ? 'healthy' : health.status) : null
   const tenantShort = principal ? principal.tenant_id.slice(0, 8) : '—'
-  const rangeLabel =
-    TIME_RANGES.find((r) => r.value === range)?.label.replace('Last ', '') ?? range
-  const vsPrevious = `vs previous ${rangeLabel}`
+  const vsPrevious =
+    period.range === 'custom' ? 'vs previous period' : `vs previous ${periodLabel(period).replace('Last ', '')}`
   const showSetupStrip =
     connectorsQuery.data !== undefined && connectorsQuery.data.total === 0
 
@@ -309,21 +309,7 @@ export default function OverviewPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <label className="flex h-9 items-center gap-2 rounded-r-4 border border-border bg-card py-0 pr-1 pl-2.5 text-text-subtle transition-colors hover:border-border-strong">
-            <Calendar className="size-[15px]" aria-hidden="true" />
-            <select
-              aria-label="Time range"
-              value={range}
-              onChange={(e) => setRange(e.target.value as TimeRange)}
-              className="h-8 cursor-pointer border-0 bg-transparent text-[13px] font-medium text-foreground outline-none"
-            >
-              {TIME_RANGES.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <PeriodFilter value={period} onChange={setPeriod} />
           <span className="inline-flex h-9 items-center gap-1.5 rounded-r-4 border border-border bg-card px-3 text-[13px] font-semibold text-foreground">
             <span
               className="size-[7px] rounded-full bg-status-resolved"
@@ -420,6 +406,15 @@ export default function OverviewPage() {
                   <span className="hidden @min-[230px]:inline">Details</span>
                   <ArrowRight className="size-3.5" aria-hidden="true" />
                 </Link>
+              ) : k.key === 'tokens' ? (
+                <Link
+                  to={`/token-monitoring?${periodQuery(period)}`}
+                  aria-label="View token monitoring"
+                  className={detailsLinkClass}
+                >
+                  <span className="hidden @min-[230px]:inline">Details</span>
+                  <ArrowRight className="size-3.5" aria-hidden="true" />
+                </Link>
               ) : null
             }
           />
@@ -429,7 +424,7 @@ export default function OverviewPage() {
       {/* Full width: agent -> path -> model | connector Sankey */}
       <TrafficFlowCard
         data={flowQuery.data}
-        range={range}
+        period={period}
         clientName={flowClientName}
         onClientNameChange={setFlowClientName}
         emptyLabel={CLICKHOUSE_EMPTY_LABEL}

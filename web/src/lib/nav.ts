@@ -1,7 +1,7 @@
 import {
   Bot,
-  ChartPie,
   Clock,
+  Coins,
   Database,
   KeyRound,
   LayoutDashboard,
@@ -37,13 +37,19 @@ export const OVERVIEW_PATH = '/'
 
 export const navGroups: NavGroup[] = [
   {
-    label: 'Overview',
+    label: 'Dashboards',
     items: [
       {
         label: 'Overview',
         path: OVERVIEW_PATH,
         icon: LayoutDashboard,
         description: 'Gateway status at a glance.',
+      },
+      {
+        label: 'Token Monitoring',
+        path: '/token-monitoring',
+        icon: Coins,
+        description: 'Token usage and cost by model, caller and role.',
       },
     ],
   },
@@ -111,12 +117,6 @@ export const navGroups: NavGroup[] = [
         path: '/session-timeline',
         icon: Clock,
         description: 'Follow the LLM and MCP calls of one session in order.',
-      },
-      {
-        label: 'Token Monitoring',
-        path: '/token-monitoring',
-        icon: ChartPie,
-        description: 'Token usage and cost by model, caller and role.',
       },
     ],
   },

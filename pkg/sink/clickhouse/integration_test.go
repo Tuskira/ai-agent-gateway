@@ -155,7 +155,7 @@ func TestIntegration_WriteAndQueryOverview(t *testing.T) {
 	defer cancel()
 	waitForRowCounts(t, ctx, reader, tenantID, totalAccessRows, totalLLMRows)
 
-	ov, err := reader.Overview(context.Background(), tenantID, analytics.Range24h)
+	ov, err := reader.Overview(context.Background(), tenantID, analytics.Range24h.Period(time.Now()))
 	if err != nil {
 		t.Fatalf("Overview() error = %v", err)
 	}
@@ -252,7 +252,7 @@ func TestIntegration_WriteAndQueryOverview(t *testing.T) {
 func waitForRowCounts(t *testing.T, ctx context.Context, r analytics.Reader, tenantID string, wantMCP, wantLLM int) {
 	t.Helper()
 	for {
-		ov, err := r.Overview(ctx, tenantID, analytics.Range24h)
+		ov, err := r.Overview(ctx, tenantID, analytics.Range24h.Period(time.Now()))
 		if err == nil && ov.Traffic.McpCalls >= int64(wantMCP) && ov.Traffic.LlmCalls >= int64(wantLLM) {
 			return
 		}
@@ -282,7 +282,7 @@ func TestIntegration_CostNullableAndRounded(t *testing.T) {
 	onlyNull := uniqueTenantID(t) + "-null"
 	s.WriteLLMCall(&sink.LLMCall{Timestamp: now, RequestID: onlyNull, TenantID: onlyNull, Model: "m", StatusCode: 200})
 	waitForRowCounts(t, ctx, reader, onlyNull, 0, 1)
-	ov, err := reader.Overview(ctx, onlyNull, analytics.Range24h)
+	ov, err := reader.Overview(ctx, onlyNull, analytics.Range24h.Period(time.Now()))
 	if err != nil || ov.Kpis.TotalCost.Value != 0 {
 		t.Fatalf("all-NULL window: TotalCost = %v, err = %v; want 0, nil", ov.Kpis.TotalCost.Value, err)
 	}
@@ -294,7 +294,7 @@ func TestIntegration_CostNullableAndRounded(t *testing.T) {
 		s.WriteLLMCall(&sink.LLMCall{Timestamp: now, RequestID: fmt.Sprintf("%s-%d", mixed, n), TenantID: mixed, Model: "m", StatusCode: 200, CostUSD: c})
 	}
 	waitForRowCounts(t, ctx, reader, mixed, 0, 3)
-	if ov, err = reader.Overview(ctx, mixed, analytics.Range24h); err != nil {
+	if ov, err = reader.Overview(ctx, mixed, analytics.Range24h.Period(time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	if got := ov.Kpis.TotalCost.Value; math.Abs(got-0.50000132) > 1e-15 {
@@ -1099,7 +1099,7 @@ func TestIntegration_SkillsSummary(t *testing.T) {
 	const wantAccessRows = 5
 	waitForRowCounts(t, ctx, reader, tenantID, wantAccessRows, 0)
 
-	summary, err := reader.SkillsSummary(ctx, tenantID, analytics.Range7d)
+	summary, err := reader.SkillsSummary(ctx, tenantID, analytics.Range7d.Period(time.Now()))
 	if err != nil {
 		t.Fatalf("SkillsSummary() error = %v", err)
 	}
@@ -1141,7 +1141,7 @@ func TestIntegration_SkillsSummary(t *testing.T) {
 	}
 
 	// Cross-tenant isolation.
-	otherSummary, err := reader.SkillsSummary(ctx, "some-other-tenant-"+tenantID, analytics.Range7d)
+	otherSummary, err := reader.SkillsSummary(ctx, "some-other-tenant-"+tenantID, analytics.Range7d.Period(time.Now()))
 	if err != nil {
 		t.Fatalf("SkillsSummary(other tenant) error = %v", err)
 	}
@@ -1176,7 +1176,7 @@ func TestIntegration_DiscoveryUsage(t *testing.T) {
 	s.WriteLLMCall(mk("-3", "key-a", now, nil, nil)) // used nothing: no array rows
 	waitForRowCounts(t, ctx, reader, tenantID, 0, 3)
 
-	skills, err := reader.SkillUsage(ctx, tenantID, analytics.Range7d)
+	skills, err := reader.SkillUsage(ctx, tenantID, analytics.Range7d.Period(time.Now()))
 	if err != nil {
 		t.Fatalf("SkillUsage: %v", err)
 	}
@@ -1190,7 +1190,7 @@ func TestIntegration_DiscoveryUsage(t *testing.T) {
 		t.Errorf("deploy = %+v", skills[1])
 	}
 
-	tools, err := reader.MCPToolUsage(ctx, tenantID, analytics.Range7d)
+	tools, err := reader.MCPToolUsage(ctx, tenantID, analytics.Range7d.Period(time.Now()))
 	if err != nil {
 		t.Fatalf("MCPToolUsage: %v", err)
 	}
@@ -1203,7 +1203,7 @@ func TestIntegration_DiscoveryUsage(t *testing.T) {
 
 	// Server calls are distinct LLM calls: call -2 used two gw tools of the
 	// same connector and call -1 one, so "langfuse" (via gw) is 2, not 3.
-	calls, err := reader.MCPServerCalls(ctx, tenantID, analytics.Range7d, map[string]string{"langfuse": "langfuse"})
+	calls, err := reader.MCPServerCalls(ctx, tenantID, analytics.Range7d.Period(time.Now()), map[string]string{"langfuse": "langfuse"})
 	if err != nil {
 		t.Fatalf("MCPServerCalls: %v", err)
 	}
@@ -1215,9 +1215,19 @@ func TestIntegration_DiscoveryUsage(t *testing.T) {
 		t.Errorf("server calls = %+v", calls)
 	}
 
-	other, err := reader.SkillUsage(ctx, "other-"+tenantID, analytics.Range7d)
+	other, err := reader.SkillUsage(ctx, "other-"+tenantID, analytics.Range7d.Period(time.Now()))
 	if err != nil || len(other) != 0 {
 		t.Errorf("other tenant skills = %+v, err %v (want none)", other, err)
+	}
+
+	// Custom dates bound the window: a day a month ago holds none of these rows.
+	day := time.Now().UTC().AddDate(0, 0, -30).Format(time.DateOnly)
+	past, err := analytics.ParseDateRange(day, day, time.Now())
+	if err != nil {
+		t.Fatalf("ParseDateRange() error = %v", err)
+	}
+	if old, err := reader.MCPToolUsage(ctx, tenantID, past); err != nil || len(old) != 0 {
+		t.Errorf("tools a month ago = %+v, err %v (want none)", old, err)
 	}
 }
 

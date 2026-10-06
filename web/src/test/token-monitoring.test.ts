@@ -8,6 +8,7 @@ import {
   formatShare,
   formatTokenCost,
   callerLabel,
+  gridColumnCount,
   tokenSplit,
 } from '@/lib/token-monitoring'
 
@@ -47,6 +48,18 @@ describe('formatCompactNumber (token counts)', () => {
     expect(formatCompactNumber(0)).toBe('0')
     expect(formatCompactNumber(42)).toBe('42')
     expect(formatCompactNumber(37914969)).toBe('37.91M')
+  })
+})
+
+describe('gridColumnCount', () => {
+  it('counts the tracks of a laid-out grid', () => {
+    expect(gridColumnCount('300px 300px 300px')).toBe(3)
+    expect(gridColumnCount('312.5px 312.5px 312.5px 312.5px')).toBe(4)
+  })
+  it('is null when the grid is not laid out (no resolved tracks)', () => {
+    expect(gridColumnCount('repeat(auto-fill, minmax(min(100%, 300px), 1fr))')).toBeNull()
+    expect(gridColumnCount('none')).toBeNull()
+    expect(gridColumnCount('')).toBeNull()
   })
 })
 
@@ -104,11 +117,15 @@ describe('fetchers', () => {
     return fn
   }
 
-  it('asks for the selected window', async () => {
-    const fn = stub(200, { window: '30d' })
-    await fetchTokenMonitoring('30d')
+  it('asks for the selected range or dates', async () => {
+    const fn = stub(200, { range: '30d' })
+    await fetchTokenMonitoring({ range: '30d' })
     expect(String(fn.mock.calls[0]?.[0])).toMatch(
-      /\/api\/v1\/analytics\/token-monitoring\?window=30d$/,
+      /\/api\/v1\/analytics\/token-monitoring\?range=30d$/,
+    )
+    await fetchTokenMonitoring({ range: 'custom', from: '2026-01-01', to: '2026-01-03' })
+    expect(String(fn.mock.calls[1]?.[0])).toMatch(
+      /\/api\/v1\/analytics\/token-monitoring\?from=2026-01-01&to=2026-01-03$/,
     )
   })
 
@@ -116,23 +133,28 @@ describe('fetchers', () => {
     stub(404, {
       error: { type: 'not_found', message: 'analytics requires the ClickHouse sink' },
     })
-    await expect(fetchTokenMonitoring('today')).resolves.toBeNull()
+    await expect(fetchTokenMonitoring({ range: '24h' })).resolves.toBeNull()
   })
 
   it('encodes model names and pages sessions', async () => {
     const fn = stub(200, {})
-    await fetchTokenMonitoringModel('bedrock/us.anthropic.claude:0', '7d', 25, 50)
-    expect(String(fn.mock.calls[0]?.[0])).toMatch(
-      /\/analytics\/token-monitoring\/model\?model=bedrock%2Fus\.anthropic\.claude%3A0&window=7d&limit=25&offset=50$/,
+    await fetchTokenMonitoringModel(
+      'bedrock/us.anthropic.claude:0',
+      { range: '7d' },
+      25,
+      50,
     )
-    await fetchTokenMonitoringKey('key/1', 'today', 10, 0)
+    expect(String(fn.mock.calls[0]?.[0])).toMatch(
+      /\/analytics\/token-monitoring\/model\?model=bedrock%2Fus\.anthropic\.claude%3A0&range=7d&limit=25&offset=50$/,
+    )
+    await fetchTokenMonitoringKey('key/1', { range: '24h' }, 10, 0)
     expect(String(fn.mock.calls[1]?.[0])).toMatch(
-      /\/analytics\/token-monitoring\/keys\/key%2F1\?window=today&limit=10&offset=0$/,
+      /\/analytics\/token-monitoring\/keys\/key%2F1\?range=24h&limit=10&offset=0$/,
     )
   })
 
   it('surfaces other errors', async () => {
     stub(500, { error: { type: 'internal_error', message: 'boom' } })
-    await expect(fetchTokenMonitoring('7d')).rejects.toThrow()
+    await expect(fetchTokenMonitoring({ range: '7d' })).rejects.toThrow()
   })
 })

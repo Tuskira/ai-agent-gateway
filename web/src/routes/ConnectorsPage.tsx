@@ -12,7 +12,9 @@ import {
   useSetConnectorEnabled,
 } from '@/lib/queries'
 import type { CatalogEntry } from '@/lib/mcpCatalog'
-import type { TimeRange } from '@/lib/overview'
+import { periodLabel } from '@/lib/overview'
+import { PeriodFilter } from '@/components/app/PeriodFilter'
+import { usePeriod } from '@/hooks/use-period'
 import {
   LIFECYCLE_STATES,
   mergeMcpRows,
@@ -24,7 +26,6 @@ import { formatDate } from '@/lib/utils'
 import {
   AnalyticsOffNote,
   LifecyclePill,
-  RangeSelect,
   StateFilter,
   ViaGatewayBadge,
 } from '@/components/app/LifecycleBits'
@@ -59,9 +60,11 @@ export default function ConnectorsPage() {
   const toolsQueries = useAllConnectorTools(connectors)
 
   const [tab, setTab] = useState<'mcps' | 'catalog'>('mcps')
-  const [range, setRange] = useState<TimeRange>('7d')
+  const [period, setPeriod] = usePeriod('7d')
+  // Column and tile labels: "7d", or the custom dates.
+  const range = period.range === 'custom' ? periodLabel(period) : period.range
   const [stateFilter, setStateFilter] = useState<LifecycleState | 'all'>('all')
-  const usageQuery = useMcpsUsage(range)
+  const usageQuery = useMcpsUsage(period)
   const hasDiscovered = (usageQuery.data ?? []).some((u) => !u.registered_connector_slug)
   const catalogQuery = useMcpCatalog(hasDiscovered)
   const setEnabled = useSetConnectorEnabled()
@@ -373,7 +376,7 @@ export default function ConnectorsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {tab === 'mcps' ? <RangeSelect value={range} onChange={setRange} /> : null}
+          {tab === 'mcps' ? <PeriodFilter value={period} onChange={setPeriod} /> : null}
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" aria-hidden="true" />
             Add MCP

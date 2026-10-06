@@ -85,7 +85,7 @@ session timeline, token monitoring) still needs ClickHouse.
 
 | Route | Returns |
 |---|---|
-| `GET /analytics/overview?range=24h\|7d\|30d` | KPI tiles, per-model usage, traffic split, top connectors (MCP servers registered with the gateway; the console's **MCPs** page), tools and profiles, latency, status-code breakdown — everything the Overview dashboard renders. |
+| `GET /analytics/overview?range=24h\|7d\|30d` (default `24h`) or `?from=&to=` | KPI tiles, per-model usage, traffic split, top connectors (MCP servers registered with the gateway; the console's **MCPs** page), tools and profiles, latency, status-code breakdown — everything the Overview dashboard renders. |
 | `GET /analytics/models?range=24h\|7d\|30d` (default `7d`) | Per-model usage summary — calls, tokens, nullable cost, distinct callers (`used_by`), last-seen — one row per requested model name (`requested_model`), with the vendor that served most of its calls (`resolved_vendor`, else the client's dialect) as `provider`; feeds the console's Models page (`/models`). |
 | `GET /analytics/skills?range=24h\|7d\|30d` (default `7d`) | Per skill/command usage of the gateway's own skill loads and native commands (from MCP access logs): calls, distinct callers, last seen. |
 | `GET /analytics/skills/usage`, `GET /analytics/mcps/usage` | Skills and MCP servers seen in LLM traffic — see [Discovered skills and MCP servers](#discovered-skills-and-mcp-servers). |
@@ -94,11 +94,18 @@ session timeline, token monitoring) still needs ClickHouse.
 | `GET /analytics/llm-logs` | Paginated LLM-call rows (no bodies), including `client_name`/`user_agent`, filterable by `model`, `session_id`, `principal`, `client_name` (see [Client classification](#client-classification)), `status`, `source`, `user`, `from`, `to`. |
 | `GET /analytics/llm-logs/{request_id}` | One LLM-call row, including bodies. Admin-only. |
 | `GET /analytics/sessions/{session_id}/timeline` | Merged MCP+LLM event timeline for one gateway session, `?order=asc|desc` — see [Session timeline ownership](#session-timeline-ownership). |
-| `GET /analytics/client-models?range=24h\|7d\|30d&metric=calls\|tokens\|cost&limit=&client_name=` (default `7d`, `calls`, limit `10`) | Client → model → provider usage graph — see [Client → model Sankey](#client--model-sankey). |
+| `GET /analytics/client-models?range=24h\|7d\|30d` or `from=&to=`, `metric=calls\|tokens\|cost&limit=&client_name=` (default `7d`, `calls`, limit `10`) | Client → model → provider usage graph — see [Client → model Sankey](#client--model-sankey). |
 | `GET /analytics/traffic-flow?range=24h\|7d\|30d&metric=calls\|tokens\|cost&limit=&client_name=` (same defaults) | Agent traffic flow across both planes — see [Agent traffic flow](#agent-traffic-flow). |
-| `GET /analytics/token-monitoring?window=today\|7d\|30d` (default `today`) | Token usage and cost by model, by caller (API key) and by caller role, with the previous period and a usage series — see [Token monitoring](#token-monitoring). |
-| `GET /analytics/token-monitoring/model?model=&window=&limit=&offset=` | One model's usage by caller and by session (sessions paged). |
-| `GET /analytics/token-monitoring/keys/{id}?window=&limit=&offset=` | One API key's usage by model and by session. |
+| `GET /analytics/token-monitoring?range=24h\|7d\|30d` (default `24h`) or `?from=&to=` | Token usage and cost by model, by caller (API key) and by caller role, with the previous period and a usage series — see [Token monitoring](#token-monitoring). |
+| `GET /analytics/token-monitoring/model?model=&range=&limit=&offset=` | One model's usage by caller and by session (sessions paged). |
+| `GET /analytics/token-monitoring/keys/{id}?range=&limit=&offset=` | One API key's usage by model and by session. |
+
+**Custom dates.** Overview, client-models, traffic-flow, the token
+monitoring routes, `skills`, `skills/usage` and `mcps/usage` also take `from=YYYY-MM-DD&to=YYYY-MM-DD` in place of
+`range`: whole UTC days, both inclusive, ending no later than now, at most
+366 days. The response's `range` is then `custom`, and deltas compare with
+the same number of days just before. A bad or reversed date, a `from` in the
+future, or a longer span answers `400`.
 
 `Overview`'s status-code breakdown buckets by **outcome**, not raw HTTP
 status: every MCP call answers HTTP 200 whether or not the JSON-RPC call
@@ -484,11 +491,17 @@ Only usage is counted: calls refused before any target (budget, RPM or
 batch-management endpoints are excluded. Ingested (interceptor) rows are
 included and attributed to the interceptor.
 
-**Windows** are UTC: **Today** (from 00:00 UTC, compared with the same
-hours of yesterday), **Last 7 Days** and **Last 30 Days** (rolling, compared
-with the period of the same length just before). The change is `null` —
-shown as *New* — when the previous period had no usage, rather than 0%.
-The series is hourly for Today and daily otherwise, with empty buckets as
+The headline **Total tokens** tile counts input + output + cache reads +
+cache writes (`totals.tokens_with_cache`, with its own
+`tokens_with_cache_delta_pct` against the same measure over the previous
+period); every other figure — per model, per caller, per session, the chart
+— is `total_tokens` (input + output), with cache shown separately.
+
+**Windows** are **Last 24h**, **Last 7d** and **Last 30d** (rolling,
+ending now), or custom dates (`from`/`to`, see below); each is compared with
+the period of the same length just before. The change is `null` — shown as
+*New* — when the previous period had no usage, rather than 0%. The series is
+hourly for windows up to 48 hours and daily otherwise, with empty buckets as
 zeros.
 
 **Callers** are API keys, named from the key table, with a role: `agent`,

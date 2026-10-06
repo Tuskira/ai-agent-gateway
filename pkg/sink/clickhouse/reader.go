@@ -325,12 +325,11 @@ func (s *Sink) count(ctx context.Context, table, where string, args []any) (int,
 /* ---------------------------------------------------------------------- */
 
 // Overview implements analytics.Reader. It runs several small aggregate
-// queries against the current window [now-r.Window(), now) and, for the
-// KPI deltas, the immediately preceding window of the same length.
-func (s *Sink) Overview(ctx context.Context, tenantID string, r analytics.Range) (*analytics.Overview, error) {
-	now := time.Now().UTC()
-	curFrom, curTo := now.Add(-r.Window()), now
-	prevFrom, prevTo := curFrom.Add(-r.Window()), curFrom
+// queries against p [Start, End) and, for the KPI deltas, p's previous
+// period.
+func (s *Sink) Overview(ctx context.Context, tenantID string, p analytics.Period) (*analytics.Overview, error) {
+	curFrom, curTo := p.Start, p.End
+	prevFrom, prevTo := p.PrevStart, p.PrevEnd
 
 	cur, err := s.traffic(ctx, tenantID, curFrom, curTo)
 	if err != nil {
@@ -392,13 +391,12 @@ func (s *Sink) Overview(ctx context.Context, tenantID string, r analytics.Range)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: overview top connectors: %w", err)
 	}
-	trafficOverTime, err := s.trafficOverTime(ctx, tenantID, curFrom, curTo, r.Bucket())
+	trafficOverTime, err := s.trafficOverTime(ctx, tenantID, curFrom, curTo, p.Granularity.Step())
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: overview traffic over time: %w", err)
 	}
 
 	return &analytics.Overview{
-		Range: r,
 		Kpis: analytics.OverviewKpis{
 			LlmAgentCalls: countKpi(cur.llm, prev.llm),
 			McpToolCalls:  countKpi(cur.mcpToolCalls, prev.mcpToolCalls),
@@ -854,16 +852,15 @@ func (s *Sink) modelUsage(ctx context.Context, tenantID string, from, to time.Ti
 /* ---------------------------------------------------------------------- */
 
 // SkillsSummary implements analytics.Reader.
-func (s *Sink) SkillsSummary(ctx context.Context, tenantID string, r analytics.Range) (*analytics.SkillsSummary, error) {
-	now := time.Now().UTC()
-	from, to := now.Add(-r.Window()), now
+func (s *Sink) SkillsSummary(ctx context.Context, tenantID string, p analytics.Period) (*analytics.SkillsSummary, error) {
+	from, to := p.Start, p.End
 
 	rows, err := s.skillUsage(ctx, tenantID, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: skills summary: %w", err)
 	}
 
-	summary := &analytics.SkillsSummary{Range: r, Skills: rows, TotalSkills: len(rows)}
+	summary := &analytics.SkillsSummary{Skills: rows, TotalSkills: len(rows)}
 	for _, row := range rows {
 		if summary.MostUsed == nil || row.Calls > summary.MostUsed.Calls {
 			summary.MostUsed = &analytics.SkillMostUsed{Name: row.Name, Kind: row.Kind, Calls: row.Calls}
@@ -919,9 +916,8 @@ const discoveryGroupLimit = 5000
 
 // SkillUsage implements analytics.Reader: llm_calls.skills_used grouped by
 // skill name.
-func (s *Sink) SkillUsage(ctx context.Context, tenantID string, r analytics.Range) ([]analytics.SkillUsage, error) {
-	now := time.Now().UTC()
-	from, to := now.Add(-r.Window()), now
+func (s *Sink) SkillUsage(ctx context.Context, tenantID string, p analytics.Period) ([]analytics.SkillUsage, error) {
+	from, to := p.Start, p.End
 	query := `SELECT skill AS name, count() AS calls, uniqExact(key_id) AS used_by, max(timestamp) AS last_seen
 		FROM llm_calls ARRAY JOIN skills_used AS skill
 		WHERE tenant_id = ? AND timestamp >= ? AND timestamp < ? AND skill != ''
@@ -948,9 +944,8 @@ func (s *Sink) SkillUsage(ctx context.Context, tenantID string, r analytics.Rang
 
 // MCPToolUsage implements analytics.Reader: llm_calls.mcp_tools_used grouped
 // by "server__tool" value, split at the first "__".
-func (s *Sink) MCPToolUsage(ctx context.Context, tenantID string, r analytics.Range) ([]analytics.MCPToolUsage, error) {
-	now := time.Now().UTC()
-	from, to := now.Add(-r.Window()), now
+func (s *Sink) MCPToolUsage(ctx context.Context, tenantID string, p analytics.Period) ([]analytics.MCPToolUsage, error) {
+	from, to := p.Start, p.End
 	query := `SELECT ref, count() AS calls, groupUniqArray(1000)(key_id) AS keys, max(timestamp) AS last_seen
 		FROM llm_calls ARRAY JOIN mcp_tools_used AS ref
 		WHERE tenant_id = ? AND timestamp >= ? AND timestamp < ? AND ref != ''
@@ -986,9 +981,8 @@ func (s *Sink) MCPToolUsage(ctx context.Context, tenantID string, r analytics.Ra
 // name or slug -> canonical slug) the row is that connector, via the gateway.
 // Counting request_id rather than array rows keeps a call that used two tools
 // of one server at one.
-func (s *Sink) MCPServerCalls(ctx context.Context, tenantID string, r analytics.Range, aliases map[string]string) ([]analytics.MCPServerCalls, error) {
-	now := time.Now().UTC()
-	from, to := now.Add(-r.Window()), now
+func (s *Sink) MCPServerCalls(ctx context.Context, tenantID string, p analytics.Period, aliases map[string]string) ([]analytics.MCPServerCalls, error) {
+	from, to := p.Start, p.End
 	names, slugs := []string{""}, []string{""} // transform() needs non-empty arrays
 	for n, sl := range aliases {
 		names, slugs = append(names, n), append(slugs, sl)

@@ -11,7 +11,7 @@ import {
 } from 'recharts'
 import { ColorSwatch } from '@/components/app/ColorSwatch'
 import { EmptyState } from '@/components/app/EmptyState'
-import type { TrafficPoint } from '@/lib/overview'
+import { formatCompactNumber, type TrafficPoint } from '@/lib/overview'
 import { colors } from '@/styles/tokens'
 
 interface TrafficAreaChartProps {
@@ -36,7 +36,7 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps) {
             />
             <span className="text-text-muted">{entry.name}</span>
             <span className="ml-auto font-semibold tabular-nums text-foreground">
-              {entry.value}
+              {formatCompactNumber(Number(entry.value ?? 0))}
             </span>
           </div>
         ))}

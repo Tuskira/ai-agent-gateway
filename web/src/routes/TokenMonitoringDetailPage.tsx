@@ -5,10 +5,13 @@ import { ArrowLeft } from 'lucide-react'
 import { DashboardCard } from '@/components/app/DashboardCard'
 import { DataTable, type PaginationModel } from '@/components/app/data-table'
 import { RankedBarList } from '@/components/app/RankedBarList'
-import { RolePill, WindowSwitch } from '@/components/app/token-monitoring/parts'
+import { RolePill, Section } from '@/components/app/token-monitoring/parts'
+import { WidgetHelp } from '@/components/app/WidgetHelp'
+import { MONITORING_HELP } from '@/lib/token-monitoring-help'
+import { PeriodFilter } from '@/components/app/PeriodFilter'
 import { TokenAreaChart } from '@/components/app/token-monitoring/TokenAreaChart'
 import { useTokenMonitoringDetail } from '@/lib/queries'
-import { formatCompactNumber } from '@/lib/overview'
+import { formatCompactNumber, periodQuery } from '@/lib/overview'
 import {
   callerBars,
   formatTokenCost,
@@ -20,7 +23,7 @@ import {
   AnalyticsOffNotice,
   TotalsTiles,
 } from '@/components/app/token-monitoring/TotalsTiles'
-import { useMonitoringWindow } from '@/hooks/use-monitoring-window'
+import { usePeriod } from '@/hooks/use-period'
 
 const PAGE_SIZE = 25
 
@@ -42,7 +45,8 @@ function when(ts: string): string {
 /** One model (?model=) broken down by caller, or one API key (/keys/:id)
  * broken down by model; both with the sessions behind the usage. */
 export default function TokenMonitoringDetailPage({ kind }: { kind: 'model' | 'key' }) {
-  const [window, setWindowParam] = useMonitoringWindow()
+  const [period, setPeriodParam] = usePeriod('24h')
+  const qs = periodQuery(period)
   const [params] = useSearchParams()
   const { id = '' } = useParams()
   const subject = kind === 'model' ? (params.get('model') ?? '') : id
@@ -50,16 +54,16 @@ export default function TokenMonitoringDetailPage({ kind }: { kind: 'model' | 'k
   const query = useTokenMonitoringDetail(
     kind,
     subject,
-    window,
+    period,
     page.pageSize,
     page.page * page.pageSize,
   )
   const navigate = useNavigate()
   const data = query.data
 
-  const setWindow: typeof setWindowParam = (w) => {
+  const setPeriod: typeof setPeriodParam = (next) => {
     setPage((p) => ({ ...p, page: 0 }))
-    setWindowParam(w)
+    setPeriodParam(next)
   }
 
   const title =
@@ -118,7 +122,7 @@ export default function TokenMonitoringDetailPage({ kind }: { kind: 'model' | 'k
   return (
     <div className="flex flex-col gap-4">
       <Link
-        to={`/token-monitoring?window=${window}`}
+        to={`/token-monitoring?${qs}`}
         className="inline-flex w-fit items-center gap-1 text-[13px] font-medium text-text-link"
       >
         <ArrowLeft className="size-3.5" aria-hidden="true" />
@@ -139,7 +143,7 @@ export default function TokenMonitoringDetailPage({ kind }: { kind: 'model' | 'k
             Times in UTC.
           </p>
         </div>
-        <WindowSwitch value={window} onChange={setWindow} />
+        <PeriodFilter value={period} onChange={setPeriod} />
       </div>
 
       {data === null ? (
@@ -151,6 +155,16 @@ export default function TokenMonitoringDetailPage({ kind }: { kind: 'model' | 'k
             <section aria-label={kind === 'model' ? 'By caller' : 'By model'}>
               <DashboardCard
                 title={kind === 'model' ? 'By caller' : 'By model'}
+                help={
+                  <WidgetHelp
+                    title={kind === 'model' ? 'By caller' : 'By model'}
+                    content={
+                      kind === 'model'
+                        ? MONITORING_HELP.byCaller
+                        : MONITORING_HELP.byModel
+                    }
+                  />
+                }
                 className="h-[348px]"
               >
                 <RankedBarList
@@ -166,7 +180,15 @@ export default function TokenMonitoringDetailPage({ kind }: { kind: 'model' | 'k
                 />
               </DashboardCard>
             </section>
-            <DashboardCard title="Usage over time (UTC)">
+            <DashboardCard
+              title="Usage over time (UTC)"
+              help={
+                <WidgetHelp
+                  title="Usage over time (UTC)"
+                  content={MONITORING_HELP.usageOverTime}
+                />
+              }
+            >
               <TokenAreaChart
                 points={data?.burn ?? null}
                 granularity={data?.granularity ?? 'hour'}
@@ -174,8 +196,10 @@ export default function TokenMonitoringDetailPage({ kind }: { kind: 'model' | 'k
               />
             </DashboardCard>
           </div>
-          <section aria-label="Sessions" className="flex flex-col gap-3">
-            <h2 className="text-[15px] font-semibold text-foreground">Sessions</h2>
+          <Section
+            title="Sessions"
+            help={<WidgetHelp title="Sessions" content={MONITORING_HELP.sessions} />}
+          >
             <DataTable
               storageKey={`token-monitoring-sessions-${kind}`}
               columns={columns}
@@ -184,9 +208,7 @@ export default function TokenMonitoringDetailPage({ kind }: { kind: 'model' | 'k
               getRowLabel={(s) => s.session_id || 'No session'}
               onRowClick={(s) => {
                 if (kind === 'model' && s.key_id)
-                  navigate(
-                    `/token-monitoring/keys/${encodeURIComponent(s.key_id)}?window=${window}`,
-                  )
+                  navigate(`/token-monitoring/keys/${encodeURIComponent(s.key_id)}?${qs}`)
               }}
               pagination={page}
               onPaginationChange={setPage}
@@ -195,7 +217,7 @@ export default function TokenMonitoringDetailPage({ kind }: { kind: 'model' | 'k
               error={query.isError && "Couldn't load sessions."}
               emptyTitle={NO_USAGE_LABEL}
             />
-          </section>
+          </Section>
         </>
       )}
     </div>

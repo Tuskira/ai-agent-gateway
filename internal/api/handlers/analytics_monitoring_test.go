@@ -65,17 +65,25 @@ func TestTokenMonitoring_Unavailable404(t *testing.T) {
 	}
 }
 
-func TestTokenMonitoring_WindowValidation(t *testing.T) {
+func TestTokenMonitoring_RangeValidation(t *testing.T) {
 	r := &fakeMonReader{fakeAnalyticsReader: &fakeAnalyticsReader{}, mon: &analytics.TokenMonitoring{}}
 	d, _ := monDeps(t, r)
 	h := Analytics{Deps: d}
-	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring?window=24h", nil), "tenant-a", "viewer")
-	if w := serve(http.MethodGet, "/analytics/token-monitoring", h.TokenMonitoring, req); w.Code != http.StatusBadRequest {
-		t.Errorf("window=24h: status %d, want 400", w.Code)
+	for _, qs := range []string{"range=today", "from=2026-01-02&to=2026-01-01"} {
+		req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring?"+qs, nil), "tenant-a", "viewer")
+		if w := serve(http.MethodGet, "/analytics/token-monitoring", h.TokenMonitoring, req); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", qs, w.Code)
+		}
 	}
-	req = withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring", nil), "tenant-a", "viewer")
-	if w := serve(http.MethodGet, "/analytics/token-monitoring", h.TokenMonitoring, req); w.Code != http.StatusOK || r.gotQuery.Window != analytics.WindowToday {
-		t.Errorf("no window: status %d window %q, want 200 today", w.Code, r.gotQuery.Window)
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring", nil), "tenant-a", "viewer")
+	if w := serve(http.MethodGet, "/analytics/token-monitoring", h.TokenMonitoring, req); w.Code != http.StatusOK || r.gotQuery.Range != analytics.Range24h ||
+		r.gotQuery.Period.End.Sub(r.gotQuery.Period.Start) != 24*time.Hour {
+		t.Errorf("no range: status %d query %+v, want 200 24h", w.Code, r.gotQuery)
+	}
+	req = withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring?from=2026-01-01&to=2026-01-07", nil), "tenant-a", "viewer")
+	if w := serve(http.MethodGet, "/analytics/token-monitoring", h.TokenMonitoring, req); w.Code != http.StatusOK || r.gotQuery.Range != analytics.RangeCustom ||
+		r.gotQuery.Period.Granularity != analytics.GranularityDay || !r.gotQuery.Period.Start.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("custom: status %d query %+v, want 200 custom daily from 2026-01-01", w.Code, r.gotQuery)
 	}
 }
 
@@ -83,7 +91,7 @@ func TestTokenMonitoring_EnrichesCallersAndRoles(t *testing.T) {
 	r := &fakeMonReader{fakeAnalyticsReader: &fakeAnalyticsReader{}}
 	d, ids := monDeps(t, r)
 	r.mon = &analytics.TokenMonitoring{
-		Window: analytics.Window7d,
+		Range:  analytics.Range7d,
 		Totals: analytics.TokenUsage{Tokens: 1100, PrevTokens: 1000},
 		ByModel: []analytics.ModelTokenUsage{
 			{Model: "claude-sonnet-4-5", TokenUsage: usage(1000, 500)},
@@ -102,13 +110,13 @@ func TestTokenMonitoring_EnrichesCallersAndRoles(t *testing.T) {
 		},
 	}
 	h := Analytics{Deps: d}
-	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring?window=7d", nil), "tenant-a", "viewer")
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring?range=7d", nil), "tenant-a", "viewer")
 	w := serve(http.MethodGet, "/analytics/token-monitoring", h.TokenMonitoring, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	if r.gotQuery.Window != analytics.Window7d {
-		t.Errorf("window = %q, want 7d", r.gotQuery.Window)
+	if r.gotQuery.Range != analytics.Range7d {
+		t.Errorf("range = %q, want 7d", r.gotQuery.Range)
 	}
 	var got tokenMonitoringView
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -149,6 +157,38 @@ func TestTokenMonitoring_EnrichesCallersAndRoles(t *testing.T) {
 	}
 }
 
+// The headline total also counts cache reads and writes, compared with the
+// same measure over the previous period; per-model and per-caller tokens stay
+// input + output.
+func TestTokenMonitoring_TotalWithCache(t *testing.T) {
+	r := &fakeMonReader{fakeAnalyticsReader: &fakeAnalyticsReader{}, mon: &analytics.TokenMonitoring{
+		Totals: analytics.TokenUsage{Tokens: 100, CacheReadTokens: 800, CacheWriteTokens: 100, PrevTokens: 50, PrevTokensWithCache: 500},
+	}}
+	d, _ := monDeps(t, r)
+	h := Analytics{Deps: d}
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring", nil), "tenant-a", "viewer")
+	w := serve(http.MethodGet, "/analytics/token-monitoring", h.TokenMonitoring, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Totals struct {
+			Tokens                  uint64   `json:"tokens"`
+			DeltaPct                *float64 `json:"delta_pct"`
+			TokensWithCache         uint64   `json:"tokens_with_cache"`
+			TokensWithCacheDeltaPct *float64 `json:"tokens_with_cache_delta_pct"`
+		} `json:"totals"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	tot := got.Totals
+	if tot.Tokens != 100 || tot.TokensWithCache != 1000 || tot.DeltaPct == nil || *tot.DeltaPct != 100 ||
+		tot.TokensWithCacheDeltaPct == nil || *tot.TokensWithCacheDeltaPct != 100 {
+		t.Errorf("totals = %+v, want tokens 100 (+100%%), with cache 1000 (+100%% on 500)", tot)
+	}
+}
+
 func TestTokenMonitoringModel(t *testing.T) {
 	r := &fakeMonReader{fakeAnalyticsReader: &fakeAnalyticsReader{}}
 	d, ids := monDeps(t, r)
@@ -160,17 +200,17 @@ func TestTokenMonitoringModel(t *testing.T) {
 	h := Analytics{Deps: d}
 	path := "/analytics/token-monitoring/model"
 
-	req := withPrincipal(httptest.NewRequest(http.MethodGet, path+"?window=today", nil), "tenant-a", "viewer")
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, path+"?range=24h", nil), "tenant-a", "viewer")
 	if w := serve(http.MethodGet, path, h.TokenMonitoringModel, req); w.Code != http.StatusBadRequest {
 		t.Errorf("missing model: status %d, want 400", w.Code)
 	}
 
-	req = withPrincipal(httptest.NewRequest(http.MethodGet, path+"?model=bedrock%2Fus.anthropic.claude%3A0&window=30d&limit=5&offset=10", nil), "tenant-a", "viewer")
+	req = withPrincipal(httptest.NewRequest(http.MethodGet, path+"?model=bedrock%2Fus.anthropic.claude%3A0&range=30d&limit=5&offset=10", nil), "tenant-a", "viewer")
 	w := serve(http.MethodGet, path, h.TokenMonitoringModel, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	if q := r.gotQuery; q.Model != "bedrock/us.anthropic.claude:0" || q.KeyID != "" || q.Window != analytics.Window30d || q.Limit != 5 || q.Offset != 10 {
+	if q := r.gotQuery; q.Model != "bedrock/us.anthropic.claude:0" || q.KeyID != "" || q.Range != analytics.Range30d || q.Limit != 5 || q.Offset != 10 {
 		t.Errorf("query = %+v", q)
 	}
 	var got tokenMonitoringView
@@ -198,12 +238,12 @@ func TestTokenMonitoringKey(t *testing.T) {
 	}
 	h := Analytics{Deps: d}
 	pattern := "/analytics/token-monitoring/keys/{id}"
-	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring/keys/"+ids["collector"]+"?window=7d", nil), "tenant-a", "viewer")
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring/keys/"+ids["collector"]+"?range=7d", nil), "tenant-a", "viewer")
 	w := serve(http.MethodGet, pattern, h.TokenMonitoringKey, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	if r.gotQuery.KeyID != ids["collector"] || r.gotQuery.Model != "" || r.gotQuery.Window != analytics.Window7d {
+	if r.gotQuery.KeyID != ids["collector"] || r.gotQuery.Model != "" || r.gotQuery.Range != analytics.Range7d {
 		t.Errorf("query = %+v", r.gotQuery)
 	}
 	var got tokenMonitoringView

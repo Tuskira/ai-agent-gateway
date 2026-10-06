@@ -17,8 +17,7 @@ import (
 
 // TrafficFlowSankey implements analytics.Reader.
 func (s *Sink) TrafficFlowSankey(ctx context.Context, tenantID string, q analytics.SankeyQuery) (*analytics.TrafficFlow, error) {
-	now := time.Now().UTC()
-	from, to := now.Add(-q.Range.Window()), now
+	from, to := q.Period.Start, q.Period.End
 
 	// Both planes are read unfiltered: the response's Agents list has to
 	// cover every family in the window, so the ClientName filter is applied

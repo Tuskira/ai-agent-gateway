@@ -1,6 +1,6 @@
 import { apiFetch } from '@/lib/api'
 import { MODEL_VENDORS } from '@/lib/models'
-import type { TimeRange } from '@/lib/overview'
+import { periodParams, type Period, type TimeRange } from '@/lib/overview'
 
 /**
  * Data contracts for the gateway's Sankey analytics routes
@@ -43,7 +43,7 @@ export interface SankeyLink {
 }
 
 export interface SankeyGraph {
-  range: TimeRange
+  range: TimeRange | 'custom'
   metric: SankeyMetric
   total: number
   nodes: SankeyNode[]
@@ -86,17 +86,17 @@ export function providerLabel(key: string | undefined): string {
 }
 
 /**
- * `GET /api/v1/analytics/traffic-flow?range=…&client_name=…` (metric is
+ * `GET /api/v1/analytics/traffic-flow?range=…` (or `from=&to=`) `&client_name=…` (metric is
  * always `calls` -- MCP calls carry no tokens or cost). Like
  * `fetchModelsSummary`, any failure (404 because ClickHouse isn't enabled,
  * or a network error) resolves to `null` rather than throwing -- the card
  * renders its "analytics are off" state instead of an error screen.
  */
 export async function fetchTrafficFlow(
-  range: TimeRange,
+  period: Period,
   clientName = '',
 ): Promise<TrafficFlow | null> {
-  const params = new URLSearchParams({ range, metric: 'calls' })
+  const params = new URLSearchParams({ ...periodParams(period), metric: 'calls' })
   if (clientName) params.set('client_name', clientName)
   try {
     return await apiFetch<TrafficFlow>(`/analytics/traffic-flow?${params.toString()}`)

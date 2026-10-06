@@ -1,41 +1,40 @@
+import type { ReactNode } from 'react'
+import { LayoutGrid, List } from 'lucide-react'
 import { StatusPill, type PillTone } from '@/components/app/StatusPill'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { SegmentedControl } from '@/components/app/SegmentedControl'
 import { formatDeltaPct } from '@/lib/overview'
 import {
-  MONITORING_WINDOWS,
   tokenSplit,
   type CallerRole,
-  type MonitoringWindow,
+  type CostView,
   type TokenUsage,
 } from '@/lib/token-monitoring'
 import { cn } from '@/lib/utils'
 
-/** Today / Last 7 Days / Last 30 Days (UTC): the shared ToggleGroup,
- * styled as a segmented control; one window is always selected. */
-export function WindowSwitch({
+const COST_VIEWS: { value: CostView; label: string; icon: ReactNode }[] = [
+  {
+    value: 'cards',
+    label: 'Cards',
+    icon: <LayoutGrid className="size-4" aria-hidden="true" />,
+  },
+  { value: 'list', label: 'List', icon: <List className="size-4" aria-hidden="true" /> },
+]
+
+/** Cost by model as cards or as a sortable table. */
+export function CostViewSwitch({
   value,
   onChange,
 }: {
-  value: MonitoringWindow
-  onChange: (w: MonitoringWindow) => void
+  value: CostView
+  onChange: (v: CostView) => void
 }) {
   return (
-    <ToggleGroup
-      aria-label="Time window"
-      value={[value]}
-      onValueChange={(v) => v[0] && onChange(v[0] as MonitoringWindow)}
-      className="gap-0 rounded-r-4 border border-border bg-card p-0.5"
-    >
-      {MONITORING_WINDOWS.map((w) => (
-        <ToggleGroupItem
-          key={w.value}
-          value={w.value}
-          className="h-8 rounded-r-3 px-3 text-[13px] text-text-muted transition-colors hover:bg-transparent hover:text-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground"
-        >
-          {w.label}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
+    <SegmentedControl
+      label="Cost by model view"
+      options={COST_VIEWS}
+      value={value}
+      onChange={onChange}
+    />
   )
 }
 
@@ -126,5 +125,40 @@ export function TokenSplit({ usage }: { usage: TokenUsage }) {
         ))}
       </div>
     </div>
+  )
+}
+
+/** A page section of its own (Cost by model, Callers, Sessions): a tinted
+ * panel with a larger heading, so it reads apart from the widget cards. */
+export function Section({
+  title,
+  badge,
+  help,
+  action,
+  children,
+}: {
+  title: string
+  badge?: ReactNode
+  help?: ReactNode
+  action?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <section
+      aria-label={title}
+      className="flex flex-col gap-4 rounded-r-6 border border-border bg-muted/30 p-5"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-[18px] leading-7 font-semibold tracking-[-0.01em] text-foreground">
+            {title}
+          </h2>
+          {badge}
+          {help}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
   )
 }

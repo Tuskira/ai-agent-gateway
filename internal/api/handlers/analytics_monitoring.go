@@ -29,9 +29,13 @@ var callerRoles = []string{roleAgent, roleAdmin, roleInterceptor, roleOther}
 
 const maxMonitoringModelName = 512
 
+// tokenTotalsView adds the headline total: tokens plus cache reads and
+// writes, with its change against the same measure before.
 type tokenTotalsView struct {
 	analytics.TokenUsage
-	DeltaPct *float64 `json:"delta_pct"`
+	DeltaPct                *float64 `json:"delta_pct"`
+	TokensWithCache         uint64   `json:"tokens_with_cache"`
+	TokensWithCacheDeltaPct *float64 `json:"tokens_with_cache_delta_pct"`
 }
 
 type tokenModelView struct {
@@ -68,22 +72,23 @@ type keyRef struct {
 // Model or Key names the drill-down's subject, ByRole is the page's role
 // split, Sessions are the drill-downs'.
 type tokenMonitoringView struct {
-	Window        analytics.MonitoringWindow `json:"window"`
-	Start         time.Time                  `json:"start"`
-	End           time.Time                  `json:"end"`
-	Granularity   analytics.Granularity      `json:"granularity"`
-	Model         string                     `json:"model,omitempty"`
-	Key           *keyRef                    `json:"key,omitempty"`
-	Totals        tokenTotalsView            `json:"totals"`
-	ByModel       []tokenModelView           `json:"by_model"`
-	ByKey         []tokenKeyView             `json:"by_key"`
-	ByRole        []roleUsage                `json:"by_role,omitempty"`
-	Burn          []analytics.TokenBucket    `json:"burn"`
-	Sessions      []tokenSessionView         `json:"sessions,omitempty"`
-	SessionsTotal int                        `json:"sessions_total,omitempty"`
+	Range         analytics.Range         `json:"range"`
+	Start         time.Time               `json:"start"`
+	End           time.Time               `json:"end"`
+	Granularity   analytics.Granularity   `json:"granularity"`
+	Model         string                  `json:"model,omitempty"`
+	Key           *keyRef                 `json:"key,omitempty"`
+	Totals        tokenTotalsView         `json:"totals"`
+	ByModel       []tokenModelView        `json:"by_model"`
+	ByKey         []tokenKeyView          `json:"by_key"`
+	ByRole        []roleUsage             `json:"by_role,omitempty"`
+	Burn          []analytics.TokenBucket `json:"burn"`
+	Sessions      []tokenSessionView      `json:"sessions,omitempty"`
+	SessionsTotal int                     `json:"sessions_total,omitempty"`
 }
 
-// TokenMonitoring handles GET /api/v1/analytics/token-monitoring?window=today|7d|30d.
+// TokenMonitoring handles GET /api/v1/analytics/token-monitoring?range=24h|7d|30d
+// or ?from=YYYY-MM-DD&to=YYYY-MM-DD.
 func (h Analytics) TokenMonitoring(w http.ResponseWriter, r *http.Request) {
 	h.serveMonitoring(w, r, analytics.TokenMonitoringQuery{}, func(view *tokenMonitoringView, _ map[string]*store.APIKey) {
 		view.ByRole = make([]roleUsage, len(callerRoles))
@@ -99,7 +104,7 @@ func (h Analytics) TokenMonitoring(w http.ResponseWriter, r *http.Request) {
 }
 
 // TokenMonitoringModel handles GET
-// /api/v1/analytics/token-monitoring/model?model=...&window=...&limit=&offset=.
+// /api/v1/analytics/token-monitoring/model?model=...&range=...&limit=&offset=.
 // The model is a query parameter because names carry "/" and ":".
 func (h Analytics) TokenMonitoringModel(w http.ResponseWriter, r *http.Request) {
 	model := strings.TrimSpace(r.URL.Query().Get("model"))
@@ -113,7 +118,7 @@ func (h Analytics) TokenMonitoringModel(w http.ResponseWriter, r *http.Request) 
 }
 
 // TokenMonitoringKey handles GET
-// /api/v1/analytics/token-monitoring/keys/{id}?window=...&limit=&offset=.
+// /api/v1/analytics/token-monitoring/keys/{id}?range=...&limit=&offset=.
 func (h Analytics) TokenMonitoringKey(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	h.serveMonitoring(w, r, analytics.TokenMonitoringQuery{KeyID: id}, func(view *tokenMonitoringView, keys map[string]*store.APIKey) {
@@ -124,12 +129,15 @@ func (h Analytics) TokenMonitoringKey(w http.ResponseWriter, r *http.Request) {
 // serveMonitoring answers the page (q names no subject) or a drill-down (q
 // names a model or a key); finish adds what is specific to each.
 func (h Analytics) serveMonitoring(w http.ResponseWriter, r *http.Request, q analytics.TokenMonitoringQuery, finish func(*tokenMonitoringView, map[string]*store.APIKey)) {
-	mon, tid, win, ok := h.monitoringRequest(w, r)
+	mon, tid, ok := h.monitoringRequest(w, r)
 	if !ok {
 		return
 	}
+	if q.Range, q.Period, ok = parsePeriod(w, r, analytics.Range24h); !ok {
+		return
+	}
 	page := httpx.ParsePagination(r)
-	q.Window, q.Limit, q.Offset = win, page.Limit, page.Offset
+	q.Limit, q.Offset = page.Limit, page.Offset
 	g, err := mon.TokenMonitoring(r.Context(), tid, q)
 	if err != nil {
 		writeAnalyticsErr(w, r, "compute token monitoring", err)
@@ -141,7 +149,7 @@ func (h Analytics) serveMonitoring(w http.ResponseWriter, r *http.Request, q ana
 		sessions = append(sessions, tokenSessionView{SessionTokenUsage: s, KeyName: nameOf(keys[s.KeyID]), Role: callerRole("", keys[s.KeyID])})
 	}
 	view := tokenMonitoringView{
-		Window: g.Window, Start: g.Start, End: g.End, Granularity: g.Granularity,
+		Range: g.Range, Start: g.Start, End: g.End, Granularity: g.Granularity,
 		Totals:        totalsView(g.Totals),
 		ByModel:       modelViews(g.ByModel),
 		ByKey:         keyViews(g.ByKey, keys),
@@ -154,27 +162,15 @@ func (h Analytics) serveMonitoring(w http.ResponseWriter, r *http.Request, q ana
 }
 
 // monitoringRequest answers 404 when no reader can serve token monitoring
-// (no ClickHouse sink) and 400 on a bad window; window defaults to today.
-func (h Analytics) monitoringRequest(w http.ResponseWriter, r *http.Request) (analytics.TokenMonitoringReader, string, analytics.MonitoringWindow, bool) {
+// (no ClickHouse sink).
+func (h Analytics) monitoringRequest(w http.ResponseWriter, r *http.Request) (analytics.TokenMonitoringReader, string, bool) {
 	mon, ok := h.Analytics.(analytics.TokenMonitoringReader)
 	if h.Analytics == nil || !ok {
 		httpx.NotFound(w, analyticsUnavailableMessage)
-		return nil, "", "", false
+		return nil, "", false
 	}
 	tid, ok := requireTenant(w, r)
-	if !ok {
-		return nil, "", "", false
-	}
-	raw := r.URL.Query().Get("window")
-	if raw == "" {
-		raw = string(analytics.WindowToday)
-	}
-	win, ok := analytics.ParseMonitoringWindow(raw)
-	if !ok {
-		httpx.ValidationError(w, `window must be one of "today", "7d", "30d"`)
-		return nil, "", "", false
-	}
-	return mon, tid, win, true
+	return mon, tid, ok
 }
 
 // tenantKeys indexes the tenant's API keys by id for names and roles. A
@@ -218,7 +214,13 @@ func nameOf(k *store.APIKey) string {
 }
 
 func totalsView(u analytics.TokenUsage) tokenTotalsView {
-	return tokenTotalsView{TokenUsage: u, DeltaPct: analytics.DeltaPct(u.Tokens, u.PrevTokens)}
+	withCache := u.Tokens + u.CacheReadTokens + u.CacheWriteTokens
+	return tokenTotalsView{
+		TokenUsage:              u,
+		DeltaPct:                analytics.DeltaPct(u.Tokens, u.PrevTokens),
+		TokensWithCache:         withCache,
+		TokensWithCacheDeltaPct: analytics.DeltaPct(withCache, u.PrevTokensWithCache),
+	}
 }
 
 func modelViews(in []analytics.ModelTokenUsage) []tokenModelView {

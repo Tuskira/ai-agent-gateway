@@ -22,7 +22,7 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps) {
     <div className="rounded-r-2 border border-border bg-bg-elevated px-3 py-2 text-xs shadow-2">
       <div className="mb-1 font-medium text-text-muted">{label} UTC</div>
       <div className="font-semibold tabular-nums text-foreground">
-        {Number(payload[0]?.value ?? 0).toLocaleString()} tokens
+        {formatCompactNumber(Number(payload[0]?.value ?? 0))} tokens
       </div>
     </div>
   )

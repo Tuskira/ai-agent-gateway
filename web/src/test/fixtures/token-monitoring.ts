@@ -14,7 +14,7 @@ interface Exchange<Res> {
 
 export interface MonitoringContract {
   overview_7d: Exchange<TokenMonitoring>
-  overview_today: Exchange<TokenMonitoring>
+  overview_24h: Exchange<TokenMonitoring>
   model: Exchange<TokenMonitoring>
   key: Exchange<TokenMonitoring>
 }

@@ -6,71 +6,6 @@ import (
 	"time"
 )
 
-// MonitoringWindow is one of the Token Monitoring page's time windows.
-type MonitoringWindow string
-
-const (
-	// WindowToday is the current UTC calendar day so far.
-	WindowToday MonitoringWindow = "today"
-	// Window7d and Window30d are rolling windows ending now.
-	Window7d  MonitoringWindow = "7d"
-	Window30d MonitoringWindow = "30d"
-)
-
-// ParseMonitoringWindow validates a "window" query parameter.
-func ParseMonitoringWindow(s string) (MonitoringWindow, bool) {
-	switch w := MonitoringWindow(s); w {
-	case WindowToday, Window7d, Window30d:
-		return w, true
-	}
-	return "", false
-}
-
-// Granularity is the bucket size of a usage-over-time series.
-type Granularity string
-
-const (
-	GranularityHour Granularity = "hour"
-	GranularityDay  Granularity = "day"
-)
-
-func (g Granularity) step() time.Duration {
-	if g == GranularityHour {
-		return time.Hour
-	}
-	return 24 * time.Hour
-}
-
-// MonitoringBounds is a window resolved against a clock: usage is counted
-// in [Start, End) and compared with [PrevStart, PrevEnd), the same span one
-// period earlier. All times are UTC.
-type MonitoringBounds struct {
-	Start, End, PrevStart, PrevEnd time.Time
-	Granularity                    Granularity
-}
-
-// Bounds resolves w at now. Today starts at UTC midnight and is compared
-// with the same hours of yesterday; 7d/30d are compared with the window of
-// the same length immediately before.
-func (w MonitoringWindow) Bounds(now time.Time) MonitoringBounds {
-	now = now.UTC()
-	b := MonitoringBounds{End: now, Granularity: GranularityDay}
-	period := 24 * time.Hour
-	switch w {
-	case Window7d:
-		period = 7 * 24 * time.Hour
-		b.Start = now.Add(-period)
-	case Window30d:
-		period = 30 * 24 * time.Hour
-		b.Start = now.Add(-period)
-	default: // WindowToday
-		b.Start = now.Truncate(24 * time.Hour)
-		b.Granularity = GranularityHour
-	}
-	b.PrevStart, b.PrevEnd = b.Start.Add(-period), b.End.Add(-period)
-	return b
-}
-
 // DeltaPct is the change from prev to cur in percent, rounded to two
 // decimals. nil when prev is 0: there is no meaningful percentage, and
 // "0%" would wrongly read as "no change".
@@ -89,16 +24,16 @@ type TokenBucket struct {
 }
 
 // FillTokenBuckets returns one bucket per granularity step from the step
-// containing b.Start through the one containing b.End, taking tokens from
+// containing b.Start through the last one starting before b.End, taking tokens from
 // points (keyed by bucket start) and 0 elsewhere, so a chart has no gaps.
-func FillTokenBuckets(points []TokenBucket, b MonitoringBounds) []TokenBucket {
-	step := b.Granularity.step()
+func FillTokenBuckets(points []TokenBucket, b Period) []TokenBucket {
+	step := b.Granularity.Step()
 	by := make(map[int64]uint64, len(points))
 	for _, p := range points {
 		by[p.Bucket.UTC().Truncate(step).Unix()] += p.Tokens
 	}
 	out := []TokenBucket{}
-	for t := b.Start.UTC().Truncate(step); t.Before(b.End) || t.Equal(b.End.Truncate(step)); t = t.Add(step) {
+	for t := b.Start.UTC().Truncate(step); t.Before(b.End); t = t.Add(step) {
 		out = append(out, TokenBucket{Bucket: t, Tokens: by[t.Unix()]})
 	}
 	return out
@@ -108,7 +43,8 @@ func FillTokenBuckets(points []TokenBucket, b MonitoringBounds) []TokenBucket {
 // Tokens = prompt + completion; cache reads/writes are reported alongside
 // but are not part of Tokens. CostUSD is nil when no call in the window was
 // priced; UnpricedCalls counts calls with no known cost. PrevTokens is the
-// same subject's Tokens over the previous period.
+// same subject's Tokens over the previous period; PrevTokensWithCache adds
+// that period's cache reads and writes (set on the page totals only).
 type TokenUsage struct {
 	Tokens           uint64   `json:"tokens"`
 	PromptTokens     uint64   `json:"prompt_tokens"`
@@ -119,6 +55,8 @@ type TokenUsage struct {
 	Calls            uint64   `json:"calls"`
 	UnpricedCalls    uint64   `json:"unpriced_calls"`
 	PrevTokens       uint64   `json:"prev_tokens"`
+
+	PrevTokensWithCache uint64 `json:"prev_tokens_with_cache,omitempty"`
 }
 
 // ModelTokenUsage is one model's usage (the name callers asked for).
@@ -146,10 +84,11 @@ type SessionTokenUsage struct {
 }
 
 // TokenMonitoringQuery selects the Token Monitoring page (neither Model nor
-// KeyID set) or one drill-down (exactly one set). Limit/Offset page a
-// drill-down's sessions.
+// KeyID set) or one drill-down (exactly one set) over Period; Range labels
+// it (a preset, or RangeCustom). Limit/Offset page a drill-down's sessions.
 type TokenMonitoringQuery struct {
-	Window        MonitoringWindow
+	Range         Range
+	Period        Period
 	Model, KeyID  string
 	Limit, Offset int
 }
@@ -159,7 +98,7 @@ type TokenMonitoringQuery struct {
 // add their sessions (paged; SessionsTotal counts them all). Every figure
 // comes from the same rows, so breakdowns and the series add up to Totals.
 type TokenMonitoring struct {
-	Window        MonitoringWindow    `json:"window"`
+	Range         Range               `json:"range"`
 	Start         time.Time           `json:"start"`
 	End           time.Time           `json:"end"`
 	Granularity   Granularity         `json:"granularity"`

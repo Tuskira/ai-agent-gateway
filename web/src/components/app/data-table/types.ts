@@ -78,6 +78,9 @@ export interface BulkAction<TData> {
   minSelected?: number
 }
 
+/** Rows-per-page choices every table offers; the first is the default. */
+export const PAGE_SIZES = [25, 50, 100]
+
 interface DataTableBaseProps<TData> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   columns: ColumnDef<TData, any>[]
@@ -108,7 +111,7 @@ interface DataTableBaseProps<TData> {
   /** Skeleton rows shown on first load. @default 5 */
   skeletonRows?: number
 
-  /** @default [10, 25, 50] */
+  /** @default PAGE_SIZES */
   pageSizeOptions?: number[]
   /** Initial sort. Overrides any sort saved under `storageKey`. */
   defaultSorting?: SortModel[]

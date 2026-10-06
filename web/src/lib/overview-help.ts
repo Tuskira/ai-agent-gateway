@@ -280,7 +280,7 @@ export const WIDGET_HELP = {
         title: 'Time buckets',
         icon: Clock,
         tone: 'info',
-        body: 'One point per hour for the last 24 hours, and one per day for 7 and 30 days. A bucket with no traffic is drawn as zero.',
+        body: 'One point per hour for periods up to 48 hours (Last 24h, or one or two custom days), and one per day for longer ones. A bucket with no traffic is drawn as zero.',
       },
       {
         kind: 'card',

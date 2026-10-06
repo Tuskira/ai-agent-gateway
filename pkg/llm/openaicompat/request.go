@@ -1,8 +1,10 @@
 // Package openaicompat is the pkg/llm Provider for OpenAI-compatible Chat
 // Completions endpoints (OpenAI, xAI, DeepSeek, GLM, Kimi, Mistral, Groq,
-// Gemini's OpenAI endpoint, Ollama, vLLM, ...), and the Reader of that wire
-// (ChatReader). They register as "openai_compat" and "openai_chat" from
-// init(); blank-import the package to use them.
+// Gemini's OpenAI endpoint, Ollama, vLLM, ...), the Reader of that wire
+// (ChatReader), and Readers of OpenAI's Responses API (ResponsesReader) and
+// legacy Completions (CompletionsReader). They register as "openai_compat",
+// "openai_chat", "openai_responses" and "openai_completions" from init();
+// blank-import the package to use them.
 //
 // One Provider serves every such vendor, so it sends only the fields they all
 // share. What it cannot carry is declared in Capabilities, and the engine

@@ -1,0 +1,227 @@
+{
+  "request": {
+    "model": "gpt-4.1",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "hi"
+          },
+          {
+            "type": "input_audio",
+            "input_audio": {
+              "data": "UklGRg==",
+              "format": "wav"
+            }
+          }
+        ]
+      },
+      {
+        "type": "web_search_call",
+        "id": "ws_1",
+        "status": "completed",
+        "action": {
+          "type": "search",
+          "query": "weather"
+        }
+      },
+      {
+        "type": "item_reference",
+        "id": "msg_9"
+      },
+      {
+        "type": "computer_call_output",
+        "call_id": "cc_1",
+        "output": {
+          "type": "computer_screenshot",
+          "image_url": "https://example.com/s.png"
+        }
+      }
+    ],
+    "store": false,
+    "include": [
+      "reasoning.encrypted_content"
+    ],
+    "text": {
+      "format": {
+        "type": "text"
+      }
+    },
+    "truncation": "auto",
+    "metadata": {
+      "k": "v"
+    },
+    "user": "u-1",
+    "tool_choice": {
+      "type": "web_search_preview"
+    }
+  },
+  "response": {
+    "id": "resp_4",
+    "object": "response",
+    "status": "completed",
+    "model": "gpt-4.1",
+    "service_tier": "default",
+    "parallel_tool_calls": true,
+    "output": [
+      {
+        "type": "web_search_call",
+        "id": "ws_2",
+        "status": "completed"
+      },
+      {
+        "type": "message",
+        "id": "msg_4",
+        "role": "assistant",
+        "status": "completed",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "Sunny.",
+            "annotations": [
+              {
+                "type": "url_citation",
+                "url": "https://example.com/w",
+                "title": "Weather",
+                "start_index": 0,
+                "end_index": 6
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "usage": {
+      "input_tokens": 5,
+      "output_tokens": 3
+    }
+  },
+  "sse": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_4\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"gpt-4.1\",\"output\":[],\"usage\":null}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_2\",\"status\":\"in_progress\"}}\n\nevent: response.web_search_call.completed\ndata: {\"type\":\"response.web_search_call.completed\",\"sequence_number\":2,\"output_index\":0,\"item_id\":\"ws_2\"}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":3,\"output_index\":0,\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_2\",\"status\":\"completed\"}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":4,\"item_id\":\"msg_4\",\"output_index\":1,\"content_index\":0,\"delta\":\"Sunny.\"}\n\nevent: response.output_text.annotation.added\ndata: {\"type\":\"response.output_text.annotation.added\",\"sequence_number\":5,\"item_id\":\"msg_4\",\"output_index\":1,\"content_index\":0,\"annotation_index\":0,\"annotation\":{\"type\":\"url_citation\",\"url\":\"https://example.com/w\",\"title\":\"Weather\",\"start_index\":0,\"end_index\":6}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":6,\"response\":{\"id\":\"resp_4\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-4.1\",\"usage\":{\"input_tokens\":5,\"output_tokens\":3}}}\n\n",
+  "expect": {
+    "request": {
+      "model": "gpt-4.1",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi"
+            },
+            {
+              "type": "input_audio",
+              "raw": {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "UklGRg==",
+                  "format": "wav"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "web_search_call",
+              "raw": {
+                "type": "web_search_call",
+                "id": "ws_1",
+                "status": "completed",
+                "action": {
+                  "type": "search",
+                  "query": "weather"
+                }
+              }
+            },
+            {
+              "type": "item_reference",
+              "raw": {
+                "type": "item_reference",
+                "id": "msg_9"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "computer_call_output",
+              "raw": {
+                "type": "computer_call_output",
+                "call_id": "cc_1",
+                "output": {
+                  "type": "computer_screenshot",
+                  "image_url": "https://example.com/s.png"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "text": {
+          "format": {
+            "type": "text"
+          }
+        },
+        "truncation": "auto",
+        "metadata": {
+          "k": "v"
+        },
+        "user": "u-1",
+        "tool_choice": {
+          "type": "web_search_preview"
+        }
+      }
+    },
+    "response": {
+      "id": "resp_4",
+      "model": "gpt-4.1",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "web_search_call",
+          "raw": {
+            "type": "web_search_call",
+            "id": "ws_2",
+            "status": "completed"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Sunny.",
+          "extra": {
+            "annotations": [
+              {
+                "type": "url_citation",
+                "url": "https://example.com/w",
+                "title": "Weather",
+                "start_index": 0,
+                "end_index": 6
+              }
+            ],
+            "id": "msg_4",
+            "status": "completed"
+          }
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 5,
+        "output_tokens": 3
+      }
+    },
+    "stream_text": "Sunny.",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

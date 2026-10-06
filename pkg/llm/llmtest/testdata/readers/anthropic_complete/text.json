@@ -1,0 +1,56 @@
+{
+  "request": {
+    "model": "claude-2.1",
+    "prompt": "\n\nHuman: Hello there\n\nAssistant:",
+    "max_tokens_to_sample": 256
+  },
+  "response": {
+    "type": "completion",
+    "id": "compl_1",
+    "completion": " Hi! How can I help?",
+    "stop_reason": "stop_sequence",
+    "stop": "\n\nHuman:",
+    "model": "claude-2.1",
+    "log_id": "compl_1"
+  },
+  "sse": "event: completion\ndata: {\"type\":\"completion\",\"id\":\"compl_1\",\"completion\":\" Hi!\",\"stop_reason\":null,\"stop\":null,\"model\":\"claude-2.1\",\"log_id\":\"compl_1\"}\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\nevent: completion\ndata: {\"type\":\"completion\",\"id\":\"compl_1\",\"completion\":\" How can I help?\",\"stop_reason\":null,\"stop\":null,\"model\":\"claude-2.1\",\"log_id\":\"compl_1\"}\n\nevent: completion\ndata: {\"type\":\"completion\",\"id\":\"compl_1\",\"completion\":\"\",\"stop_reason\":\"stop_sequence\",\"stop\":\"\\n\\nHuman:\",\"model\":\"claude-2.1\",\"log_id\":\"compl_1\"}\n\n",
+  "expect": {
+    "request": {
+      "model": "claude-2.1",
+      "max_tokens": 256,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hello there"
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "_gateway_history": "prompt"
+      }
+    },
+    "response": {
+      "id": "compl_1",
+      "model": "claude-2.1",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " Hi! How can I help?"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    },
+    "stream_text": " Hi! How can I help?",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

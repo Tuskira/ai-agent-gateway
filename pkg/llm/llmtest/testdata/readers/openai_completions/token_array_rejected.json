@@ -1,0 +1,21 @@
+{
+  "request": {
+    "model": "gpt-3.5-turbo-instruct",
+    "prompt": [
+      [
+        1212,
+        318
+      ],
+      [
+        257,
+        1332
+      ]
+    ],
+    "max_tokens": 5
+  },
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request_error": "prompt: token-id prompts are not supported"
+  }
+}

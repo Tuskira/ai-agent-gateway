@@ -1,0 +1,95 @@
+{
+  "request": {
+    "model": "gpt-3.5-turbo-instruct",
+    "prompt": "hi",
+    "presence_penalty": 0.5,
+    "frequency_penalty": 0.1,
+    "logit_bias": {
+      "50256": -100
+    },
+    "seed": 7,
+    "logprobs": 2,
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "response": {
+    "id": "cmpl-3",
+    "object": "text_completion",
+    "created": 1700000000,
+    "model": "gpt-3.5-turbo-instruct",
+    "system_fingerprint": "fp_1",
+    "choices": [
+      {
+        "text": "Hello.",
+        "index": 0,
+        "logprobs": {
+          "tokens": [
+            "Hello",
+            "."
+          ]
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 12,
+      "completion_tokens": 2,
+      "prompt_tokens_details": {
+        "cached_tokens": 8
+      }
+    }
+  },
+  "sse": "data: {\"id\":\"cmpl-3\",\"object\":\"text_completion\",\"created\":1700000000,\"model\":\"gpt-3.5-turbo-instruct\",\"choices\":[{\"text\":\"Hel\",\"index\":0,\"logprobs\":null,\"finish_reason\":null}]}\n\ndata: {\"id\":\"cmpl-3\",\"object\":\"text_completion\",\"created\":1700000000,\"model\":\"gpt-3.5-turbo-instruct\",\"choices\":[{\"text\":\"lo.\",\"index\":0,\"logprobs\":null,\"finish_reason\":null}]}\n\ndata: {\"id\":\"cmpl-3\",\"object\":\"text_completion\",\"created\":1700000000,\"model\":\"gpt-3.5-turbo-instruct\",\"choices\":[{\"text\":\"\",\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"cmpl-3\",\"object\":\"text_completion\",\"created\":1700000000,\"model\":\"gpt-3.5-turbo-instruct\",\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":2,\"total_tokens\":14}}\n\ndata: [DONE]\n\n",
+  "expect": {
+    "request": {
+      "model": "gpt-3.5-turbo-instruct",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "presence_penalty": 0.5,
+        "frequency_penalty": 0.1,
+        "logit_bias": {
+          "50256": -100
+        },
+        "seed": 7,
+        "logprobs": 2,
+        "stream_options": {
+          "include_usage": true
+        },
+        "_gateway_history": "prompt"
+      }
+    },
+    "response": {
+      "id": "cmpl-3",
+      "model": "gpt-3.5-turbo-instruct",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2,
+        "cache_read_tokens": 8
+      }
+    },
+    "stream_text": "Hello.",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

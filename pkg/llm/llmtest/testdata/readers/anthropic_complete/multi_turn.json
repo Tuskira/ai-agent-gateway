@@ -1,0 +1,97 @@
+{
+  "request": {
+    "model": "claude-2.1",
+    "prompt": "You are terse.\n\nHuman: What is 2+2?\n\nAssistant: 4.\n\nHuman: And times 3?\n\nAssistant:",
+    "max_tokens_to_sample": 20,
+    "stop_sequences": [
+      "END"
+    ],
+    "temperature": 0.2,
+    "top_k": 5,
+    "metadata": {
+      "user_id": "u-1"
+    }
+  },
+  "response": {
+    "type": "completion",
+    "id": "compl_2",
+    "completion": " 12",
+    "stop_reason": "stop_sequence",
+    "stop": "END",
+    "model": "claude-2.1",
+    "log_id": "compl_2"
+  },
+  "sse": "event: completion\ndata: {\"type\":\"completion\",\"id\":\"compl_2\",\"completion\":\" 12\",\"stop_reason\":null,\"stop\":null,\"model\":\"claude-2.1\",\"log_id\":\"compl_2\"}\n\nevent: completion\ndata: {\"type\":\"completion\",\"id\":\"compl_2\",\"completion\":\"\",\"stop_reason\":\"stop_sequence\",\"stop\":\"END\",\"model\":\"claude-2.1\",\"log_id\":\"compl_2\"}\n\n",
+  "expect": {
+    "request": {
+      "model": "claude-2.1",
+      "max_tokens": 20,
+      "stop_sequences": [
+        "END"
+      ],
+      "temperature": 0.2,
+      "top_k": 5,
+      "metadata": {
+        "user_id": "u-1"
+      },
+      "system": [
+        {
+          "type": "text",
+          "text": "You are terse."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What is 2+2?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "4."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "And times 3?"
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "_gateway_history": "prompt"
+      }
+    },
+    "response": {
+      "id": "compl_2",
+      "model": "claude-2.1",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " 12"
+        }
+      ],
+      "stop_reason": "stop_sequence",
+      "stop_sequence": "END",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    },
+    "stream_text": " 12",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "stop_sequence"
+  }
+}

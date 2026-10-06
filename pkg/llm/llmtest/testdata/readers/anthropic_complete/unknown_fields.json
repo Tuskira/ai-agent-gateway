@@ -1,0 +1,67 @@
+{
+  "request": {
+    "model": "claude-instant-1.2",
+    "prompt": "Plain text, no markers.",
+    "max_tokens_to_sample": 5,
+    "stream": true,
+    "top_p": 0.9,
+    "custom_field": {
+      "a": 1
+    }
+  },
+  "response": {
+    "type": "completion",
+    "id": "compl_3",
+    "completion": "Okay",
+    "stop_reason": "max_tokens",
+    "stop": null,
+    "model": "claude-instant-1.2",
+    "log_id": "compl_3",
+    "truncated": false
+  },
+  "sse": "event: completion\ndata: {\"type\":\"completion\",\"id\":\"compl_3\",\"completion\":\"Okay\",\"stop_reason\":\"max_tokens\",\"stop\":null,\"model\":\"claude-instant-1.2\",\"log_id\":\"compl_3\"}\n\n",
+  "expect": {
+    "request": {
+      "model": "claude-instant-1.2",
+      "max_tokens": 5,
+      "stream": true,
+      "top_p": 0.9,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Plain text, no markers."
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "custom_field": {
+          "a": 1
+        },
+        "_gateway_history": "prompt"
+      }
+    },
+    "response": {
+      "id": "compl_3",
+      "model": "claude-instant-1.2",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Okay"
+        }
+      ],
+      "stop_reason": "max_tokens",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    },
+    "stream_text": "Okay",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "max_tokens"
+  }
+}

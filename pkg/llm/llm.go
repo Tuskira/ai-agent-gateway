@@ -19,11 +19,13 @@
 // the gateway can look at every call the same way.
 //
 // Four adapters ship in this module and register themselves from an
-// init(): pkg/llm/anthropic (Dialect, Provider and Reader "anthropic"),
-// pkg/llm/openaicompat (Provider "openai_compat", Reader "openai_chat"),
-// pkg/llm/gemini (Reader "gemini") and pkg/llm/bedrock (Readers
-// "bedrock-converse" and "bedrock-invoke"). A binary blank-imports the
-// adapters it wants, exactly as cmd/gateway does. A new vendor is one
+// init(): pkg/llm/anthropic (Dialect, Provider and Reader "anthropic",
+// Reader "anthropic_complete"), pkg/llm/openaicompat (Provider
+// "openai_compat", Readers "openai_chat", "openai_responses" and
+// "openai_completions"), pkg/llm/gemini (Reader "gemini") and
+// pkg/llm/bedrock (Readers "bedrock-converse" and "bedrock-invoke"). A
+// binary blank-imports the adapters it wants, exactly as cmd/gateway does.
+// A new vendor is one
 // package that implements Provider, registers it, and passes
 // pkg/llm/llmtest -- see CONTRIBUTING.md, "Adding an LLM provider adapter".
 package llm
@@ -93,6 +95,23 @@ type Request struct {
 	// refuses them unless they are on its documented drop list.
 	Extra map[string]json.RawMessage `json:"extra,omitempty"`
 }
+
+// HistoryKey is the Request.Extra key a Reader sets when Messages is not the
+// whole conversation as the model sees it. Its value is a JSON string:
+// HistoryServerSide when the vendor holds the earlier turns (an OpenAI
+// Responses request naming previous_response_id or conversation), or
+// HistoryPrompt when the request is one flat prompt text (a legacy
+// completion request; any turns in Messages were split out of it best
+// effort). With the key absent, Messages is the conversation as sent. A
+// Reader refuses a body that sets this key itself, so a client cannot
+// forge it.
+const HistoryKey = "_gateway_history"
+
+// The HistoryKey values.
+const (
+	HistoryServerSide = "server_side"
+	HistoryPrompt     = "prompt"
+)
 
 // Message is one conversation turn.
 type Message struct {

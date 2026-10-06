@@ -1,0 +1,184 @@
+{
+  "request": {
+    "model": "o4-mini",
+    "temperature": 0.2,
+    "top_p": 0.9,
+    "max_output_tokens": 50,
+    "reasoning": {
+      "effort": "low",
+      "summary": "auto"
+    },
+    "input": [
+      {
+        "role": "user",
+        "content": "What is 2+2?"
+      },
+      {
+        "type": "reasoning",
+        "id": "rs_1",
+        "summary": [
+          {
+            "type": "summary_text",
+            "text": "Simple sum."
+          }
+        ],
+        "encrypted_content": "gAAAA"
+      },
+      {
+        "type": "message",
+        "id": "msg_1",
+        "role": "assistant",
+        "status": "completed",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "4.",
+            "annotations": []
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": "And times 3?"
+      }
+    ]
+  },
+  "response": {
+    "id": "resp_2",
+    "object": "response",
+    "status": "incomplete",
+    "incomplete_details": {
+      "reason": "max_output_tokens"
+    },
+    "model": "o4-mini",
+    "output": [
+      {
+        "type": "reasoning",
+        "id": "rs_2",
+        "summary": [
+          {
+            "type": "summary_text",
+            "text": "Multiply."
+          },
+          {
+            "type": "summary_text",
+            "text": "Twelve."
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "id": "msg_2",
+        "role": "assistant",
+        "status": "incomplete",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "12",
+            "annotations": []
+          }
+        ]
+      }
+    ],
+    "usage": {
+      "input_tokens": 30,
+      "input_tokens_details": {
+        "cached_tokens": 20
+      },
+      "output_tokens": 50,
+      "output_tokens_details": {
+        "reasoning_tokens": 48
+      },
+      "total_tokens": 80
+    }
+  },
+  "sse": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_2\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"o4-mini\",\"output\":[],\"usage\":null}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_2\",\"summary\":[]}}\n\nevent: response.reasoning_summary_part.added\ndata: {\"type\":\"response.reasoning_summary_part.added\",\"sequence_number\":2,\"item_id\":\"rs_2\",\"output_index\":0,\"summary_index\":0,\"part\":{\"type\":\"summary_text\",\"text\":\"\"}}\n\nevent: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"sequence_number\":3,\"item_id\":\"rs_2\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Multiply.\"}\n\nevent: response.reasoning_summary_text.done\ndata: {\"type\":\"response.reasoning_summary_text.done\",\"sequence_number\":4,\"item_id\":\"rs_2\",\"output_index\":0,\"summary_index\":0,\"text\":\"Multiply.\"}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":5,\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_2\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Multiply.\"}]}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":6,\"output_index\":1,\"item\":{\"type\":\"message\",\"id\":\"msg_2\",\"role\":\"assistant\",\"status\":\"in_progress\",\"content\":[]}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":7,\"item_id\":\"msg_2\",\"output_index\":1,\"content_index\":0,\"delta\":\"12\"}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":8,\"output_index\":1,\"item\":{\"type\":\"message\",\"id\":\"msg_2\",\"role\":\"assistant\",\"status\":\"incomplete\",\"content\":[{\"type\":\"output_text\",\"text\":\"12\",\"annotations\":[]}]}}\n\nevent: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"sequence_number\":9,\"response\":{\"id\":\"resp_2\",\"object\":\"response\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"model\":\"o4-mini\",\"output\":[{\"type\":\"reasoning\",\"id\":\"rs_2\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Multiply.\"},{\"type\":\"summary_text\",\"text\":\"Twelve.\"}]},{\"type\":\"message\",\"id\":\"msg_2\",\"role\":\"assistant\",\"status\":\"incomplete\",\"content\":[{\"type\":\"output_text\",\"text\":\"12\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":30,\"input_tokens_details\":{\"cached_tokens\":20},\"output_tokens\":50,\"output_tokens_details\":{\"reasoning_tokens\":48},\"total_tokens\":80}}}\n\n",
+  "expect": {
+    "request": {
+      "model": "o4-mini",
+      "max_tokens": 50,
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "effort": "low",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What is 2+2?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "Simple sum.",
+              "extra": {
+                "id": "rs_1",
+                "encrypted_content": "gAAAA"
+              }
+            },
+            {
+              "type": "text",
+              "text": "4.",
+              "extra": {
+                "annotations": [],
+                "id": "msg_1",
+                "status": "completed"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "And times 3?"
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "reasoning": {
+          "summary": "auto"
+        }
+      }
+    },
+    "response": {
+      "id": "resp_2",
+      "model": "o4-mini",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Multiply.\n\nTwelve.",
+          "extra": {
+            "id": "rs_2"
+          }
+        },
+        {
+          "type": "text",
+          "text": "12",
+          "extra": {
+            "annotations": [],
+            "id": "msg_2",
+            "status": "incomplete"
+          }
+        }
+      ],
+      "stop_reason": "max_tokens",
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 50,
+        "cache_read_tokens": 20
+      }
+    },
+    "stream_text": "12",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "max_tokens"
+  }
+}

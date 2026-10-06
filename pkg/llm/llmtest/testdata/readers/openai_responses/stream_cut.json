@@ -1,0 +1,30 @@
+{
+  "request": {
+    "model": "gpt-4.1",
+    "stream": true,
+    "input": "Tell me a story."
+  },
+  "response": null,
+  "sse": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_5\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"gpt-4.1\",\"output\":[],\"usage\":null}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"id\":\"msg_5\",\"type\":\"message\",\"status\":\"in_progress\",\"role\":\"assistant\",\"content\":[]}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":2,\"item_id\":\"msg_5\",\"output_index\":0,\"content_index\":0,\"delta\":\"Once upon \"}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":3,\"output_index\":1,\"item\":{\"id\":\"fc_5\",\"type\":\"function_call\",\"call_id\":\"call_5\",\"name\":\"save_story\",\"arguments\":\"\",\"status\":\"in_progress\"}}\n\nevent: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"sequence_number\":4,\"item_id\":\"fc_5\",\"output_index\":1,\"delta\":\"{\\\"title\\\":\"}\n\nevent: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"sequence_number\":5,\"item_id\":\"fc_5\",\"output_index\":1,\"delta\":\"\\\"A ti",
+  "expect": {
+    "request": {
+      "model": "gpt-4.1",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Tell me a story."
+            }
+          ]
+        }
+      ]
+    },
+    "stream_text": "Once upon ",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "",
+    "stream_error": "unexpected EOF"
+  }
+}

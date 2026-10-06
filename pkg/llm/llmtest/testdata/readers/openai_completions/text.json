@@ -1,0 +1,68 @@
+{
+  "request": {
+    "model": "gpt-3.5-turbo-instruct",
+    "prompt": "Say this is a test",
+    "max_tokens": 7,
+    "temperature": 0
+  },
+  "response": {
+    "id": "cmpl-1",
+    "object": "text_completion",
+    "created": 1700000000,
+    "model": "gpt-3.5-turbo-instruct",
+    "choices": [
+      {
+        "text": "\n\nThis is indeed a test",
+        "index": 0,
+        "logprobs": null,
+        "finish_reason": "length"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 5,
+      "completion_tokens": 7,
+      "total_tokens": 12
+    }
+  },
+  "sse": "data: {\"id\":\"cmpl-1\",\"object\":\"text_completion\",\"created\":1700000000,\"model\":\"gpt-3.5-turbo-instruct\",\"choices\":[{\"text\":\"This\",\"index\":0,\"logprobs\":null,\"finish_reason\":null}]}\n\ndata: {\"id\":\"cmpl-1\",\"object\":\"text_completion\",\"created\":1700000000,\"model\":\"gpt-3.5-turbo-instruct\",\"choices\":[{\"text\":\" is a test\",\"index\":0,\"logprobs\":null,\"finish_reason\":null}]}\n\ndata: {\"id\":\"cmpl-1\",\"object\":\"text_completion\",\"created\":1700000000,\"model\":\"gpt-3.5-turbo-instruct\",\"choices\":[{\"text\":\"\",\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+  "expect": {
+    "request": {
+      "model": "gpt-3.5-turbo-instruct",
+      "max_tokens": 7,
+      "temperature": 0,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Say this is a test"
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "_gateway_history": "prompt"
+      }
+    },
+    "response": {
+      "id": "cmpl-1",
+      "model": "gpt-3.5-turbo-instruct",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "\n\nThis is indeed a test"
+        }
+      ],
+      "stop_reason": "max_tokens",
+      "usage": {
+        "input_tokens": 5,
+        "output_tokens": 7
+      }
+    },
+    "stream_text": "This is a test",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

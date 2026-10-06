@@ -1,0 +1,63 @@
+{
+  "request": {
+    "model": "gpt-4.1",
+    "instructions": "You are terse.",
+    "input": [
+      {
+        "role": "developer",
+        "content": "Answer in English."
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Hi"
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "role": "system",
+        "content": "Late rule."
+      }
+    ]
+  },
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "gpt-4.1",
+      "system": [
+        {
+          "type": "text",
+          "text": "You are terse."
+        },
+        {
+          "type": "text",
+          "text": "Answer in English."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hi"
+            }
+          ]
+        },
+        {
+          "role": "system",
+          "content": [
+            {
+              "type": "text",
+              "text": "Late rule."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

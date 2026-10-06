@@ -67,8 +67,9 @@ func PrepareRequest(body []byte) PreparedTurn {
 
 // PrepareRequestContext is PrepareRequest bounded by ctx: once ctx is done
 // it stops and returns a NotJudgedTurn (DeadlineReason), never a turn left
-// half redacted. Extraction and every scan are bounded by the body's size
-// and the caps, so only a hostile or huge body runs into a deadline.
+// half redacted. Extraction and the scan are linear in the body (every
+// byte of every string is scanned), so only a hostile or huge body runs
+// into a deadline.
 func PrepareRequestContext(ctx context.Context, body []byte) PreparedTurn {
 	s, ok := extractRequest(body)
 	if !ok {
@@ -91,8 +92,8 @@ const DeadlineReason = "not judged: preparing the turn on the agent ran past its
 
 // unreadableTurn is a request body the extractor cannot read: no text,
 // only the secrets found in it, so the secret rule still decides. The raw
-// bytes are scanned (bounded as a user_text is) and so is each string a
-// lenient decoder reads out of them, where an escaped secret reads plain.
+// bytes are scanned, all of them, and so is each string a lenient decoder
+// reads out of them, where an escaped secret reads plain.
 func unreadableTurn(ctx context.Context, body []byte) (PreparedTurn, error) {
 	t := PreparedTurn{Stage: StageRequest, Unreadable: true}
 	seen := map[string]bool{}
@@ -100,7 +101,11 @@ func unreadableTurn(ctx context.Context, body []byte) (PreparedTurn, error) {
 		if err := ctx.Err(); err != nil {
 			return PreparedTurn{}, err
 		}
-		for _, m := range scanWindows(validUTF8(x), capText) {
+		ms, err := scanSecretsContext(ctx, validUTF8(x))
+		if err != nil {
+			return PreparedTurn{}, err
+		}
+		for _, m := range ms {
 			if !seen[m.kind] && len(t.Secrets) < maxSecretHits {
 				seen[m.kind] = true
 				t.Secrets = append(t.Secrets, SecretHit{Kind: m.kind, Field: "user_text"})

@@ -120,6 +120,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Detection agent: a secret stated deep inside a long history string is
+  removed.** Values were collected only from a window (64 KiB each side of
+  the part clipping keeps) of each long string, so a value stated in the
+  middle of a long earlier tool output was not collected and a bare copy
+  of it in the new turn left the host. Every byte of every string is now
+  scanned (in overlapping 256 KiB pieces); when that does not finish within
+  the agent's prepare deadline (4 s) the stage is sent as `not_judged`
+  with no text. A 10 MiB body now takes about 2.3 s to prepare (about
+  0.08 s before).
 - **Detection agent: an inline allow comment no longer hides a secret.**
   The secret scan honoured gitleaks' inline allow comment, so a key on a
   line that also carried the comment was neither found nor redacted and

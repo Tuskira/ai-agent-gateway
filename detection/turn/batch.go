@@ -41,11 +41,9 @@ func (b *Batch) values(ctx context.Context) ([]secretMatch, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var ms []secretMatch
-		if cache {
-			ms = cachedScan(validUTF8(x), capText)
-		} else {
-			ms = scanWindows(validUTF8(x), capText)
+		ms, err := scanText(ctx, validUTF8(x), cache)
+		if err != nil {
+			return nil, err
 		}
 		for _, m := range ms {
 			if len(m.secret) >= minSharedSecret {

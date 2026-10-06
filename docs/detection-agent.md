@@ -107,15 +107,30 @@ overlapping values are removed as one span. The kinds found in strings that
 are sent travel with the turn as `secrets: [{kind, field, index}]` (where
 each kind was first seen), without the values.
 
-Preparing a turn is bounded: extraction and the scan are linear in the body.
-Past `PrepareTimeout` (4 seconds by default; a field of the Go `agent.Config`,
-not an environment variable) the stage is sent as `not_judged` (reason
-"...ran past its deadline"), with no text, never partly redacted, and the
-agent logs it. This applies to every stage, including those of
-`POST /v1/turns`. The agent also caches scans of strings of 1 KiB or more
-across calls (an agent client resends its history every call, so it is
-scanned once); the cache holds raw values, so it is on only in the agent
+Every byte of every string of the body is scanned, however long the string:
+a value stated in the middle of a long tool output from an earlier turn is
+found, and a bare copy of it in the new turn is removed. A long string is
+scanned in pieces of 256 KiB that overlap by 64 KiB, so a secret (with the
+context its rule needs, such as `api_key = "`) up to 64 KiB long is found
+whole wherever a piece's edge falls.
+
+That makes preparing a turn linear in the body but not free: on keyword-dense
+text it costs roughly 0.2 seconds per MiB of strings (a 10 MiB body about
+2.3 seconds on an Apple M5). So it is bounded by a deadline instead of by
+what is scanned: past `PrepareTimeout` (4 seconds by default; a field of the
+Go `agent.Config`, not an environment variable) the stage is sent as
+`not_judged` (reason "...ran past its deadline"), with no text, never partly
+redacted, and the agent logs it. The scan stops between two rules of one
+piece, so it ends at most about 0.1 seconds after the deadline. This applies
+to every stage, including those of `POST /v1/turns`. The agent also caches
+scans of strings of 1 KiB or more across calls (an agent client resends its
+history every call, so it is scanned once); only a scan that ran to the end
+is cached. The cache holds raw values, so it is on only in the agent
 (`turn.EnableScanCache`) and never in an engine importing `turn`.
+
+The scanner ignores gitleaks' inline allow comment (`gitleaks:allow`): in a
+repository it marks a known false positive, but in a call it is only text
+the sender wrote, and honouring it would keep the secret on its line.
 
 ### Limits you should know about
 
@@ -132,13 +147,14 @@ scanned once); the cache holds raw values, so it is on only in the agent
   `response_text` to 8000 bytes, a tool result to 6000, a tool input to 2000;
   at most 8 tool results or tool calls per list. A clipped string keeps its
   first two thirds and last third around `…[truncated]…`.
-- **The scan window is 64 KiB.** A very long field is not scanned whole: the
-  agent scans the part clipping keeps, plus 64 KiB on each side. So every
-  secret up to 64 KiB long that clipping would cut is found whole and
-  redacted. A private-key block has no such bound and is always found whole;
-  any other single "secret" longer than 64 KiB may be missed. The text outside
-  that window is cut and never sent. A secret lying entirely inside the
-  unscanned middle of a huge string is therefore not found.
+- **A very long secret may be found only in part.** A long string is
+  scanned in overlapping pieces, so a single "secret" longer than 64 KiB
+  (with its context) that a piece's edge cuts may be missed. A private-key
+  block is the exception: the piece holding its `BEGIN` line reports it as
+  `private-key-unterminated` and the piece holding its `END` line finds the
+  block whole, and both are removed.
+- **A huge body is not judged.** When the scan does not finish within
+  `PrepareTimeout` the stage is sent as `not_judged`, with no text.
 - **The engine should not rely on it.** A turn is whatever the sender
   produced. An engine that stores or forwards turns should re-apply the same
   caps and re-run the same scan on what it receives; the `turn` package

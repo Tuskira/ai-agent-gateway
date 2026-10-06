@@ -211,7 +211,9 @@ is a recorded outcome, not something that reaches a client.
 
 The queue holds up to `AGENT_QUEUE_SIZE` turns and `AGENT_QUEUE_BYTES` of raw
 turn bytes (request plus response), worked by up to `AGENT_MAX_IN_FLIGHT`
-workers. A batch is one turn there, whatever its number of items: its raw
+workers. A turn's bytes count against `AGENT_QUEUE_BYTES` until its
+judgment is done, not only while it waits: a worker holds the raw turn
+while it prepares and sends it. A batch is one turn there, whatever its number of items: its raw
 bytes count once and it takes one slot. A turn that does not fit is not judged: the agent still answers
 `202` and sends the engine one `not_judged` marker for the request stage (no
 state, a short reason) so the gap is visible there; no response stage
@@ -233,6 +235,11 @@ finished it before the turn is posted.
 - **Engine down, slow, non-`200`, or an unreadable answer:** logged as a
   warning, the stage is dropped.
 - **Queue full:** `202`, and one `not_judged` marker as above.
+- **A bug while preparing a turn (a panic):** recovered, in a worker and on
+  the inline path. It is logged at `error` level with its stack (the panic
+  value only when the Go runtime raised it, since another may quote the
+  turn), the stage is sent as `not_judged` ("the agent failed preparing the
+  turn"), and the agent keeps running.
 - **Agent down, slow, or answering other than `202`:** the gateway drops
   the turn and counts it in its `/health`; see
   [llm-plane.md](llm-plane.md#queue-limits-and-drops).
@@ -284,10 +291,11 @@ is not positive, fails startup.
 | `AGENT_MAX_IN_FLIGHT` | `256` | Background judgments running at once (also the engine connection pool size). |
 | `AGENT_QUEUE_SIZE` | `1024` | Background turns waiting for a worker. |
 | `AGENT_QUEUE_BYTES` | `268435456` (256 MiB) | Raw request plus response bytes held by queued turns. |
-| `AGENT_ENGINE_TIMEOUT` | `9s` | Budget for one inline judgment (a Go duration such as `9s`). Inline contract only. |
+| `AGENT_ENGINE_TIMEOUT` | `8s` | Budget for one inline judgment (a Go duration such as `8s`). With the 1 second policy lookup it fits a gateway's 10 second wait for a verdict with a second to spare. Inline contract only. |
 | `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract only. |
+| `AGENT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (any case). At `debug` the agent logs one line per judged turn: `tenant`, `request_id`, `stages` (e.g. `request,response`), `returned` (judgments the engine answered), `dropped` (judgments that failed), `bytes` (the turn's raw request plus response) and `prepare_ms`. The line carries no text of the turn. |
 
-The agent logs to stderr through `log/slog`. `GET /healthz` answers `200 ok`
+The agent logs to stderr through `log/slog`, as text. `GET /healthz` answers `200 ok`
 and checks nothing else (not the engine).
 
 ## The gateway to agent side
@@ -434,7 +442,7 @@ Asks the engine to judge one redacted stage. Example (a request-stage turn):
 |---|---|
 | `v` | Contract version, see above. |
 | `sync` | `true` when the agent is waiting for the answer to enforce it (inline contract only; always `false` for turns from the gateway's tee). Informational: record the turn either way. |
-| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `model`, `path`. For one request of a batch, `item` is its id within the batch (its `custom_id`, at most 128 bytes, any secret in it redacted): every item of a batch shares the batch call's `request_id`, so a record is keyed by `request_id` and `item`. For a turn from the gateway's tee, also `dialect` (the wire format the call was made in, e.g. `anthropic`, `gemini_batch`) and `op` (`generate` or `batch`), and `history` (`full`, `server_side` or `prompt`: how much of the conversation the judged request carries) when the stage was read from the gateway's canonical conversation; absent `history` means `full` or unknown (a stage read from the raw body). All four are optional strings, omitted when empty; an engine that does not know them ignores them, and `v` stays `1`. |
+| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `model`, `path`. For one request of a batch, `item` is its id within the batch (its `custom_id`, at most 128 bytes, any secret in it redacted): every item of a batch shares the batch call's `request_id`, so a record is keyed by `request_id` and `item`. For a turn from the gateway's tee, also `dialect` (the wire format the call was made in, e.g. `anthropic`, `gemini_batch`) and `op` (`generate` or `batch`), and `history` (`full`, `server_side` or `prompt`: how much of the conversation the judged request carries) when the stage was read from the gateway's canonical conversation; absent `history` means `full` or unknown (a stage read from the raw body). The agent reads `history` case-insensitively and sends it in lower case; a value it does not know is sent as it is (lower-cased) and is read as not `full` (the goal is the new turn's own text). All four are optional strings, omitted when empty; an engine that does not know them ignores them, and `v` stays `1`. |
 | `turn.stage` | `request` or `response`. |
 | `turn.state` | The redacted new turn: `user_text`, `user_goal`, `harness_text`, `tool_results` (`[{tool, content}]`), `prior_tool_calls` (`[{name, input}]`), `response_text`, `response_tool_calls` (`[{name, input}]`). Omitted when empty. A request-stage turn has no `response_*` fields; a response-stage turn carries the request's `user_goal` and `tool_results` for context. |
 | `turn.refs` | Per-event ids that are not part of what a judge model reads, so a decision can point at an event: `tool_results` (`[{call_id, call_input}]`), `prior_tool_calls` and `response_tool_calls` (lists of call ids), matched to `state` by index. |

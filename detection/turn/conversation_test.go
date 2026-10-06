@@ -383,3 +383,14 @@ func TestConversationSecretsFromRawBody(t *testing.T) {
 		t.Errorf("document secret: %s", b)
 	}
 }
+
+// history is read case-insensitively: "FULL" is a whole conversation.
+func TestConversationHistoryCaseInsensitive(t *testing.T) {
+	results := msg("user", conv.ContentBlock{Type: conv.ContentToolResult, ToolUseID: "c1", Content: []conv.ContentBlock{text("42")}})
+	for _, h := range []string{"FULL", "Full"} {
+		s, _ := RequestStateFromConversation(conversation(h, msg("user", text("older ask")), msg("assistant", text("ok")), results))
+		if s.UserGoal != "older ask" {
+			t.Errorf("history %q: goal = %q", h, s.UserGoal)
+		}
+	}
+}

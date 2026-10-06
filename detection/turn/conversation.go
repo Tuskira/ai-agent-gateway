@@ -116,7 +116,7 @@ func extractConversation(r *reader, c *conv.Conversation) (s State, ok bool) {
 	// The goal: the latest human-typed text anywhere in the conversation,
 	// when the conversation is all there.
 	s.UserGoal = s.UserText
-	if c.History != conv.HistoryFull {
+	if strings.ToLower(c.History) != conv.HistoryFull { // history is case-insensitive
 		return s, true
 	}
 	for i := start - 1; s.UserGoal == "" && i >= 0 && r.ok(0); i-- {

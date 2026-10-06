@@ -94,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Detection agent:** the default `AGENT_ENGINE_TIMEOUT` is `8s` (was
+  `9s`), so the 1 s policy lookup and an inline judgment fit a gateway's
+  10 s wait with a second to spare. New `AGENT_LOG_LEVEL` (`debug`,
+  `info`, `warn`, `error`; default `info`); at `debug` the agent logs one
+  line per judged turn with its ids, stages, judgments returned and
+  dropped, bytes and prepare time, never its text.
 - The Overview, Token Monitoring, MCPs and Skills pages share one time
   filter: Last 24h / 7d / 30d as segmented buttons (instead of a dropdown)
   plus **custom dates** (a two-month calendar; whole UTC days, up to 366),
@@ -120,6 +126,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Detection agent robustness.** A panic while preparing a turn is
+  recovered in the background workers and on the inline path: logged at
+  `error` with its stack, the stage sent as `not_judged`, the process kept
+  running (before, one panic in a worker ended the agent). A queued turn's
+  bytes now count against `AGENT_QUEUE_BYTES` until its judgment is done,
+  not only until a worker picks it up. `history` is read case-insensitively
+  and sent to the engine in lower case.
 - **Detection agent: a deeply nested request no longer ties up a CPU past
   the prepare deadline.** Nested `tool_result` content was re-parsed and
   re-joined at every level before any deadline check, so the work grew with

@@ -1,0 +1,232 @@
+{
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Weather in Paris and Lyon?"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "city": "Paris"
+              }
+            }
+          },
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "city": "Lyon"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "functionResponse": {
+              "name": "get_weather",
+              "response": {
+                "output": "18 C"
+              }
+            }
+          },
+          {
+            "functionResponse": {
+              "name": "get_weather",
+              "response": {
+                "error": "station offline"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "name": "get_weather",
+            "description": "Get the weather.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "city": {
+                  "type": "STRING"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "toolConfig": {
+      "functionCallingConfig": {
+        "mode": "ANY",
+        "allowedFunctionNames": [
+          "get_weather"
+        ]
+      }
+    }
+  },
+  "response": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "get_weather",
+                "args": {
+                  "city": "Nice"
+                }
+              },
+              "thoughtSignature": "c2lnMg=="
+            }
+          ]
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 80,
+      "candidatesTokenCount": 15,
+      "toolUsePromptTokenCount": 5
+    },
+    "modelVersion": "gemini-2.5-flash",
+    "responseId": "resp-4"
+  },
+  "sse": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Checking.\"}]}}],\"modelVersion\":\"gemini-2.5-flash\",\"responseId\":\"resp-4\"}\n\ndata: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"Nice\"}}}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":80,\"candidatesTokenCount\":15},\"modelVersion\":\"gemini-2.5-flash\",\"responseId\":\"resp-4\"}\n\n",
+  "expect": {
+    "request": {
+      "model": "",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Weather in Paris and Lyon?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "gemini-call-0-get_weather",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            },
+            {
+              "type": "tool_use",
+              "id": "gemini-call-1-get_weather",
+              "name": "get_weather",
+              "input": {
+                "city": "Lyon"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "gemini-call-0-get_weather",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"output\":\"18 C\"}"
+                }
+              ]
+            },
+            {
+              "type": "tool_result",
+              "tool_use_id": "gemini-call-1-get_weather",
+              "is_error": true,
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"station offline\"}"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the weather.",
+          "input_schema": {
+            "type": "OBJECT",
+            "properties": {
+              "city": {
+                "type": "STRING"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ],
+      "tool_choice": {
+        "type": "tool",
+        "name": "get_weather"
+      }
+    },
+    "response": {
+      "id": "resp-4",
+      "model": "gemini-2.5-flash",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "gemini-call-0-get_weather",
+          "name": "get_weather",
+          "input": {
+            "city": "Nice"
+          },
+          "extra": {
+            "thoughtSignature": "c2lnMg=="
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 85,
+        "output_tokens": 15
+      }
+    },
+    "stream_text": "Checking.",
+    "stream_tool_calls": [
+      {
+        "id": "gemini-call-0-get_weather",
+        "name": "get_weather",
+        "input": {
+          "city": "Nice"
+        }
+      }
+    ],
+    "stream_stop_reason": "tool_use"
+  }
+}

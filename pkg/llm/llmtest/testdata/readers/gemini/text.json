@@ -1,0 +1,83 @@
+{
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Hello there"
+          }
+        ]
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 256
+    }
+  },
+  "response": {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "Hi! How can I help?"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 4,
+      "candidatesTokenCount": 7,
+      "totalTokenCount": 11,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 4
+        }
+      ]
+    },
+    "modelVersion": "gemini-2.5-flash",
+    "responseId": "resp-1"
+  },
+  "sse": "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Hi! \"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 4,\"totalTokenCount\": 4},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\": \"resp-1\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"How can I help?\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 4,\"candidatesTokenCount\": 7,\"totalTokenCount\": 11},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\": \"resp-1\"}\r\n\r\n",
+  "expect": {
+    "request": {
+      "model": "",
+      "max_tokens": 256,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hello there"
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "id": "resp-1",
+      "model": "gemini-2.5-flash",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hi! How can I help?"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 7
+      }
+    },
+    "stream_text": "Hi! How can I help?",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

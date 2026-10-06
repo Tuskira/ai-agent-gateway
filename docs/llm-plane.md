@@ -795,6 +795,22 @@ one key: `{"_gateway_invalid_arguments": "<raw text>"}` — never replaced by
 `{}`. The tool rejects that input, so the model sees its own mistake and can
 retry.
 
+#### Reading requests and responses
+
+`pkg/llm` can also *read* a call without translating it: an `llm.Reader`
+turns a client's request body, and the response body or SSE stream it got
+back, into the neutral request, response and stream events. Two ship:
+`anthropic` (Messages) and `openai_chat` (Chat Completions; its responses
+are read as the `openai_compat` provider reads them — the first choice only,
+unknown response fields not kept). Readers refuse what two parsers could
+read differently: a key repeated in an object, two keys differing only by
+case, an unknown message role, a malformed content part; a stream with such
+a frame ends with an error after the events before it, and a cut stream
+ends with `io.ErrUnexpectedEOF` after the events seen. Image and document
+payloads are kept whole (base64 included), so a reader's output is as large
+as the body it read. The LLM plane does not use readers yet; nothing about
+how calls are served changes.
+
 #### Refused, not dropped
 
 A field the vendor cannot carry is refused with `unsupported_by_route`

@@ -12,14 +12,16 @@ import (
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/internal/sse"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/internal/strictjson"
 )
 
-// Name is the registry name of both the Dialect and the Provider.
+// Name is the registry name of the Dialect, the Provider and the Reader.
 const Name = "anthropic"
 
 func init() {
 	llm.RegisterDialect(Dialect{})
 	llm.RegisterProvider(Provider{})
+	llm.RegisterReader(Dialect{})
 }
 
 // Dialect is a client speaking the Anthropic Messages API (/v1/messages).
@@ -38,6 +40,53 @@ func (Dialect) ParseRequest(r *http.Request) (*llm.Request, error) {
 		return nil, &llm.RequestError{Err: err}
 	}
 	return req, nil
+}
+
+// DecodeRequest reads an Anthropic Messages request body strictly (see
+// llm.Reader): it is ParseRequest's reading, after rejecting a repeated or
+// case-colliding key, and with every message role one of user, assistant
+// or system.
+func (Dialect) DecodeRequest(body []byte) (*llm.Request, error) {
+	if err := strictjson.Check(body); err != nil {
+		return nil, &llm.RequestError{Err: fmt.Errorf("invalid request body: %v", err)}
+	}
+	req, err := parseRequest(body)
+	if err != nil {
+		return nil, &llm.RequestError{Err: err}
+	}
+	for i, m := range req.Messages {
+		switch m.Role {
+		case "user", "assistant", "system":
+		default:
+			return nil, &llm.RequestError{Err: fmt.Errorf("messages.%d.role: unknown role %q", i, m.Role)}
+		}
+	}
+	return req, nil
+}
+
+// DecodeResponse reads an Anthropic Messages response body, the same wire
+// the Provider parses, strictly.
+func (Dialect) DecodeResponse(body []byte) (*llm.Response, error) {
+	if len(body) > llm.MaxBodyBytes {
+		return nil, llm.ErrFrameTooLarge
+	}
+	if err := strictjson.Check(body); err != nil {
+		return nil, fmt.Errorf("invalid response body: %v", err)
+	}
+	var w wireMessage
+	if err := json.Unmarshal(body, &w); err != nil || !bytes.HasPrefix(bytes.TrimSpace(body), []byte("{")) {
+		if err == nil {
+			err = errors.New("not a JSON object")
+		}
+		return nil, fmt.Errorf("invalid response body: %v", err)
+	}
+	return w.neutral()
+}
+
+// NewResponseDecoder reads Anthropic Messages SSE as the client received
+// it: the Provider's decoder over frames that passed the strict check.
+func (Dialect) NewResponseDecoder(r io.Reader) llm.StreamDecoder {
+	return Provider{}.NewStreamDecoder(sse.Checked(r, llm.MaxFrameBytes, llm.ErrFrameTooLarge, strictjson.Check))
 }
 
 // RenderResponse renders an Anthropic Messages response.

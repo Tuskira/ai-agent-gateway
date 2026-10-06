@@ -14,9 +14,14 @@
 // Provider that speaks the client's own wire can pass them through, and the
 // engine can refuse them for a Provider that cannot.
 //
+// A Reader reads a wire format into the same neutral types without serving
+// anyone: what a client sent and what it received, whatever the format, so
+// the gateway can look at every call the same way.
+//
 // Two adapters ship in this module and register themselves from an init():
-// pkg/llm/anthropic (Dialect "anthropic" and Provider "anthropic") and
-// pkg/llm/openaicompat (Provider "openai_compat"). A binary blank-imports
+// pkg/llm/anthropic (Dialect, Provider and Reader "anthropic") and
+// pkg/llm/openaicompat (Provider "openai_compat", Reader "openai_chat"). A
+// binary blank-imports
 // the adapters it wants, exactly as cmd/gateway does. A new vendor is one
 // package that implements Provider, registers it, and passes
 // pkg/llm/llmtest -- see CONTRIBUTING.md, "Adding an LLM provider adapter".

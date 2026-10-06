@@ -1,0 +1,101 @@
+{
+  "request": {
+    "model": "gpt-4o",
+    "temperature": 0.2,
+    "stop": "END",
+    "max_completion_tokens": 100,
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is 2+2?"
+      },
+      {
+        "role": "assistant",
+        "content": "4."
+      },
+      {
+        "role": "user",
+        "content": "And times 3?"
+      }
+    ]
+  },
+  "response": {
+    "id": "chatcmpl-2",
+    "object": "chat.completion",
+    "model": "gpt-4o",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "12"
+        },
+        "finish_reason": "length"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 30,
+      "completion_tokens": 2,
+      "prompt_tokens_details": {
+        "cached_tokens": 20
+      }
+    }
+  },
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "gpt-4o",
+      "max_tokens": 100,
+      "temperature": 0.2,
+      "stop_sequences": [
+        "END"
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What is 2+2?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "4."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "And times 3?"
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "id": "chatcmpl-2",
+      "model": "gpt-4o",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "12"
+        }
+      ],
+      "stop_reason": "max_tokens",
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 2,
+        "cache_read_tokens": 20
+      }
+    }
+  }
+}

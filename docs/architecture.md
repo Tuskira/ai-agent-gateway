@@ -110,7 +110,7 @@ implementations:
 | Connector/cache/profile ops | `pkg/ops.ConnectorOps` / `CacheOps` / `ProfileOps` | `internal/dataplane`'s `opsAdapter` | API plane's health/discover/cache routes and profile-cache invalidation |
 | Analytics read | `pkg/analytics.Reader` / `LLMCallReader` | `pkg/sink/clickhouse.Sink`; `pkg/sink/postgres.Sink` (`LLMCallReader` only) | `GET /api/v1/analytics/*`; LLM Logs without ClickHouse |
 | Body offload | `pkg/sink.BodyStore` | `pkg/sink/bodystore/{fs,s3}` | LLM capture (`llm_proxy.capture.body_store`), LLM-log detail |
-| LLM translation | `pkg/llm.Dialect` / `Provider` (registry) | `pkg/llm/anthropic`, `pkg/llm/openaicompat` | model-registry targets in another wire format |
+| LLM translation | `pkg/llm.Dialect` / `Provider` / `Reader` (registry) | `pkg/llm/anthropic`, `pkg/llm/openaicompat` | model-registry targets in another wire format |
 | Ingest | `pkg/sink.IngestSink` | `pkg/sink/clickhouse.Sink` | `POST /api/v1/ingest` |
 
 The LLM plane's detection tee (`llm_proxy.detection`) is not a
@@ -129,6 +129,20 @@ Likewise a session backend implements `pkg/session.Store` (and
 `pkg/session.Notifier` if it can carry a broadcast), passes
 `pkg/session/sessiontest`, and is selected with `sessions.store: <name>`.
 See [CONTRIBUTING.md](https://github.com/Tuskira/ai-agent-gateway/blob/main/CONTRIBUTING.md) for the concrete steps.
+
+The LLM translation seam also has a read-only side: an `llm.Reader` reads
+one wire format into the neutral types — the request a client sent
+(`DecodeRequest`) and the answer it received, whole (`DecodeResponse`) or
+streamed (`NewResponseDecoder`) — without serving anyone. Readers register
+by wire-format name (`llm.RegisterReader`, `llm.ReaderByName`): `anthropic`
+(the Anthropic Messages dialect) and `openai_chat` (OpenAI Chat
+Completions, in `pkg/llm/openaicompat`). They are strict where two parsers
+could disagree (a repeated key, two keys differing only by case, an unknown
+role), so what is read is what the vendor executes. Nothing in the planes
+calls them yet; they are the building block for looking at every LLM call
+as one neutral conversation whatever format it was made in (for example to
+hand a detection step the same input for every provider). A new format's
+Reader passes `pkg/llm/llmtest.RunReader`.
 
 The session seam is what lets the MCP plane scale out. `internal/
 dataplane/session.Manager` keeps the session logic — minting the id,

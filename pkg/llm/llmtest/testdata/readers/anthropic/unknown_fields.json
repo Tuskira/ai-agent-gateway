@@ -1,0 +1,125 @@
+{
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 10,
+    "container": "ctr_1",
+    "service_tier": "auto",
+    "metadata": {
+      "user_id": "u-1"
+    },
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "hi",
+            "citations": null
+          },
+          {
+            "type": "search_result",
+            "source": "https://example.com",
+            "title": "T",
+            "content": [
+              {
+                "type": "text",
+                "text": "found"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "response": {
+    "id": "msg_04",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-5",
+    "container": null,
+    "content": [
+      {
+        "type": "text",
+        "text": "ok",
+        "citations": [
+          {
+            "type": "char_location",
+            "cited_text": "x"
+          }
+        ]
+      }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 3,
+      "output_tokens": 1
+    }
+  },
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 10,
+      "metadata": {
+        "user_id": "u-1"
+      },
+      "extra": {
+        "container": "ctr_1",
+        "service_tier": "auto"
+      },
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi",
+              "extra": {
+                "citations": null
+              }
+            },
+            {
+              "type": "search_result",
+              "raw": {
+                "type": "search_result",
+                "source": "https://example.com",
+                "title": "T",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "found"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "id": "msg_04",
+      "model": "claude-sonnet-4-5",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "ok",
+          "extra": {
+            "citations": [
+              {
+                "type": "char_location",
+                "cited_text": "x"
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1
+      }
+    }
+  }
+}

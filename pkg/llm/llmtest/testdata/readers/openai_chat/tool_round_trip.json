@@ -1,0 +1,218 @@
+{
+  "request": {
+    "model": "gpt-4o",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Weather in Paris and Lyon?"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_A",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            }
+          },
+          {
+            "id": "call_B",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Lyon\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_A",
+        "content": "18 C"
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_B",
+        "content": [
+          {
+            "type": "text",
+            "text": "21 C"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the weather.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          },
+          "strict": true
+        }
+      }
+    ],
+    "tool_choice": "required",
+    "parallel_tool_calls": false
+  },
+  "response": {
+    "id": "chatcmpl-3",
+    "object": "chat.completion",
+    "model": "gpt-4o",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_C",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Nice\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 80,
+      "completion_tokens": 15
+    }
+  },
+  "sse": "data: {\"id\":\"chatcmpl-3\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"index\":0,\"id\":\"call_C\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-3\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-3\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"Nice\\\"}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-3\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: {\"id\":\"chatcmpl-3\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":80,\"completion_tokens\":15,\"total_tokens\":95}}\n\ndata: [DONE]\n\n",
+  "expect": {
+    "request": {
+      "model": "gpt-4o",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Weather in Paris and Lyon?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "call_A",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            },
+            {
+              "type": "tool_use",
+              "id": "call_B",
+              "name": "get_weather",
+              "input": {
+                "city": "Lyon"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "call_A",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "18 C"
+                }
+              ]
+            },
+            {
+              "type": "tool_result",
+              "tool_use_id": "call_B",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "21 C"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the weather.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          },
+          "extra": {
+            "strict": true
+          }
+        }
+      ],
+      "tool_choice": {
+        "type": "any",
+        "disable_parallel_tool_use": true
+      }
+    },
+    "response": {
+      "id": "chatcmpl-3",
+      "model": "gpt-4o",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_C",
+          "name": "get_weather",
+          "input": {
+            "city": "Nice"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 80,
+        "output_tokens": 15
+      }
+    },
+    "stream_text": "",
+    "stream_tool_calls": [
+      {
+        "id": "call_C",
+        "name": "get_weather",
+        "input": {
+          "city": "Nice"
+        }
+      }
+    ],
+    "stream_stop_reason": "tool_use"
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 300,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/png",
+              "data": "iVBORw0KGgo="
+            }
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "url",
+              "url": "https://example.com/cat.png"
+            }
+          },
+          {
+            "type": "document",
+            "source": {
+              "type": "base64",
+              "media_type": "application/pdf",
+              "data": "JVBERi0xLjQ="
+            },
+            "title": "Report"
+          },
+          {
+            "type": "document",
+            "source": {
+              "type": "text",
+              "media_type": "text/plain",
+              "data": "Plain notes."
+            }
+          },
+          {
+            "type": "text",
+            "text": "Describe these."
+          }
+        ]
+      }
+    ]
+  },
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 300,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgo="
+              }
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://example.com/cat.png"
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "JVBERi0xLjQ="
+              },
+              "extra": {
+                "title": "Report"
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "text",
+                "media_type": "text/plain",
+                "data": "Plain notes."
+              }
+            },
+            {
+              "type": "text",
+              "text": "Describe these."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

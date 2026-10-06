@@ -305,7 +305,11 @@ format (Gemini's native API, Bedrock Converse, …):
    and blank-import the package from `cmd/gateway/main.go` next to
    `pkg/llm/openaicompat`. A new client format is the same with
    `llm.Dialect` / `llm.RegisterDialect` (and wire samples under
-   `pkg/llm/llmtest/testdata/<name>/`).
+   `pkg/llm/llmtest/testdata/<name>/`). To make a format readable (its
+   requests and responses decoded into the neutral types), implement
+   `llm.Reader`, register it with `llm.RegisterReader`, and pass
+   `llmtest.RunReader` with goldens under
+   `pkg/llm/llmtest/testdata/readers/<name>/`.
 3. Pass the conformance suite against the **real** vendor, skipping when no
    endpoint is configured (this repository does not fake vendors):
 

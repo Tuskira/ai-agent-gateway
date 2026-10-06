@@ -1,0 +1,69 @@
+{
+  "request": {
+    "model": "gpt-4o",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are terse."
+      },
+      {
+        "role": "developer",
+        "content": [
+          {
+            "type": "text",
+            "text": "Answer in English."
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": "Hi"
+      },
+      {
+        "role": "system",
+        "content": "Late rule.",
+        "name": "ops"
+      }
+    ]
+  },
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "gpt-4o",
+      "system": [
+        {
+          "type": "text",
+          "text": "You are terse."
+        },
+        {
+          "type": "text",
+          "text": "Answer in English."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hi"
+            }
+          ]
+        },
+        {
+          "role": "system",
+          "content": [
+            {
+              "type": "text",
+              "text": "Late rule.",
+              "extra": {
+                "name": "ops"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

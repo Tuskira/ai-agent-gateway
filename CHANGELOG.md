@@ -231,6 +231,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pkg/llm` readers:** a new optional `llm.Reader` interface
+  (`DecodeRequest`, `DecodeResponse`, `NewResponseDecoder`) reads what a
+  client sent and what it received into the neutral types, with a registry
+  (`llm.RegisterReader`, `llm.ReaderByName`). Two ship: `anthropic`
+  (Messages) and `openai_chat` (OpenAI Chat Completions requests, the
+  inverse of the `openai_compat` provider's). Readers are strict: a repeated
+  key, two keys differing only by case, or an unknown role is refused. A
+  `llmtest.RunReader` conformance suite runs them against golden files. No
+  plane uses readers yet; serving behaviour is unchanged.
 - **Token Monitoring** console page (`/token-monitoring`): token usage and
   cost by model, by caller (API key, with its role: agent, admin,
   interceptor or other) and by role, for the last 24h / 7d / 30d or custom

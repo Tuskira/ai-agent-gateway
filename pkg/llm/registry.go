@@ -77,6 +77,39 @@ type StreamDecoder interface {
 	Next() (Event, error)
 }
 
+// Reader reads one wire format into the neutral types: what a client sent
+// and what it received, as opposed to a Dialect (which serves the client)
+// and a Provider (which calls the vendor). It is how the gateway looks at a
+// call in any format the same way, whoever served it. A Dialect may also be
+// a Reader; a format no client is served in yet ("openai_chat") can be a
+// Reader alone. It must be safe for concurrent use.
+//
+// A Reader must be strict where two parsers could disagree, so a body can
+// never be judged on one field and executed on another: it rejects a body
+// whose objects repeat a key (or hold two keys that differ only by case,
+// which Go's struct decoding would merge), reads field names exactly, and
+// refuses what it cannot place (an unknown role, a malformed part) instead
+// of skipping it. What it can place but has no neutral slot for goes to
+// Extra or Raw, as for a Dialect.
+type Reader interface {
+	// Name is the registry name, the wire format's ("anthropic").
+	Name() string
+	// DecodeRequest reads a client request body. A malformed or ambiguous
+	// body is a *RequestError. The body is not capped here: the caller
+	// bounds it.
+	DecodeRequest(body []byte) (*Request, error)
+	// DecodeResponse reads a complete (non-stream) successful response body
+	// as the client received it; a body over MaxBodyBytes is
+	// ErrFrameTooLarge.
+	DecodeResponse(body []byte) (*Response, error)
+	// NewResponseDecoder reads a streamed response as the client received
+	// it, under the StreamDecoder contract: the events seen so far, then
+	// io.EOF after message_stop, or io.ErrUnexpectedEOF when the stream
+	// was cut before the model finished. An ambiguous frame ends the
+	// stream with an error.
+	NewResponseDecoder(r io.Reader) StreamDecoder
+}
+
 // TokenEstimator is implemented by a Provider that can estimate a request's
 // input tokens (for a client's token-count endpoint) better than
 // EstimateTokens.
@@ -116,6 +149,7 @@ var (
 	registryMu sync.RWMutex
 	dialects   = map[string]Dialect{}
 	providers  = map[string]Provider{}
+	readers    = map[string]Reader{}
 )
 
 // RegisterDialect makes d available under d.Name(). It panics on a nil
@@ -146,6 +180,20 @@ func RegisterProvider(p Provider) {
 	providers[p.Name()] = p
 }
 
+// RegisterReader makes r available under r.Name(). It panics on a nil
+// Reader or a duplicate name.
+func RegisterReader(r Reader) {
+	if r == nil {
+		panic("llm: RegisterReader called with a nil Reader")
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if _, dup := readers[r.Name()]; dup {
+		panic("llm: RegisterReader called twice for " + r.Name())
+	}
+	readers[r.Name()] = r
+}
+
 // DialectByName returns the Dialect registered under name.
 func DialectByName(name string) (Dialect, error) {
 	registryMu.RLock()
@@ -164,6 +212,16 @@ func ProviderByName(name string) (Provider, error) {
 		return p, nil
 	}
 	return nil, fmt.Errorf("llm: unknown provider %q (registered: %s; missing blank import?)", name, names(providers))
+}
+
+// ReaderByName returns the Reader registered under name.
+func ReaderByName(name string) (Reader, error) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	if r, ok := readers[name]; ok {
+		return r, nil
+	}
+	return nil, fmt.Errorf("llm: unknown reader %q (registered: %s; missing blank import?)", name, names(readers))
 }
 
 func names[V any](m map[string]V) string {

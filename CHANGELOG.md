@@ -273,6 +273,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Kubernetes example for the detection agent.**
+  `deploy/k8s/components/detection-agent` (a kustomize Component) adds the
+  agent as a sidecar of `gateway-llm` on `127.0.0.1:8090`, with the engine
+  URL and token from a Secret, and points the gateway's tee at it
+  (`GATEWAY_LLM_PROXY_DETECTION_AGENT_URL`); `overlays/detection-agent` is
+  the base plus it. See `docs/detection-agent.md`, "Kubernetes sidecar".
 - **`pkg/llm` readers:** a new optional `llm.Reader` interface
   (`DecodeRequest`, `DecodeResponse`, `NewResponseDecoder`) reads what a
   client sent and what it received into the neutral types, with a registry

@@ -1,0 +1,33 @@
+# EXAMPLE: the detection agent as a sidecar of gateway-llm, packaged as a
+# kustomize Component so it can be added to any overlay
+# (overlays/detection-agent = base + this). See docs/detection-agent.md,
+# "Kubernetes sidecar".
+#
+# What it adds:
+#   - secret-detection-agent.yaml: a template Secret with the engine's URL
+#     and bearer token (placeholders; fill them in or create the Secret
+#     another way, as base/secret.yaml says).
+#   - gateway-llm-detection-agent-patch.yaml: the agent container next to
+#     the gateway in every gateway-llm pod, listening on 127.0.0.1:8090
+#     (pod-local: the agent's port has no authentication), and
+#     GATEWAY_LLM_PROXY_DETECTION_AGENT_URL=http://127.0.0.1:8090 on the
+#     gateway container so its tee posts each completed call there.
+#
+# Egress: the agent shares the pod's network, so base/networkpolicy.yaml
+# applies to it. Its 443-to-public-addresses rule covers an engine with a
+# public https URL. An engine inside the cluster or on a private address
+# needs its own egress rule (a JSON patch that appends to the egress list,
+# as components/redis does).
+#
+# The image tag is a placeholder: the agent is versioned on its own
+# (detection/vX.Y.Z tags publish
+# ghcr.io/tuskira/ai-agent-gateway-detection-agent:X.Y.Z). Set it with an
+# images: entry in your overlay.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - secret-detection-agent.yaml
+
+patches:
+  - path: gateway-llm-detection-agent-patch.yaml

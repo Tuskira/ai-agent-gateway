@@ -1,0 +1,56 @@
+# Adds the detection agent container to gateway-llm and points the
+# gateway's detection tee at it. Strategic-merge patch: containers merge by
+# name, and the gateway container's env entries merge by name too.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-llm
+  namespace: ai-gateway
+spec:
+  template:
+    spec:
+      containers:
+        - name: gateway
+          env:
+            - name: GATEWAY_LLM_PROXY_DETECTION_AGENT_URL
+              value: "http://127.0.0.1:8090"
+        - name: detection-agent
+          image: ghcr.io/tuskira/ai-agent-gateway-detection-agent:REPLACE_ME # set with an images: entry in your overlay
+          imagePullPolicy: IfNotPresent
+          env:
+            # Loopback only: the gateway in the same pod reaches it there,
+            # nothing outside the pod can.
+            - name: AGENT_LISTEN
+              value: "127.0.0.1:8090"
+            - name: AGENT_LOG_LEVEL
+              value: "info"
+            - name: DETECTION_ENGINE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: detection-agent
+                  key: DETECTION_ENGINE_URL
+            - name: DETECTION_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: detection-agent
+                  key: DETECTION_AGENT_TOKEN
+          # No probes: the agent listens on loopback only, which kubelet
+          # probes cannot reach, and the gateway drops what the agent does
+          # not take (a down agent never affects a call). Its own
+          # GET /healthz is for a check from inside the pod.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              # The agent queues up to AGENT_QUEUE_BYTES (256 MiB by
+              # default) of raw turns; keep the limit above that, or lower
+              # AGENT_QUEUE_BYTES with it.
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

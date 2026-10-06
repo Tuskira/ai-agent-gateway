@@ -278,6 +278,38 @@ llm_proxy:
     agent_url: http://127.0.0.1:8090
 ```
 
+### Kubernetes sidecar
+
+`deploy/k8s/components/detection-agent` is an **example** kustomize
+Component that runs the agent as a second container in every `gateway-llm`
+pod. It:
+
+- adds the `detection-agent` container with `AGENT_LISTEN=127.0.0.1:8090`
+  (pod-local, since the agent's port has no authentication) and
+  `DETECTION_ENGINE_URL` / `DETECTION_AGENT_TOKEN` from the Secret
+  `detection-agent` (a template with placeholders, like
+  `base/secret.yaml`);
+- sets `GATEWAY_LLM_PROXY_DETECTION_AGENT_URL=http://127.0.0.1:8090` on the
+  gateway container, so its tee posts each completed call to the agent in
+  the same pod.
+
+`deploy/k8s/overlays/detection-agent` is the base plus this component; add
+`../../components/detection-agent` under `components:` of any other
+overlay to combine it with Redis or analytics. Before applying it, fill in
+the Secret and set the agent's image tag with an `images:` entry (the
+component's tag is a placeholder; the agent is versioned on its own, see
+above):
+
+```sh
+kubectl kustomize deploy/k8s/overlays/detection-agent   # inspect
+```
+
+The agent has no probes (kubelet cannot reach a loopback port, and a down
+agent never affects a call). It shares the pod's network, so the base
+NetworkPolicy applies to it: its rule for port 443 to public addresses
+covers an engine with a public `https` URL; an engine inside the cluster or
+on a private address needs an egress rule of its own.
+
 ### Configuration
 
 All configuration is environment variables. A value that does not parse, or

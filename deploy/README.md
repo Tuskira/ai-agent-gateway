@@ -36,6 +36,13 @@ deploy/k8s/
                        overlay
   overlays/redis/      base + components/redis (production shape)
   overlays/kind-redis/ overlays/kind + components/redis (local testing)
+  components/detection-agent/
+                       EXAMPLE kustomize Component: the detection agent as
+                       a sidecar of gateway-llm on 127.0.0.1:8090, engine
+                       URL and token from a Secret, the gateway's tee
+                       pointed at it (see docs/detection-agent.md)
+  overlays/detection-agent/
+                       base + components/detection-agent (example)
   overlays/eks/        base + components/redis on EKS behind an internal
                        ALB; Namespace and Secret owned by IaC, env-specific
                        values filled in at deploy time (see its README.md)

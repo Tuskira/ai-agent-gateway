@@ -24,9 +24,11 @@ export function DataTableEmpty({
       <TableRow className="hover:bg-transparent">
         <TableCell
           colSpan={columnCount}
-          className={cn('whitespace-normal', fill ? 'h-full' : 'h-48')}
+          className={cn('p-0 whitespace-normal', fill ? 'h-full' : 'h-48')}
         >
-          <div className="flex flex-col items-center justify-center gap-1.5 text-center">
+          {/* Centred in the visible part of a table wider than its region,
+              not across the full scrollable width. */}
+          <div className="sticky left-0 flex w-[100cqw] flex-col items-center justify-center gap-1.5 px-2 text-center">
             <Inbox className="size-5 text-text-subtle" aria-hidden="true" />
             <span className="text-sm font-medium text-foreground">{title}</span>
             {description ? (

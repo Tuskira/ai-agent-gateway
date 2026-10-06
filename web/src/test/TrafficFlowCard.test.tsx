@@ -70,7 +70,7 @@ function renderCard(props: Partial<React.ComponentProps<typeof TrafficFlowCard>>
             <>
               <TrafficFlowCard
                 data={SAMPLE}
-                range="24h"
+                period={{ range: '24h' }}
                 clientName=""
                 onClientNameChange={() => {}}
                 {...props}
@@ -106,8 +106,13 @@ describe('TrafficFlowCard', () => {
   })
 
   it('reflects the page range in the subtitle', () => {
-    renderCard({ range: '7d' })
+    renderCard({ period: { range: '7d' } })
     expect(screen.getByText('who called what · last 7d')).toBeInTheDocument()
+  })
+
+  it('names custom dates in the subtitle', () => {
+    renderCard({ period: { range: 'custom', from: '2026-01-01', to: '2026-01-03' } })
+    expect(screen.getByText('who called what · Jan 1 – Jan 3, 2026')).toBeInTheDocument()
   })
 
   it('calls onClientNameChange when an agent is picked from the select', () => {

@@ -36,6 +36,18 @@ describe('Sidebar', () => {
     }
   })
 
+  it('links Token Monitoring under Dashboards, below Overview, for every signed-in role', async () => {
+    stubApi({ 'GET /auth/me': () => jsonResponse(SESSION_VIEWER) })
+    renderSidebar(<Sidebar />)
+
+    const link = await screen.findByRole('link', { name: 'Token Monitoring' })
+    expect(link).toHaveAttribute('href', '/token-monitoring')
+    expect(link.querySelector('svg.lucide-coins')).not.toBeNull()
+    expect(screen.getByText('Dashboards')).toBeInTheDocument()
+    const dashboards = navGroups.find((g) => g.label === 'Dashboards')
+    expect(dashboards?.items.map((i) => i.path)).toEqual(['/', '/token-monitoring'])
+  })
+
   it('hides Users from a viewer', async () => {
     stubApi({ 'GET /auth/me': () => jsonResponse(SESSION_VIEWER) })
     renderSidebar(<Sidebar />)

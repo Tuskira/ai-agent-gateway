@@ -1,6 +1,4 @@
-import { Calendar } from 'lucide-react'
 import { StatusPill } from '@/components/app/StatusPill'
-import { TIME_RANGES, type TimeRange } from '@/lib/overview'
 import {
   LIFECYCLE_STATES,
   lifecycleLabel,
@@ -20,33 +18,6 @@ export function LifecyclePill({ state }: { state: LifecycleState }) {
       title={lifecycleTitle(state)}
       outline={lifecycleOutline(state)}
     />
-  )
-}
-
-/** Time-range picker, styled like the Overview page's. */
-export function RangeSelect({
-  value,
-  onChange,
-}: {
-  value: TimeRange
-  onChange: (range: TimeRange) => void
-}) {
-  return (
-    <label className="flex h-9 items-center gap-2 rounded-r-4 border border-border bg-card py-0 pr-1 pl-2.5 text-text-subtle transition-colors hover:border-border-strong">
-      <Calendar className="size-[15px]" aria-hidden="true" />
-      <select
-        aria-label="Time range"
-        value={value}
-        onChange={(e) => onChange(e.target.value as TimeRange)}
-        className="h-8 cursor-pointer border-0 bg-transparent text-[13px] font-medium text-foreground outline-none"
-      >
-        {TIME_RANGES.map((r) => (
-          <option key={r.value} value={r.value}>
-            {r.label}
-          </option>
-        ))}
-      </select>
-    </label>
   )
 }
 

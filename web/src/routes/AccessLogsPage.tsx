@@ -7,7 +7,7 @@ import {
   type AccessLogFilters,
   type AccessLogItem,
 } from '@/lib/logs'
-import { LOG_PAGE_SIZES, paginationFromParams, withPagination } from '@/lib/pagination'
+import { paginationFromParams, withPagination } from '@/lib/pagination'
 import { quickRangeToWindow, type QuickRange } from '@/lib/timeRange'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { RelativeTime } from '@/components/app/RelativeTime'
@@ -256,7 +256,6 @@ export default function AccessLogsPage() {
         pagination={pagination}
         onPaginationChange={handlePaginationChange}
         totalRows={total}
-        pageSizeOptions={LOG_PAGE_SIZES}
         skeletonRows={6}
       />
 

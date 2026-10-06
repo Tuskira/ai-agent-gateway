@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { AuthProvider } from '@/auth/AuthContext'
@@ -191,13 +192,13 @@ function installFetchMock({
   )
 }
 
-function renderOverviewPage() {
+function renderOverviewPage(path = '/') {
   sessionStorage.setItem(API_KEY_STORAGE_KEY, 'gk_test_session_key')
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <MemoryRouter initialEntries={['/']}>
+        <MemoryRouter initialEntries={[path]}>
           <OverviewPage />
         </MemoryRouter>
       </AuthProvider>
@@ -212,6 +213,50 @@ describe('OverviewPage', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('switches the time range with segmented buttons and refetches for it', async () => {
+    const user = userEvent.setup()
+    installFetchMock({})
+    renderOverviewPage()
+    const range = await screen.findByRole('group', { name: 'Time range' })
+    expect(within(range).getByRole('button', { name: 'Last 24h' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await user.click(within(range).getByRole('button', { name: 'Last 7d' }))
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([u]) => String(u).includes('/analytics/overview?range=7d')),
+      ).toBe(true),
+    )
+    expect(within(range).getByRole('button', { name: 'Last 7d' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  })
+
+  it('reads custom dates from the URL for the metrics and the traffic flow', async () => {
+    installFetchMock({ metrics: METRICS })
+    renderOverviewPage('/?from=2026-01-01&to=2026-01-03')
+    expect((await screen.findAllByText('vs previous period')).length).toBeGreaterThan(0)
+    const urls = vi.mocked(fetch).mock.calls.map(([u]) => String(u))
+    expect(urls).toContain('/api/v1/analytics/overview?from=2026-01-01&to=2026-01-03')
+    expect(
+      urls.some((u) =>
+        u.includes('/analytics/traffic-flow?from=2026-01-01&to=2026-01-03&metric=calls'),
+      ),
+    ).toBe(true)
+    expect(screen.getByRole('button', { name: /custom dates/i })).toHaveTextContent(
+      'Jan 1 – Jan 3, 2026',
+    )
+    // Total Tokens opens Token Monitoring for the same period.
+    expect(screen.getByRole('link', { name: 'View token monitoring' })).toHaveAttribute(
+      'href',
+      '/token-monitoring?from=2026-01-01&to=2026-01-03',
+    )
   })
 
   it('renders every KPI and card title, and the empty caption, when metrics is null', async () => {

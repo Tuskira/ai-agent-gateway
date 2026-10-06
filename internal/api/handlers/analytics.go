@@ -30,7 +30,8 @@ const analyticsUnavailableMessage = "analytics requires the ClickHouse sink"
 // (see llmCalls).
 type Analytics struct{ Deps }
 
-// Overview handles GET /api/v1/analytics/overview?range=24h|7d|30d.
+// Overview handles GET /api/v1/analytics/overview?range=24h|7d|30d, or
+// ?from=YYYY-MM-DD&to=YYYY-MM-DD for custom dates.
 func (h Analytics) Overview(w http.ResponseWriter, r *http.Request) {
 	if h.Analytics == nil {
 		httpx.NotFound(w, analyticsUnavailableMessage)
@@ -41,21 +42,17 @@ func (h Analytics) Overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw := r.URL.Query().Get("range")
-	if raw == "" {
-		raw = "24h"
-	}
-	rng, ok := analytics.ParseRange(raw)
+	rng, p, ok := parsePeriod(w, r, analytics.Range24h)
 	if !ok {
-		httpx.ValidationError(w, `range must be one of "24h", "7d", "30d"`)
 		return
 	}
 
-	ov, err := h.Analytics.Overview(r.Context(), tid, rng)
+	ov, err := h.Analytics.Overview(r.Context(), tid, p)
 	if err != nil {
 		writeAnalyticsErr(w, r, "compute analytics overview", err)
 		return
 	}
+	ov.Range = rng
 	h.resolveConnectorNames(r, tid, ov.TopConnectors)
 
 	// Every cost figure in this response comes from pkg/pricing's rate
@@ -146,21 +143,17 @@ func (h Analytics) Skills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw := r.URL.Query().Get("range")
-	if raw == "" {
-		raw = "7d"
-	}
-	rng, ok := analytics.ParseRange(raw)
+	rng, p, ok := parsePeriod(w, r, analytics.Range7d)
 	if !ok {
-		httpx.ValidationError(w, `range must be one of "24h", "7d", "30d"`)
 		return
 	}
 
-	summary, err := h.Analytics.SkillsSummary(r.Context(), tid, rng)
+	summary, err := h.Analytics.SkillsSummary(r.Context(), tid, p)
 	if err != nil {
 		writeAnalyticsErr(w, r, "compute skills summary", err)
 		return
 	}
+	summary.Range = rng
 	h.resolveSkillKinds(r, tid, summary)
 	httpx.WriteJSON(w, http.StatusOK, summary)
 }
@@ -207,11 +200,11 @@ func (h Analytics) SkillsUsage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rng, ok := parseRange7d(w, r)
+	rng, p, ok := parsePeriod(w, r, analytics.Range7d)
 	if !ok {
 		return
 	}
-	usage, err := h.Analytics.SkillUsage(r.Context(), tid, rng)
+	usage, err := h.Analytics.SkillUsage(r.Context(), tid, p)
 	if err != nil {
 		writeAnalyticsErr(w, r, "compute skill usage", err)
 		return
@@ -254,11 +247,11 @@ func (h Analytics) MCPsUsage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rng, ok := parseRange7d(w, r)
+	rng, p, ok := parsePeriod(w, r, analytics.Range7d)
 	if !ok {
 		return
 	}
-	usage, err := h.Analytics.MCPToolUsage(r.Context(), tid, rng)
+	usage, err := h.Analytics.MCPToolUsage(r.Context(), tid, p)
 	if err != nil {
 		writeAnalyticsErr(w, r, "compute mcp usage", err)
 		return
@@ -274,7 +267,7 @@ func (h Analytics) MCPsUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	var serverCalls []analytics.MCPServerCalls
 	if len(usage) > 0 {
-		serverCalls, err = h.Analytics.MCPServerCalls(r.Context(), tid, rng, slugs)
+		serverCalls, err = h.Analytics.MCPServerCalls(r.Context(), tid, p, slugs)
 		if err != nil {
 			writeAnalyticsErr(w, r, "compute mcp server calls", err)
 			return
@@ -356,18 +349,28 @@ func foldMCPUsage(usage []analytics.MCPToolUsage, serverCalls []analytics.MCPSer
 	return out
 }
 
-// parseRange7d reads ?range= (default 7d), writing a 400 on a bad value.
-func parseRange7d(w http.ResponseWriter, r *http.Request) (analytics.Range, bool) {
-	raw := r.URL.Query().Get("range")
-	if raw == "" {
-		raw = "7d"
+// parsePeriod reads a dashboard window: ?from=&to= (YYYY-MM-DD, whole UTC
+// days, labeled RangeCustom) when either is set, else ?range= (default
+// def). It writes a 400 on a bad value.
+func parsePeriod(w http.ResponseWriter, r *http.Request, def analytics.Range) (analytics.Range, analytics.Period, bool) {
+	q := r.URL.Query()
+	if q.Has("from") || q.Has("to") {
+		p, err := analytics.ParseDateRange(q.Get("from"), q.Get("to"), time.Now())
+		if err != nil {
+			httpx.ValidationError(w, err.Error())
+			return "", analytics.Period{}, false
+		}
+		return analytics.RangeCustom, p, true
 	}
-	rng, ok := analytics.ParseRange(raw)
-	if !ok {
-		httpx.ValidationError(w, `range must be one of "24h", "7d", "30d"`)
-		return "", false
+	rng := def
+	if raw := q.Get("range"); raw != "" {
+		var ok bool
+		if rng, ok = analytics.ParseRange(raw); !ok {
+			httpx.ValidationError(w, `range must be one of "24h", "7d", "30d"`)
+			return "", analytics.Period{}, false
+		}
 	}
-	return rng, true
+	return rng, rng.Period(time.Now()), true
 }
 
 // ClientModelSankey handles GET
@@ -460,13 +463,8 @@ func (h Analytics) resolveFlowConnectorLabels(r *http.Request, tenantID string, 
 func parseSankeyQuery(w http.ResponseWriter, r *http.Request) (analytics.SankeyQuery, bool) {
 	q := r.URL.Query()
 
-	rawRange := q.Get("range")
-	if rawRange == "" {
-		rawRange = "7d"
-	}
-	rng, ok := analytics.ParseRange(rawRange)
+	rng, period, ok := parsePeriod(w, r, analytics.Range7d)
 	if !ok {
-		httpx.ValidationError(w, `range must be one of "24h", "7d", "30d"`)
 		return analytics.SankeyQuery{}, false
 	}
 
@@ -492,6 +490,7 @@ func parseSankeyQuery(w http.ResponseWriter, r *http.Request) (analytics.SankeyQ
 
 	return analytics.SankeyQuery{
 		Range:      rng,
+		Period:     period,
 		Metric:     metric,
 		Limit:      limit,
 		ClientName: q.Get("client_name"),

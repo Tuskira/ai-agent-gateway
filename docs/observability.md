@@ -81,11 +81,11 @@ postgres`, the default), with the same pagination, tenant scoping and
 filters except `source`/`user` (those describe ingested rows, which only
 ClickHouse stores). With ClickHouse enabled, ClickHouse still serves them. Every other
 analytics route (overview, models, skills, client-models, MCP access logs,
-session timeline) still needs ClickHouse.
+session timeline, token monitoring) still needs ClickHouse.
 
 | Route | Returns |
 |---|---|
-| `GET /analytics/overview?range=24h\|7d\|30d` | KPI tiles, per-model usage, traffic split, top connectors (MCP servers registered with the gateway; the console's **MCPs** page), tools and profiles, latency, status-code breakdown — everything the Overview dashboard renders. |
+| `GET /analytics/overview?range=24h\|7d\|30d` (default `24h`) or `?from=&to=` | KPI tiles, per-model usage, traffic split, top connectors (MCP servers registered with the gateway; the console's **MCPs** page), tools and profiles, latency, status-code breakdown — everything the Overview dashboard renders. |
 | `GET /analytics/models?range=24h\|7d\|30d` (default `7d`) | Per-model usage summary — calls, tokens, nullable cost, distinct callers (`used_by`), last-seen — one row per requested model name (`requested_model`), with the vendor that served most of its calls (`resolved_vendor`, else the client's dialect) as `provider`; feeds the console's Models page (`/models`). |
 | `GET /analytics/skills?range=24h\|7d\|30d` (default `7d`) | Per skill/command usage of the gateway's own skill loads and native commands (from MCP access logs): calls, distinct callers, last seen. |
 | `GET /analytics/skills/usage`, `GET /analytics/mcps/usage` | Skills and MCP servers seen in LLM traffic — see [Discovered skills and MCP servers](#discovered-skills-and-mcp-servers). |
@@ -94,8 +94,18 @@ session timeline) still needs ClickHouse.
 | `GET /analytics/llm-logs` | Paginated LLM-call rows (no bodies), including `client_name`/`user_agent`, filterable by `model`, `session_id`, `principal`, `client_name` (see [Client classification](#client-classification)), `status`, `source`, `user`, `from`, `to`. |
 | `GET /analytics/llm-logs/{request_id}` | One LLM-call row, including bodies. Admin-only. |
 | `GET /analytics/sessions/{session_id}/timeline` | Merged MCP+LLM event timeline for one gateway session, `?order=asc|desc` — see [Session timeline ownership](#session-timeline-ownership). |
-| `GET /analytics/client-models?range=24h\|7d\|30d&metric=calls\|tokens\|cost&limit=&client_name=` (default `7d`, `calls`, limit `10`) | Client → model → provider usage graph — see [Client → model Sankey](#client--model-sankey). |
+| `GET /analytics/client-models?range=24h\|7d\|30d` or `from=&to=`, `metric=calls\|tokens\|cost&limit=&client_name=` (default `7d`, `calls`, limit `10`) | Client → model → provider usage graph — see [Client → model Sankey](#client--model-sankey). |
 | `GET /analytics/traffic-flow?range=24h\|7d\|30d&metric=calls\|tokens\|cost&limit=&client_name=` (same defaults) | Agent traffic flow across both planes — see [Agent traffic flow](#agent-traffic-flow). |
+| `GET /analytics/token-monitoring?range=24h\|7d\|30d` (default `24h`) or `?from=&to=` | Token usage and cost by model, by caller (API key) and by caller role, with the previous period and a usage series — see [Token monitoring](#token-monitoring). |
+| `GET /analytics/token-monitoring/model?model=&range=&limit=&offset=` | One model's usage by caller and by session (sessions paged). |
+| `GET /analytics/token-monitoring/keys/{id}?range=&limit=&offset=` | One API key's usage by model and by session. |
+
+**Custom dates.** Overview, client-models, traffic-flow, the token
+monitoring routes, `skills`, `skills/usage` and `mcps/usage` also take `from=YYYY-MM-DD&to=YYYY-MM-DD` in place of
+`range`: whole UTC days, both inclusive, ending no later than now, at most
+366 days. The response's `range` is then `custom`, and deltas compare with
+the same number of days just before. A bad or reversed date, a `from` in the
+future, or a longer span answers `400`.
 
 `Overview`'s status-code breakdown buckets by **outcome**, not raw HTTP
 status: every MCP call answers HTTP 200 whether or not the JSON-RPC call
@@ -453,6 +463,65 @@ convention as `Overview`'s status-code breakdown. An unknown or
 never-used `session_id` is not a `404` — it is a valid, empty timeline
 (`events: []`, `owner_key_id: ""`).
 
+## Token monitoring
+
+The console's **Token Monitoring** page (`/token-monitoring`) shows who
+used how many tokens, on which model, at what cost. It is visibility only:
+no limits are enforced from it (the LLM plane's own budgets are in
+[llm-plane.md](llm-plane.md#budgets-and-limits)).
+
+Every figure comes from one ClickHouse view, **`llm_usage_canonical`**,
+created over `llm_calls` on startup (`pkg/sink/clickhouse/migrate.go`), so
+totals, breakdowns and the chart always add up. The ClickHouse user therefore
+needs `CREATE VIEW` as well as the table privileges (see
+[configuration](configuration.md#sinks)):
+
+| Column | Definition |
+|---|---|
+| `model` | The name the caller asked for (`requested_model`, else `model`), so a registry alias is one row whatever target answered. |
+| `provider` | The provider the call was costed as: the registry target's vendor (`openai_compat` → `openai`, a label as itself), else the client's dialect. |
+| `prompt_tokens` | Input tokens **excluding cache reads**. `openai` and `gemini` count cached tokens inside input, so they are subtracted back (never below 0), the same rule pricing uses. |
+| `completion_tokens` | Output tokens. |
+| `cache_read_tokens`, `cache_write_tokens` | Cache reads and writes, reported separately. |
+| `total_tokens` | `prompt_tokens + completion_tokens` — what the page calls **tokens**. |
+| `cost_usd`, `priced` | The gateway's estimated cost; `priced` is false for a call with no known cost (shown as unpriced, never as $0). |
+
+Only usage is counted: calls refused before any target (budget, RPM or
+`max_tokens` denials), failed calls, and the free token-count and
+batch-management endpoints are excluded. Ingested (interceptor) rows are
+included and attributed to the interceptor.
+
+The headline **Total tokens** tile counts input + output + cache reads +
+cache writes (`totals.tokens_with_cache`, with its own
+`tokens_with_cache_delta_pct` against the same measure over the previous
+period); every other figure — per model, per caller, per session, the chart
+— is `total_tokens` (input + output), with cache shown separately.
+
+**Windows** are **Last 24h**, **Last 7d** and **Last 30d** (rolling,
+ending now), or custom dates (`from`/`to`, see below); each is compared with
+the period of the same length just before. The change is `null` — shown as
+*New* — when the previous period had no usage, rather than 0%. The series is
+hourly for windows up to 48 hours and daily otherwise, with empty buckets as
+zeros.
+
+**Callers** are API keys, named from the key table, with a role: `agent`,
+`admin` (admin and platform-admin keys), `interceptor` (an interceptor
+key, or any ingested row), or `other` (viewer keys, keys since deleted,
+and calls with no key). Clicking a model or a caller opens its breakdown
+and its sessions; a session links to the Session Timeline.
+
+Small values are never shown as zero: a cost under one cent keeps two
+significant digits (`$0.0000097`), and a share under 0.1% reads `<0.1%`.
+
+```sql
+-- Tokens by model for one tenant over the last 7 days
+SELECT model, sum(total_tokens) AS tokens, sum(cache_read_tokens) AS cache_read,
+       toFloat64(sumIf(ifNull(cost_usd, 0), priced)) AS cost_usd
+FROM llm_usage_canonical
+WHERE tenant_id = '<tenant id>' AND timestamp >= now() - INTERVAL 7 DAY
+GROUP BY model ORDER BY tokens DESC;
+```
+
 ## Console pages
 
 The embedded React console (served at `/` on the API plane when
@@ -469,6 +538,7 @@ The embedded React console (served at `/` on the API plane when
 | Access Logs | `/access-logs` | `/analytics/logs` |
 | LLM Logs | `/llm-logs` | `/analytics/llm-logs` |
 | Session Timeline | `/session-timeline` | `/analytics/sessions/{id}/timeline` |
+| Token Monitoring | `/token-monitoring` (and `/token-monitoring/model`, `/token-monitoring/keys/{id}`) | `/analytics/token-monitoring`, `/analytics/token-monitoring/model`, `/analytics/token-monitoring/keys/{id}` |
 | Tool Search | `/tool-search` | `/cache/search` |
 | Cache | `/cache` | `/cache/stats`, `/cache/refresh`, `/cache` (invalidate) |
 | API Keys | `/api-keys` | `/api-keys` |
@@ -487,7 +557,7 @@ as Active) and
 Traffic comes from ClickHouse, so without it only Available, Registered
 and Disabled appear.
 
-The Overview, Models, Access Logs, and Session Timeline pages
+The Overview, Models, Access Logs, Session Timeline and Token Monitoring pages
 need the ClickHouse sink for their usage data (Models' `/models` registry
 call still works on Postgres alone; only its traffic columns need
 ClickHouse) — everything else, LLM Logs included (it falls back to the

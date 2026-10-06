@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`pkg/analytics` seam:** `Reader.Overview`, `SkillsSummary`, `SkillUsage`,
+  `MCPToolUsage` and `MCPServerCalls` take an `analytics.Period`
+  (a resolved window with its previous period and granularity) instead of
+  an `analytics.Range`, and `SankeyQuery` carries the `Period` to read. An
+  out-of-tree `Reader` must read `Period` rather than resolve `Range` itself;
+  the response's `Range` is set by the handler.
 - **Connector headers are validated when the connector is saved.** A header
   that could never be sent (unknown `type`, a denylisted `incoming_field`
   header such as `Authorization`, a disabled `env`/`file` provider, an
@@ -88,6 +94,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Overview, Token Monitoring, MCPs and Skills pages share one time
+  filter: Last 24h / 7d / 30d as segmented buttons (instead of a dropdown)
+  plus **custom dates** (a two-month calendar; whole UTC days, up to 366),
+  kept in the URL. `GET /api/v1/analytics/overview`, `client-models`,
+  `traffic-flow`, the token monitoring routes, `skills`, `skills/usage` and
+  `mcps/usage` accept `from=YYYY-MM-DD&to=YYYY-MM-DD` in place of `range`
+  (the response's `range` is then `custom`). The console sidebar's first
+  group is now **Dashboards**: Overview, then Token Monitoring.
 - **Product name: "AI Agent Gateway".** Visible references to the project
   (README, docs prose, the console, the docs site) now read "AI Agent
   Gateway" instead of "AI Gateway" / "tusk-ai-secured-gateway". The repo
@@ -216,6 +230,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TLS enabled.
 
 ### Added
+
+- **Token Monitoring** console page (`/token-monitoring`): token usage and
+  cost by model, by caller (API key, with its role: agent, admin,
+  interceptor or other) and by role, for the last 24h / 7d / 30d or custom
+  dates (UTC), with the change against the previous period (the headline
+  Total tokens includes cache reads and writes; breakdowns are input + output), a usage series, Cost
+  by model cards (input / output / cache read / cache write split) and
+  drill-downs per model and per key down to sessions. Backed by a new
+  ClickHouse view, `llm_usage_canonical` (one definition of usage: input
+  excludes cache reads for every provider, total = input + output, refused
+  and failed calls excluded), and three read-only routes under
+  `GET /api/v1/analytics/token-monitoring`. Visibility only: no limits.
+  **Upgrade note:** the gateway creates the view on startup, so its
+  ClickHouse user now also needs `CREATE VIEW`; without it the gateway does
+  not start.
 
 - `examples/13-claude-desktop`: Claude Desktop (macOS) in the console via the
   public [claude-desktop-utility](https://github.com/Tuskira/claude-desktop-utility)

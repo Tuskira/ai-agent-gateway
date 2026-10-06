@@ -11,7 +11,7 @@ import {
   type SankeyNode as BalancedNode,
 } from '@/components/app/sankey'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { formatCompactNumber, TIME_RANGES, type TimeRange } from '@/lib/overview'
+import { formatCompactNumber, periodLabel, type Period } from '@/lib/overview'
 import { toBalancedData } from '@/lib/traffic-flow'
 import {
   providerLabel,
@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils'
 
 interface TrafficFlowCardProps {
   data: TrafficFlow | null | undefined
-  range: TimeRange
+  period: Period
   /** The selected agent (`client_name`), `''` for all. */
   clientName: string
   onClientNameChange: (clientName: string) => void
@@ -152,12 +152,12 @@ function NodeLabel({
  * "Agent traffic flow" Overview card: renders `GET
  * /api/v1/analytics/traffic-flow` as a balanced CLIENT -> PATH -> MODEL |
  * CONNECTOR Sankey (see `@/components/app/sankey` and
- * docs/observability.md#agent-traffic-flow). Follows the page's range
- * picker; the agent select narrows the graph to one client family.
+ * docs/observability.md#agent-traffic-flow). Follows the page's period
+ * filter; the agent select narrows the graph to one client family.
  */
 export function TrafficFlowCard({
   data,
-  range,
+  period,
   clientName,
   onClientNameChange,
   emptyLabel = 'No data yet · enable the ClickHouse sink',
@@ -167,7 +167,7 @@ export function TrafficFlowCard({
   const navigate = useNavigate()
   const hasData = !!data && data.nodes.length > 0
   const rangeLabel =
-    TIME_RANGES.find((r) => r.value === range)?.label.toLowerCase() ?? `last ${range}`
+    period.range === 'custom' ? periodLabel(period) : periodLabel(period).toLowerCase()
 
   const chart = useMemo(() => (hasData ? toBalancedData(data!) : null), [hasData, data])
   const meta = chart?.meta

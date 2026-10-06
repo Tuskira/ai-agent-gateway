@@ -24,7 +24,7 @@ import (
 type fakeAnalyticsReader struct {
 	overview    *analytics.Overview
 	overviewErr error
-	gotRange    analytics.Range
+	gotPeriod   analytics.Period
 
 	accessItems  []sink.AccessLog
 	accessTotal  int
@@ -48,7 +48,7 @@ type fakeAnalyticsReader struct {
 
 	skillsSummary  *analytics.SkillsSummary
 	skillsErr      error
-	gotSkillsRange analytics.Range
+	gotSkillsRange analytics.Period
 
 	timeline        *analytics.SessionTimeline
 	timelineErr     error
@@ -64,12 +64,12 @@ type fakeAnalyticsReader struct {
 	mcpCalls      []analytics.MCPServerCalls
 	gotAliases    map[string]string
 	usageErr      error
-	gotUsageRange analytics.Range
+	gotUsageRange analytics.Period
 	gotSankeyQ    analytics.SankeyQuery
 }
 
-func (f *fakeAnalyticsReader) Overview(_ context.Context, _ string, r analytics.Range) (*analytics.Overview, error) {
-	f.gotRange = r
+func (f *fakeAnalyticsReader) Overview(_ context.Context, _ string, p analytics.Period) (*analytics.Overview, error) {
+	f.gotPeriod = p
 	return f.overview, f.overviewErr
 }
 
@@ -98,7 +98,7 @@ func (f *fakeAnalyticsReader) ModelsSummary(_ context.Context, _ string, r analy
 	return f.modelsSummary, f.modelsErr
 }
 
-func (f *fakeAnalyticsReader) SkillsSummary(_ context.Context, _ string, r analytics.Range) (*analytics.SkillsSummary, error) {
+func (f *fakeAnalyticsReader) SkillsSummary(_ context.Context, _ string, r analytics.Period) (*analytics.SkillsSummary, error) {
 	f.gotSkillsRange = r
 	return f.skillsSummary, f.skillsErr
 }
@@ -126,19 +126,30 @@ func (f *fakeAnalyticsReader) TrafficFlowSankey(_ context.Context, _ string, q a
 	return f.flow, f.sankeyErr
 }
 
-func (f *fakeAnalyticsReader) SkillUsage(_ context.Context, _ string, r analytics.Range) ([]analytics.SkillUsage, error) {
+func (f *fakeAnalyticsReader) SkillUsage(_ context.Context, _ string, r analytics.Period) ([]analytics.SkillUsage, error) {
 	f.gotUsageRange = r
 	return f.skillUsage, f.usageErr
 }
 
-func (f *fakeAnalyticsReader) MCPToolUsage(_ context.Context, _ string, r analytics.Range) ([]analytics.MCPToolUsage, error) {
+func (f *fakeAnalyticsReader) MCPToolUsage(_ context.Context, _ string, r analytics.Period) ([]analytics.MCPToolUsage, error) {
 	f.gotUsageRange = r
 	return f.mcpUsage, f.usageErr
 }
 
-func (f *fakeAnalyticsReader) MCPServerCalls(_ context.Context, _ string, r analytics.Range, aliases map[string]string) ([]analytics.MCPServerCalls, error) {
+func (f *fakeAnalyticsReader) MCPServerCalls(_ context.Context, _ string, r analytics.Period, aliases map[string]string) ([]analytics.MCPServerCalls, error) {
 	f.gotUsageRange, f.gotAliases = r, aliases
 	return f.mcpCalls, f.usageErr
+}
+
+// presetOf names the preset a Period spans, or "custom" when it spans none
+// (assertions read better as presets than as durations).
+func presetOf(p analytics.Period) analytics.Range {
+	for _, r := range []analytics.Range{analytics.Range24h, analytics.Range7d, analytics.Range30d} {
+		if p.End.Sub(p.Start) == r.Window() {
+			return r
+		}
+	}
+	return analytics.RangeCustom
 }
 
 func newAnalyticsTestDeps(reader *fakeAnalyticsReader) Deps {
@@ -167,8 +178,38 @@ func TestAnalytics_Overview_DefaultsRangeTo24h(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
-	if fake.gotRange != analytics.Range24h {
-		t.Errorf("range passed to Reader = %q, want %q", fake.gotRange, analytics.Range24h)
+	if span := fake.gotPeriod.End.Sub(fake.gotPeriod.Start); span != 24*time.Hour {
+		t.Errorf("period passed to Reader spans %v, want 24h", span)
+	}
+	if !strings.Contains(w.Body.String(), `"range":"24h"`) {
+		t.Errorf("body should label the range 24h: %s", w.Body.String())
+	}
+}
+
+// from/to (YYYY-MM-DD, both inclusive) select whole UTC days; the response
+// is labeled "custom" and the previous period is the same span before.
+func TestAnalytics_Overview_CustomDates(t *testing.T) {
+	fake := &fakeAnalyticsReader{overview: &analytics.Overview{}}
+	h := Analytics{Deps: newAnalyticsTestDeps(fake)}
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/overview?from=2026-01-01&to=2026-01-03", nil), "tenant-a", "agent")
+	w := serve(http.MethodGet, "/analytics/overview", h.Overview, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	p := fake.gotPeriod
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if !p.Start.Equal(start) || !p.End.Equal(start.AddDate(0, 0, 3)) || !p.PrevStart.Equal(start.AddDate(0, 0, -3)) {
+		t.Errorf("period = %+v, want 2026-01-01..2026-01-04, prev from 2025-12-29", p)
+	}
+	if !strings.Contains(w.Body.String(), `"range":"custom"`) {
+		t.Errorf("body should label the range custom: %s", w.Body.String())
+	}
+
+	for _, qs := range []string{"from=2026-01-03&to=2026-01-01", "from=2026-01-01", "from=jan&to=2026-01-02", "from=2999-01-01&to=2999-01-02", "from=2024-01-01&to=2026-01-01"} {
+		req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/overview?"+qs, nil), "tenant-a", "agent")
+		if w := serve(http.MethodGet, "/analytics/overview", h.Overview, req); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", qs, w.Code)
+		}
 	}
 }
 
@@ -194,8 +235,8 @@ func TestAnalytics_Overview_Happy(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
-	if fake.gotRange != analytics.Range7d {
-		t.Errorf("range = %q, want 7d", fake.gotRange)
+	if span := fake.gotPeriod.End.Sub(fake.gotPeriod.Start); span != 7*24*time.Hour {
+		t.Errorf("period spans %v, want 7d", span)
 	}
 	var got analytics.Overview
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -465,8 +506,8 @@ func TestAnalytics_Skills_DefaultsRangeTo7d(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 	// Skills defaults to 7d, like Models (not Overview's 24h).
-	if fake.gotSkillsRange != analytics.Range7d {
-		t.Errorf("range passed to Reader = %q, want %q", fake.gotSkillsRange, analytics.Range7d)
+	if presetOf(fake.gotSkillsRange) != analytics.Range7d {
+		t.Errorf("range passed to Reader = %q, want %q", presetOf(fake.gotSkillsRange), analytics.Range7d)
 	}
 }
 
@@ -516,8 +557,8 @@ func TestAnalytics_Skills_Happy(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
-	if fake.gotSkillsRange != analytics.Range7d {
-		t.Errorf("range = %q, want 7d", fake.gotSkillsRange)
+	if presetOf(fake.gotSkillsRange) != analytics.Range7d {
+		t.Errorf("range = %q, want 7d", presetOf(fake.gotSkillsRange))
 	}
 
 	var got analytics.SkillsSummary
@@ -642,8 +683,13 @@ func TestAnalytics_ClientModelSankey_ParsesQueryParams(t *testing.T) {
 	want := analytics.SankeyQuery{
 		Range: analytics.Range24h, Metric: analytics.SankeyMetricTokens, Limit: 3, ClientName: "cursor",
 	}
-	if fake.gotSankeyQ != want {
-		t.Errorf("query = %+v, want %+v", fake.gotSankeyQ, want)
+	got := fake.gotSankeyQ
+	if span := got.Period.End.Sub(got.Period.Start); span != 24*time.Hour {
+		t.Errorf("period spans %v, want 24h", span)
+	}
+	got.Period = analytics.Period{}
+	if got != want {
+		t.Errorf("query = %+v, want %+v", got, want)
 	}
 }
 
@@ -1059,6 +1105,9 @@ func TestAnalytics_TrafficFlow_ParamsAndBody(t *testing.T) {
 		fake.gotSankeyQ.Limit != 3 || fake.gotSankeyQ.ClientName != "cursor" {
 		t.Errorf("query = %+v, want range=24h metric=calls limit=3 client_name=cursor", fake.gotSankeyQ)
 	}
+	if span := fake.gotSankeyQ.Period.End.Sub(fake.gotSankeyQ.Period.Start); span != 24*time.Hour {
+		t.Errorf("period spans %v, want 24h", span)
+	}
 	body := w.Body.String()
 	if !strings.Contains(body, `"sublabel":"anthropic"`) {
 		t.Errorf("body should carry the MODEL node's provider sublabel: %s", body)
@@ -1071,10 +1120,23 @@ func TestAnalytics_TrafficFlow_ParamsAndBody(t *testing.T) {
 	}
 }
 
+func TestAnalytics_TrafficFlow_CustomDates(t *testing.T) {
+	fake := &fakeAnalyticsReader{flow: &analytics.TrafficFlow{}}
+	h := Analytics{Deps: newAnalyticsTestDeps(fake)}
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/traffic-flow?from=2026-01-01&to=2026-01-01", nil), "tenant-a", "agent")
+	if w := serve(http.MethodGet, "/analytics/traffic-flow", h.TrafficFlow, req); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	q := fake.gotSankeyQ
+	if q.Range != analytics.RangeCustom || !q.Period.Start.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) || q.Period.End.Sub(q.Period.Start) != 24*time.Hour {
+		t.Errorf("query = %+v, want custom 2026-01-01 (one day)", q)
+	}
+}
+
 func TestAnalytics_TrafficFlow_InvalidParams400(t *testing.T) {
 	fake := &fakeAnalyticsReader{flow: &analytics.TrafficFlow{}}
 	h := Analytics{Deps: newAnalyticsTestDeps(fake)}
-	for _, qs := range []string{"range=3w", "metric=bytes", "limit=0", "limit=x"} {
+	for _, qs := range []string{"range=3w", "metric=bytes", "limit=0", "limit=x", "from=2026-01-02&to=2026-01-01"} {
 		req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/traffic-flow?"+qs, nil), "tenant-a", "agent")
 		w := serve(http.MethodGet, "/analytics/traffic-flow", h.TrafficFlow, req)
 		if w.Code != http.StatusBadRequest {

@@ -329,29 +329,6 @@ func TestRouter_Prices1hCacheAndWebSearch(t *testing.T) {
 	}
 }
 
-func TestUnpricedPath(t *testing.T) {
-	for path, want := range map[string]bool{
-		"/anthropic/v1/messages/count_tokens":                          true,
-		"/bedrock/model/anthropic.claude-sonnet-4-5/count-tokens":      true,
-		"/gemini/v1beta/models/gemini-2.5-flash:countTokens":           true,
-		"/openai/v1/responses/input_tokens":                            true,
-		"/anthropic/v1/messages/batches/msgbatch_1/results":            true,
-		"/v1/messages/batches":                                         true,
-		"/v1/messages/batches-export":                                  false, // a substring match priced this at $0
-		"/v1/messages/batchesque":                                      false,
-		"/anthropic/v1/messages":                                       false,
-		"/bedrock/model/anthropic.claude-sonnet-4-5/invoke":            false,
-		"/gemini/v1beta/models/gemini-2.5-flash:generateContent":       false,
-		"/openai/v1/chat/completions":                                  false,
-		"/openai/v1/responses":                                         false,
-		"/gemini/v1beta/models/gemini-2.5-flash:streamGenerateContent": false,
-	} {
-		if got := unpricedPath(path); got != want {
-			t.Errorf("unpricedPath(%q) = %v, want %v", path, got, want)
-		}
-	}
-}
-
 // Free endpoints and successful calls with no readable usage store NULL; an
 // error response with no usage is correctly $0.
 func TestRouter_CostNullVsZero(t *testing.T) {

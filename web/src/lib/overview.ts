@@ -1,3 +1,4 @@
+import { format, parseISO } from 'date-fns'
 import { apiFetch, ApiError } from '@/lib/api'
 
 /**
@@ -22,6 +23,40 @@ export const TIME_RANGES: { value: TimeRange; label: string }[] = [
   { value: '7d', label: 'Last 7d' },
   { value: '30d', label: 'Last 30d' },
 ]
+
+/** A dashboard window: a preset, or whole UTC days `from`..`to` (both
+ * inclusive, YYYY-MM-DD). The API takes `range=` or `from=&to=`. */
+export type Period = { range: TimeRange } | { range: 'custom'; from: string; to: string }
+
+export function periodParams(p: Period): Record<string, string> {
+  return p.range === 'custom' ? { from: p.from, to: p.to } : { range: p.range }
+}
+
+/** `range=7d` or `from=…&to=…`, for a URL. */
+export const periodQuery = (p: Period) => new URLSearchParams(periodParams(p)).toString()
+
+/** "Last 24h", or "Jan 1 – Jan 3, 2026" for custom dates. */
+export function periodLabel(p: Period): string {
+  if (p.range !== 'custom')
+    return TIME_RANGES.find((r) => r.value === p.range)?.label ?? p.range
+  const from = parseISO(p.from)
+  const to = parseISO(p.to)
+  if (p.from === p.to) return format(from, 'MMM d, yyyy')
+  const sameYear = from.getFullYear() === to.getFullYear()
+  return `${format(from, sameYear ? 'MMM d' : 'MMM d, yyyy')} – ${format(to, 'MMM d, yyyy')}`
+}
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/
+
+/** The period in a URL (`?range=` or `?from=&to=`), else `{range: def}`. */
+export function periodFromParams(params: URLSearchParams, def: TimeRange): Period {
+  const from = params.get('from') ?? ''
+  const to = params.get('to') ?? ''
+  if (DATE.test(from) && DATE.test(to)) return { range: 'custom', from, to }
+  const raw = params.get('range')
+  const range = TIME_RANGES.find((r) => r.value === raw)?.value ?? def
+  return { range }
+}
 
 interface Page<T> {
   items: T[]
@@ -196,10 +231,10 @@ export interface OverviewMetrics {
  * fetch error."
  */
 export async function fetchOverviewMetrics(
-  range: TimeRange,
+  period: Period,
 ): Promise<OverviewMetrics | null> {
   try {
-    return await apiFetch<OverviewMetrics>(`/analytics/overview?range=${range}`)
+    return await apiFetch<OverviewMetrics>(`/analytics/overview?${periodQuery(period)}`)
   } catch {
     return null
   }

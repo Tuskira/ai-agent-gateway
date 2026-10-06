@@ -10,8 +10,8 @@ import {
   fetchProfiles,
   MAX_TOOL_COUNT_REQUESTS,
   type ConnectorSummary,
+  type Period,
   type ProfileSummary,
-  type TimeRange,
 } from '@/lib/overview'
 import { fetchMcpsUsage, fetchSkillsUsage } from '@/lib/discovery'
 import { changePassword, getAuthConfig, type ChangePasswordInput } from '@/lib/auth-api'
@@ -89,8 +89,13 @@ import { fetchHeaderProviders } from '@/lib/headers'
 import { fetchAccessLogDetail, fetchAccessLogs, type AccessLogFilters } from '@/lib/logs'
 import { fetchLlmLogDetail, fetchLlmLogs, type LlmLogFilters } from '@/lib/llm-logs'
 import { fetchSessionTimeline, type TimelineOrder } from '@/lib/session-timeline'
-import { fetchSkillsSummary, SKILLS_TRAFFIC_RANGE } from '@/lib/analytics'
+import { fetchSkillsSummary } from '@/lib/analytics'
 import { fetchTrafficFlow } from '@/lib/sankey'
+import {
+  fetchTokenMonitoring,
+  fetchTokenMonitoringKey,
+  fetchTokenMonitoringModel,
+} from '@/lib/token-monitoring'
 import {
   createModel,
   deleteModel,
@@ -174,22 +179,26 @@ export function useApiKeys() {
 
 /** `GET /api/v1/analytics/overview?range=…` — resolves to `null` until the
  * analytics service ships. */
-export function useOverviewMetrics(range: TimeRange) {
+export function useOverviewMetrics(period: Period) {
   return useQuery({
-    queryKey: ['overview-metrics', range],
-    queryFn: () => fetchOverviewMetrics(range),
+    queryKey: ['overview-metrics', period],
+    queryFn: () => fetchOverviewMetrics(period),
     staleTime: 30_000,
+    // Keep showing the current range while the next one loads (no flash).
+    placeholderData: (prev) => prev,
   })
 }
 
 /** `GET /api/v1/analytics/traffic-flow?range=…&client_name=…` — resolves
  * to `null` on any failure (404 because ClickHouse isn't enabled, or a
  * network error), same convention as `useOverviewMetrics`. */
-export function useTrafficFlow(range: TimeRange, clientName: string) {
+export function useTrafficFlow(period: Period, clientName: string) {
   return useQuery({
-    queryKey: ['traffic-flow', range, clientName],
-    queryFn: () => fetchTrafficFlow(range, clientName),
+    queryKey: ['traffic-flow', period, clientName],
+    queryFn: () => fetchTrafficFlow(period, clientName),
     staleTime: 30_000,
+    // Keep showing the current range while the next one loads (no flash).
+    placeholderData: (prev) => prev,
   })
 }
 
@@ -903,30 +912,36 @@ export function useSkillsList(kind?: SkillKind) {
 
 /** `GET /api/v1/analytics/skills?range=7d` — resolves to `null` when
  * ClickHouse isn't enabled (see `fetchSkillsSummary`). */
-export function useSkillsSummary(range: TimeRange = SKILLS_TRAFFIC_RANGE) {
+export function useSkillsSummary(period: Period) {
   return useQuery({
-    queryKey: ['skills', 'summary', range],
-    queryFn: () => fetchSkillsSummary(range),
+    queryKey: ['skills', 'summary', period],
+    queryFn: () => fetchSkillsSummary(period),
     staleTime: 30_000,
+    // Keep showing the current range while the next one loads (no flash).
+    placeholderData: (prev) => prev,
   })
 }
 
 /** `GET /api/v1/analytics/skills/usage?range=…` — skills the model was seen
  * using, registered or not; `null` when analytics is off. */
-export function useSkillsUsage(range: TimeRange) {
+export function useSkillsUsage(period: Period) {
   return useQuery({
-    queryKey: ['skills', 'usage', range],
-    queryFn: () => fetchSkillsUsage(range),
+    queryKey: ['skills', 'usage', period],
+    queryFn: () => fetchSkillsUsage(period),
     staleTime: 30_000,
+    // Keep showing the current range while the next one loads (no flash).
+    placeholderData: (prev) => prev,
   })
 }
 
 /** `GET /api/v1/analytics/mcps/usage?range=…`; `null` when analytics is off. */
-export function useMcpsUsage(range: TimeRange) {
+export function useMcpsUsage(period: Period) {
   return useQuery({
-    queryKey: ['mcps', 'usage', range],
-    queryFn: () => fetchMcpsUsage(range),
+    queryKey: ['mcps', 'usage', period],
+    queryFn: () => fetchMcpsUsage(period),
     staleTime: 30_000,
+    // Keep showing the current range while the next one loads (no flash).
+    placeholderData: (prev) => prev,
   })
 }
 
@@ -1076,4 +1091,37 @@ export function useRevokeUserSessions() {
 
 export function useAuthAudit() {
   return useQuery({ queryKey: ['auth-audit', 'list'], queryFn: listAudit, retry: false })
+}
+
+/* ---------------------------------------------------------------------- */
+/* Token Monitoring                                                        */
+/* ---------------------------------------------------------------------- */
+
+export function useTokenMonitoring(period: Period) {
+  return useQuery({
+    queryKey: ['token-monitoring', period],
+    queryFn: () => fetchTokenMonitoring(period),
+    staleTime: 30_000,
+    // Keep showing the current range while the next one loads (no flash).
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useTokenMonitoringDetail(
+  kind: 'model' | 'key',
+  subject: string,
+  period: Period,
+  limit: number,
+  offset: number,
+) {
+  return useQuery({
+    queryKey: ['token-monitoring', kind, subject, period, limit, offset],
+    queryFn: () =>
+      kind === 'model'
+        ? fetchTokenMonitoringModel(subject, period, limit, offset)
+        : fetchTokenMonitoringKey(subject, period, limit, offset),
+    enabled: subject !== '',
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  })
 }

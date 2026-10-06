@@ -22,6 +22,8 @@ import CredentialsPage from '@/routes/CredentialsPage'
 import AccessLogsPage from '@/routes/AccessLogsPage'
 import LlmLogsPage from '@/routes/LlmLogsPage'
 import SessionTimelinePage from '@/routes/SessionTimelinePage'
+import TokenMonitoringPage from '@/routes/TokenMonitoringPage'
+import TokenMonitoringDetailPage from '@/routes/TokenMonitoringDetailPage'
 
 /** Phase-1 pages that replace their ComingSoon placeholder. Keyed by the
  * nav path so any path not listed here still falls back to ComingSoon. */
@@ -39,6 +41,7 @@ const builtPages: Record<string, ComponentType> = {
   '/access-logs': AccessLogsPage,
   '/llm-logs': LlmLogsPage,
   '/session-timeline': SessionTimelinePage,
+  '/token-monitoring': TokenMonitoringPage,
 }
 
 const comingSoonItems = navGroups
@@ -76,6 +79,14 @@ export const router = createBrowserRouter([
             })(),
           })),
           { path: '/profiles/:id/tools', element: <ProfileToolsPage /> },
+          {
+            path: '/token-monitoring/model',
+            element: <TokenMonitoringDetailPage kind="model" />,
+          },
+          {
+            path: '/token-monitoring/keys/:id',
+            element: <TokenMonitoringDetailPage kind="key" />,
+          },
           ...comingSoonItems.map((item) => ({
             path: item.path,
             element: <ComingSoon title={item.label} description={item.description} />,

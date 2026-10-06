@@ -1,5 +1,5 @@
 import { apiFetch } from '@/lib/api'
-import type { TimeRange } from '@/lib/overview'
+import { periodQuery, type Period } from '@/lib/overview'
 
 /**
  * Observed usage from LLM traffic: the skills and MCP servers the model asked
@@ -31,10 +31,10 @@ export interface DiscoveredMcp {
   via_gateway: boolean
 }
 
-export async function fetchSkillsUsage(range: TimeRange): Promise<DiscoveredSkill[] | null> {
+export async function fetchSkillsUsage(period: Period): Promise<DiscoveredSkill[] | null> {
   try {
     const res = await apiFetch<{ skills: DiscoveredSkill[] | null }>(
-      `/analytics/skills/usage?range=${range}`,
+      `/analytics/skills/usage?${periodQuery(period)}`,
     )
     return res.skills ?? []
   } catch {
@@ -42,10 +42,10 @@ export async function fetchSkillsUsage(range: TimeRange): Promise<DiscoveredSkil
   }
 }
 
-export async function fetchMcpsUsage(range: TimeRange): Promise<DiscoveredMcp[] | null> {
+export async function fetchMcpsUsage(period: Period): Promise<DiscoveredMcp[] | null> {
   try {
     const res = await apiFetch<{ servers: DiscoveredMcp[] | null }>(
-      `/analytics/mcps/usage?range=${range}`,
+      `/analytics/mcps/usage?${periodQuery(period)}`,
     )
     return (res.servers ?? []).map((s) => ({ ...s, tools: s.tools ?? [] }))
   } catch {

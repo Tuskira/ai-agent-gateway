@@ -9,7 +9,9 @@ import {
   useSkillsUsage,
 } from '@/lib/queries'
 import type { Skill } from '@/lib/skills'
-import type { TimeRange } from '@/lib/overview'
+import { periodLabel } from '@/lib/overview'
+import { PeriodFilter } from '@/components/app/PeriodFilter'
+import { usePeriod } from '@/hooks/use-period'
 import {
   LIFECYCLE_STATES,
   mergeSkillRows,
@@ -30,7 +32,6 @@ import { ConfirmDialog } from '@/components/app/ConfirmDialog'
 import {
   AnalyticsOffNote,
   LifecyclePill,
-  RangeSelect,
   StateFilter,
 } from '@/components/app/LifecycleBits'
 import { SkillFormDialog } from '@/components/app/skills/SkillFormDialog'
@@ -62,11 +63,13 @@ function AnalyticsOffNotice() {
 }
 
 export default function SkillsPage() {
-  const [range, setRange] = useState<TimeRange>('7d')
+  const [period, setPeriod] = usePeriod('7d')
+  // Column and tile labels: "7d", or the custom dates.
+  const range = period.range === 'custom' ? periodLabel(period) : period.range
   const [stateFilter, setStateFilter] = useState<LifecycleState | 'all'>('all')
   const skillsQuery = useSkillsList()
-  const summaryQuery = useSkillsSummary(range)
-  const usageQuery = useSkillsUsage(range)
+  const summaryQuery = useSkillsSummary(period)
+  const usageQuery = useSkillsUsage(period)
   const deleteSkill = useDeleteSkill()
 
   const [createOpen, setCreateOpen] = useState(false)
@@ -279,7 +282,7 @@ export default function SkillsPage() {
         </p>
       </div>
       <div className="flex items-center gap-2">
-        <RangeSelect value={range} onChange={setRange} />
+        <PeriodFilter value={period} onChange={setPeriod} />
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="size-4" aria-hidden="true" />
           Add skill

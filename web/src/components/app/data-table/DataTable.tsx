@@ -9,10 +9,8 @@ import { DataTableSelectionBar } from './DataTableSelectionBar'
 import { DataTableSkeleton } from './DataTableSkeleton'
 import { DataTableToolbar } from './DataTableToolbar'
 import { LABELS } from './labels'
-import type { DataTableProps } from './types'
+import { PAGE_SIZES, type DataTableProps } from './types'
 import { useDataTable } from './use-data-table'
-
-const DEFAULT_PAGE_SIZES = [10, 25, 50]
 
 /**
  * The console's data grid: sorting, column resize / reorder / visibility,
@@ -30,7 +28,7 @@ export function DataTable<TData>(props: DataTableProps<TData>) {
     emptyDescription,
     emptyAction,
     skeletonRows = 5,
-    pageSizeOptions = DEFAULT_PAGE_SIZES,
+    pageSizeOptions = PAGE_SIZES,
     rowActions,
     enableRowContextMenu = true,
     bulkActions,
@@ -105,9 +103,10 @@ export function DataTable<TData>(props: DataTableProps<TData>) {
         // sticky header needs this element to be the nearest scrolling
         // ancestor, so that inner one is neutralised. `table-fixed` pins
         // column widths for the resize handles, and `isolate` scopes the
-        // header's z-index to this grid.
+        // header's z-index to this grid. `@container` lets the empty and
+        // error messages size to the visible width (100cqw), not the table's.
         className={cn(
-          'isolate min-h-0 overflow-auto rounded-r-5 border border-border bg-card',
+          '@container isolate min-h-0 overflow-auto rounded-r-5 border border-border bg-card',
           'outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
           '[scrollbar-color:var(--color-border-strong)_transparent] [scrollbar-width:thin]',
           '[&_[data-slot=table-container]]:overflow-visible [&_[data-slot=table]]:table-fixed',

@@ -14,12 +14,12 @@ function json(body: unknown, status = 200) {
   })
 }
 
-function renderPage(ui: React.ReactElement) {
+function renderPage(ui: React.ReactElement, path = '/') {
   sessionStorage.setItem(API_KEY_STORAGE_KEY, 'gk_test_session_key')
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>{ui}</MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -437,5 +437,43 @@ describe('refresh after adding a discovered item', () => {
       expect(r).not.toHaveTextContent('Discovered')
       expect(r).toHaveTextContent('Active')
     })
+  })
+})
+
+describe('MCPs and Skills time filter', () => {
+  beforeEach(() => sessionStorage.clear())
+  afterEach(() => vi.unstubAllGlobals())
+
+  const urls = () => vi.mocked(fetch).mock.calls.map(([u]) => String(u))
+
+  it('MCPs reads custom dates from the URL and asks the API for them', async () => {
+    stubMcps({ usage: [usageRow('context7')] })
+    renderPage(<ConnectorsPage />, '/connectors?from=2026-01-01&to=2026-01-03')
+    expect(await screen.findByRole('button', { name: /custom dates/i })).toHaveTextContent(
+      'Jan 1 – Jan 3, 2026',
+    )
+    expect(urls()).toContain('/api/v1/analytics/mcps/usage?from=2026-01-01&to=2026-01-03')
+    expect(
+      await screen.findByRole('columnheader', { name: /Calls \(Jan 1 – Jan 3, 2026\)/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('Skills reads custom dates from the URL for usage and the summary', async () => {
+    stubSkills({ usage: json({ range: 'custom', skills: [] }), skills: [] })
+    renderPage(<SkillsPage />, '/skills?from=2026-01-01&to=2026-01-03')
+    await screen.findByRole('button', { name: /custom dates/i })
+    expect(urls()).toContain('/api/v1/analytics/skills/usage?from=2026-01-01&to=2026-01-03')
+    expect(urls()).toContain('/api/v1/analytics/skills?from=2026-01-01&to=2026-01-03')
+  })
+
+  it('MCPs presets keep the shared look and default to Last 7d', async () => {
+    stubMcps({ usage: [] })
+    renderPage(<ConnectorsPage />, '/connectors')
+    const group = await screen.findByRole('group', { name: 'Time range' })
+    expect(within(group).getByRole('button', { name: 'Last 7d' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(urls()).toContain('/api/v1/analytics/mcps/usage?range=7d')
   })
 })

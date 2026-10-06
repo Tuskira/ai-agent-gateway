@@ -1,7 +1,4 @@
-import type { PaginationModel } from '@/components/app/data-table'
-
-/** Page sizes the log tables offer. The first is the default. */
-export const LOG_PAGE_SIZES = [25, 50, 100]
+import { PAGE_SIZES, type PaginationModel } from '@/components/app/data-table'
 
 const DEFAULT_PAGE_SIZE = 25
 
@@ -16,7 +13,7 @@ const DEFAULT_PAGE_SIZE = 25
  */
 export function paginationFromParams(params: URLSearchParams): PaginationModel {
   const limit = Number(params.get('limit'))
-  const pageSize = LOG_PAGE_SIZES.includes(limit) ? limit : DEFAULT_PAGE_SIZE
+  const pageSize = PAGE_SIZES.includes(limit) ? limit : DEFAULT_PAGE_SIZE
   const offset = Number(params.get('offset'))
   const page = Number.isFinite(offset) && offset > 0 ? Math.floor(offset / pageSize) : 0
   return { page, pageSize }

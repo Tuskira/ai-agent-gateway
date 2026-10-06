@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,8 +37,8 @@ func TestAnalytics_SkillsUsage(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	if fake.gotUsageRange != analytics.Range30d {
-		t.Errorf("range = %q, want 30d", fake.gotUsageRange)
+	if presetOf(fake.gotUsageRange) != analytics.Range30d {
+		t.Errorf("range = %q, want 30d", presetOf(fake.gotUsageRange))
 	}
 	var got analytics.DiscoveredSkills
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -72,8 +73,8 @@ func TestAnalytics_SkillsUsage_TenantIsolation(t *testing.T) {
 	w := serve(http.MethodGet, "/analytics/skills/usage", h.SkillsUsage, req)
 	var got analytics.DiscoveredSkills
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
-	if fake.gotUsageRange != analytics.Range7d || got.Skills[0].Registered {
-		t.Fatalf("range=%q row=%+v: another tenant's skill must not register", fake.gotUsageRange, got.Skills[0])
+	if presetOf(fake.gotUsageRange) != analytics.Range7d || got.Skills[0].Registered {
+		t.Fatalf("range=%q row=%+v: another tenant's skill must not register", presetOf(fake.gotUsageRange), got.Skills[0])
 	}
 }
 
@@ -99,6 +100,38 @@ func TestAnalytics_Usage_ErrorsAndRange(t *testing.T) {
 		w = serve(http.MethodGet, tc.path, tc.fn(h), withPrincipal(httptest.NewRequest(http.MethodGet, tc.path, nil), "tenant-a", "agent"))
 		if w.Code != http.StatusInternalServerError {
 			t.Errorf("%s reader error: %d", tc.path, w.Code)
+		}
+	}
+}
+
+// The MCPs and Skills pages take custom dates like the dashboards: whole UTC
+// days from..to, labeled "custom"; a bad pair is a 400.
+func TestAnalytics_UsagePages_CustomDates(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		path string
+		fn   func(Analytics) http.HandlerFunc
+		got  func(*fakeAnalyticsReader) analytics.Period
+	}{
+		{"/analytics/skills/usage", func(h Analytics) http.HandlerFunc { return h.SkillsUsage }, func(f *fakeAnalyticsReader) analytics.Period { return f.gotUsageRange }},
+		{"/analytics/mcps/usage", func(h Analytics) http.HandlerFunc { return h.MCPsUsage }, func(f *fakeAnalyticsReader) analytics.Period { return f.gotUsageRange }},
+		{"/analytics/skills", func(h Analytics) http.HandlerFunc { return h.Skills }, func(f *fakeAnalyticsReader) analytics.Period { return f.gotSkillsRange }},
+	} {
+		fake := &fakeAnalyticsReader{skillsSummary: &analytics.SkillsSummary{}}
+		h := Analytics{Deps: newAnalyticsTestDeps(fake)}
+		w := serve(http.MethodGet, tc.path, tc.fn(h), withPrincipal(httptest.NewRequest(http.MethodGet, tc.path+"?from=2026-01-01&to=2026-01-03", nil), "tenant-a", "agent"))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", tc.path, w.Code, w.Body.String())
+		}
+		if p := tc.got(fake); !p.Start.Equal(start) || !p.End.Equal(start.AddDate(0, 0, 3)) {
+			t.Errorf("%s: period = %+v, want 2026-01-01..2026-01-04", tc.path, p)
+		}
+		if !strings.Contains(w.Body.String(), `"range":"custom"`) {
+			t.Errorf("%s: body should label the range custom: %s", tc.path, w.Body.String())
+		}
+		w = serve(http.MethodGet, tc.path, tc.fn(h), withPrincipal(httptest.NewRequest(http.MethodGet, tc.path+"?from=2026-01-03&to=2026-01-01", nil), "tenant-a", "agent"))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s reversed dates: status %d, want 400", tc.path, w.Code)
 		}
 	}
 }
@@ -140,8 +173,8 @@ func TestAnalytics_MCPsUsage(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	if fake.gotUsageRange != analytics.Range24h {
-		t.Errorf("range = %q", fake.gotUsageRange)
+	if presetOf(fake.gotUsageRange) != analytics.Range24h {
+		t.Errorf("range = %q", presetOf(fake.gotUsageRange))
 	}
 	var got analytics.DiscoveredMCPServers
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -185,7 +218,7 @@ func TestAnalytics_MCPsUsage_OtherTenantConnectorDoesNotRegister(t *testing.T) {
 	w := serve(http.MethodGet, "/analytics/mcps/usage", h.MCPsUsage, req)
 	var got analytics.DiscoveredMCPServers
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
-	if fake.gotUsageRange != analytics.Range7d || len(got.Servers) != 1 || got.Servers[0].RegisteredConnectorSlug != "" {
+	if presetOf(fake.gotUsageRange) != analytics.Range7d || len(got.Servers) != 1 || got.Servers[0].RegisteredConnectorSlug != "" {
 		t.Fatalf("got %+v", got)
 	}
 }

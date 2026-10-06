@@ -299,6 +299,17 @@ makes the gateway call a URL through other code (a third-party
 itself. A proxy configured with `HTTP(S)_PROXY` is dialed through the guard
 too, so a proxy on a private address must be allowlisted.
 
+The detection agent (`llm_proxy.detection.agent_url`) is a deliberate
+exception. Its URL is set by the operator in the gateway config, never by a
+tenant, and it is called with a plain HTTP client, not the guard above, so
+a loopback sidecar works. That client ignores `HTTP(S)_PROXY`, does not
+follow redirects, and an `agent_url` carrying userinfo is refused at
+startup. The gateway sends the agent every relayed call's full request
+body and the first 1 MiB of its response, unredacted. Run it as a trusted
+local process (same host or pod, loopback), never as a shared or remote
+service. The tee is detection only: an agent that is down or slow costs
+dropped turns, never a delayed or refused call.
+
 ### Forwarding the caller's credential to a connector
 
 A connector header of `{"type": "token_field", "field": "bearer_token"}`

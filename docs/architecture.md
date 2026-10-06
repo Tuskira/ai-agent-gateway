@@ -113,6 +113,12 @@ implementations:
 | LLM translation | `pkg/llm.Dialect` / `Provider` (registry) | `pkg/llm/anthropic`, `pkg/llm/openaicompat` | model-registry targets in another wire format |
 | Ingest | `pkg/sink.IngestSink` | `pkg/sink/clickhouse.Sink` | `POST /api/v1/ingest` |
 
+The LLM plane's detection tee (`llm_proxy.detection`) is not a
+`pkg/sink.LogSink`: a sink only sees the `LLMCall` record, whose bodies are
+cut to the capture cap and absent when `store_bodies` is off, while the
+detection agent needs the full request body. It lives beside the recorder
+in `internal/llmplane` and gets the body the router already holds.
+
 A plugin implements one of these interfaces, registers it (a driver name
 for `pkg/store.Register` or `pkg/session.Register`, or is wired directly
 into the relevant `Deps` struct in a fork of `main.go`), and the rest of
@@ -603,6 +609,7 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
   │                               │ 10 price via rate card             │
   │                               │ 11 write llm_calls (Postgres)      │
   │                               │ 12 tee to sinks (best-effort)      │
+  │                               │ 13 detection tee (async, opt-in)   │
   │◄─────────────────────────────┤                                  │
   │  streamed response            │                                  │
 ```
@@ -652,6 +659,10 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
     the row carries a `body_ref` instead (inline again if the offload fails).
 12. A best-effort copy also goes to the shared `sink.Multi`
     (stdout/otel/clickhouse), independent of step 11.
+13. With `llm_proxy.detection.agent_url` set, the detection tee queues the
+    full request body and the first 1 MiB of the response (a complete 2xx
+    relay only) and posts them to a local detection agent asynchronously;
+    nothing waits on it — see [llm-plane.md](llm-plane.md#detection-agent).
 
 ### LLM plane hardening
 

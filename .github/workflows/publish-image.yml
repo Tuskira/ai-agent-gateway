@@ -55,7 +55,7 @@ jobs:
           short_sha=${GITHUB_SHA::7}
           {
             echo "sha_tag=sha-${short_sha}"
-            echo "version=$(git describe --tags --always)"
+            echo "version=$(git describe --tags --match 'v[0-9]*' --always)"
           } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

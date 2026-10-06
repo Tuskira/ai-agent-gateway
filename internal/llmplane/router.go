@@ -45,6 +45,8 @@ type router struct {
 	// Anthropic-dialect alias can still land on Bedrock.
 	bedrock *bedrockProvider
 	limiter *Limiter // per-key limits; nil = none enforced
+	// tee hands each relayed call to a detection agent; nil = off.
+	tee *DetectionTee
 }
 
 // callInfo is what the router learned about a call for capture: the
@@ -305,6 +307,14 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	uHead, uTail := newBoundedCap(usageScanBytes), newTailCap(usageScanBytes)
 	dst, cap := captureTargets(rt.storeBodies, rt.maxCaptureResp, toClient, uHead, uTail)
+	// The detection tee gets a bounded copy of what the client received,
+	// independent of body storage.
+	tee := rt.tee != nil && teeable(r)
+	var teeCap *boundedCap
+	if tee && resp.StatusCode/100 == 2 {
+		teeCap = newBoundedCap(teeResponseBytes)
+		dst = append(dst, teeCap)
+	}
 	// Skill/MCP discovery reads the same bytes the client gets (the
 	// client-dialect body, for a translated target), independent of body
 	// storage. Only a 2xx can carry a tool call; the scanner cannot fail or
@@ -334,7 +344,18 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if disc != nil {
 		found = disc.Result()
 	}
-	rt.emit(r, info, body, start, resp, cap, usage, found, relayError(r.Context(), copyErr, client.err))
+	relayErr := relayError(r.Context(), copyErr, client.err)
+	rt.emit(r, info, body, start, resp, cap, usage, found, relayErr)
+	// After the record, never waited on: the tee only queues the turn. A
+	// response cut short (client gone, upstream failing, deadline) is not
+	// sent; the request still is.
+	if tee {
+		var out []byte
+		if teeCap != nil && relayErr == "" {
+			out = teeCap.Bytes()
+		}
+		rt.tee.offer(teeTurnOf(r, info, start, resp.StatusCode, body, out))
+	}
 }
 
 // captureTargets returns the tee writers: base, plus a storage copy (bounded by

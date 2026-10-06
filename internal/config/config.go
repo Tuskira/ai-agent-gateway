@@ -367,6 +367,9 @@ type LLMProxy struct {
 	Bedrock         Bedrock    `yaml:"bedrock"`
 	Providers       Providers  `yaml:"providers"`
 	Capture         LLMCapture `yaml:"capture"`
+	// Detection tees each relayed call to a detection agent, off the
+	// request path; off unless agent_url is set.
+	Detection LLMDetection `yaml:"detection"`
 
 	// PricingFile is an optional path to a JSON file, in prices.json's
 	// shape (pkg/pricing), that overrides the embedded per-model rate
@@ -487,6 +490,25 @@ type LLMCapture struct {
 	// BodyStore optionally offloads captured bodies out of the capture row
 	// (see sink.BodyStore). Only meaningful with StoreBodies.
 	BodyStore BodyStoreConfig `yaml:"body_store"`
+}
+
+// LLMDetection is the detection agent the LLM plane tees each relayed call
+// to (see docs/llm-plane.md "Detection agent"). Detection only: the turn is
+// posted asynchronously after the call completes, nothing on the request
+// path waits for the agent, and nothing is ever blocked.
+type LLMDetection struct {
+	// AgentURL is the agent's base URL (e.g. http://127.0.0.1:8090).
+	// Empty (the default) turns detection off.
+	AgentURL string `yaml:"agent_url"`
+	// Timeout bounds one post of a turn to the agent.
+	Timeout time.Duration `yaml:"timeout"`
+	// QueueSize caps turns waiting to be posted; past it a turn is dropped.
+	QueueSize int `yaml:"queue_size"`
+	// QueueBytes caps the request and response bytes the tee holds
+	// (waiting or being posted); past it a turn is dropped.
+	QueueBytes int64 `yaml:"queue_bytes"`
+	// MaxInFlight caps turns being posted at once.
+	MaxInFlight int `yaml:"max_in_flight"`
 }
 
 // BodyStoreConfig selects where captured LLM request/response bodies live.
@@ -863,6 +885,13 @@ func Default() *Config {
 					S3:   S3BodyStoreConfig{Prefix: "llm-bodies"},
 				},
 			},
+			Detection: LLMDetection{
+				AgentURL:    "", // off
+				Timeout:     5 * time.Second,
+				QueueSize:   1024,
+				QueueBytes:  256 << 20, // 256 MiB
+				MaxInFlight: 8,
+			},
 		},
 		Database: Database{
 			Driver:   "postgres",
@@ -1159,6 +1188,23 @@ func (c *Config) Validate() error {
 
 	if err := validateAbsoluteURL(c.LLMProxy.UpstreamBaseURL); err != nil {
 		return fmt.Errorf("llm_proxy: invalid upstream_base_url: %w", err)
+	}
+	if d := c.LLMProxy.Detection; d.AgentURL != "" {
+		if err := validateAgentURL(d.AgentURL); err != nil {
+			return fmt.Errorf("llm_proxy.detection: invalid agent_url: %w", err)
+		}
+		if d.Timeout <= 0 {
+			return fmt.Errorf("llm_proxy.detection: timeout must be > 0, got %s", d.Timeout)
+		}
+		if d.QueueSize <= 0 {
+			return fmt.Errorf("llm_proxy.detection: queue_size must be > 0, got %d", d.QueueSize)
+		}
+		if d.QueueBytes <= 0 {
+			return fmt.Errorf("llm_proxy.detection: queue_bytes must be > 0, got %d", d.QueueBytes)
+		}
+		if d.MaxInFlight <= 0 {
+			return fmt.Errorf("llm_proxy.detection: max_in_flight must be > 0, got %d", d.MaxInFlight)
+		}
 	}
 
 	if _, err := clientip.New(c.API.TrustedProxies); err != nil {
@@ -1583,6 +1629,26 @@ func validateAbsoluteURL(raw string) error {
 	}
 	if u.Scheme == "" || u.Host == "" {
 		return fmt.Errorf("must be an absolute URL, got %q", raw)
+	}
+	return nil
+}
+
+// validateAgentURL checks llm_proxy.detection.agent_url: an absolute http(s)
+// URL with no userinfo. Errors never echo the value, so a credential put in
+// the URL by mistake does not reach the startup log.
+func validateAgentURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("not a URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("must be an absolute http or https URL")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("must be an absolute URL with a host")
+	}
+	if u.User != nil {
+		return fmt.Errorf("must not carry userinfo (user:password@)")
 	}
 	return nil
 }

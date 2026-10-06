@@ -246,6 +246,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ClickHouse user now also needs `CREATE VIEW`; without it the gateway does
   not start.
 
+- Detection tee for the LLM plane (`llm_proxy.detection.agent_url`,
+  `timeout`, `queue_size`, `queue_bytes`, `max_in_flight`). Each relayed
+  call is posted, after it completes, as one turn (full request body, first
+  1 MiB of a completed 2xx response) to a local detection agent at
+  `POST {agent_url}/v1/turns`. Detection only: the post is asynchronous and
+  bounded, nothing on the request path waits for the agent, and a turn that
+  cannot be queued or posted is dropped and counted in the LLM plane's
+  `/health`. Off unless `agent_url` is set; the contract is in
+  `docs/llm-plane.md`.
 - `examples/13-claude-desktop`: Claude Desktop (macOS) in the console via the
   public [claude-desktop-utility](https://github.com/Tuskira/claude-desktop-utility)
   and `POST /api/v1/ingest`. The walkthrough covers enabling ingest, an

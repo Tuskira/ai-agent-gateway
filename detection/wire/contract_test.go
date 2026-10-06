@@ -54,15 +54,27 @@ func TestGatewayContractFixtures(t *testing.T) {
 		sameJSON(name, got)
 	}
 
+	conv := &Conversation{
+		Version: ConversationVersion, System: []ContentBlock{{Type: ContentText, Text: "be brief"}},
+		Messages: []Message{{Role: "user", Content: []ContentBlock{{Type: ContentText, Text: "hello"}}}},
+		Tools:    []string{"get_time"}, History: HistoryFull,
+	}
 	turn := Turn{
 		V: 1, ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "session-1", KeyID: "key-1",
 		Principal: "user-1", Model: "example-model", Path: "/v1/messages",
 		At:         time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 		StatusCode: 429,
-		Request:    []byte(`{"model":"example-model","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`),
+		Request: []byte(`{"model":"example-model","max_tokens":64,"system":"be brief",` +
+			`"tools":[{"name":"get_time","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hello"}]}`),
+		Dialect: "anthropic", Op: OpGenerate, Conversation: conv,
 	}
 	sameJSON("turn_no_response.json", turn)
 	turn.StatusCode = 200
-	turn.Response = []byte(`{"type":"message","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":1}}`)
+	turn.Response = []byte(`{"type":"message","content":[{"type":"text","text":"hi"},` +
+		`{"type":"tool_use","id":"toolu_1","name":"get_time","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":1}}`)
+	turn.Answer = &Answer{Content: []ContentBlock{
+		{Type: ContentText, Text: "hi"},
+		{Type: ContentToolUse, ID: "toolu_1", Name: "get_time", Input: json.RawMessage(`{}`)},
+	}, StopReason: "tool_use"}
 	sameJSON("turn.json", turn)
 }

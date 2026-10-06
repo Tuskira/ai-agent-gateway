@@ -1,0 +1,259 @@
+{
+  "expect": {
+    "answer": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Il fait 18C."
+        }
+      ],
+      "stop_reason": "end_turn"
+    },
+    "conversation": {
+      "cv": 1,
+      "system": [
+        {
+          "type": "text",
+          "text": "You are terse."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Weather in Paris?"
+            },
+            {
+              "type": "image",
+              "media_type": "image/png",
+              "bytes": 12
+            },
+            {
+              "type": "document",
+              "media_type": "text/plain",
+              "bytes": 10
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "text": "Use the tool."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_01",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "toolu_01",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "18C, clear"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "role": "system",
+          "content": [
+            {
+              "type": "text",
+              "text": "Answer in French."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "opaque",
+              "bytes": 194,
+              "raw": {
+                "type": "server_tool_use",
+                "id": "srvtoolu_01",
+                "name": "web_search",
+                "input": {
+                  "query": "Paris events"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "merci"
+            }
+          ]
+        }
+      ],
+      "tools": [
+        "get_weather",
+        "web_search"
+      ],
+      "history": "full"
+    },
+    "stream_answer": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Je regarde."
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_02",
+          "name": "get_weather",
+          "input": {
+            "city": "Lyon"
+          }
+        }
+      ],
+      "stop_reason": "tool_use"
+    }
+  },
+  "request": {
+    "model": "example-model",
+    "max_tokens": 256,
+    "system": [
+      {
+        "type": "text",
+        "text": "You are terse.",
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ],
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "Current weather",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "type": "web_search_20250305",
+        "name": "web_search"
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Weather in Paris?"
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/png",
+              "data": "iVBORw0KGgo="
+            }
+          },
+          {
+            "type": "document",
+            "source": {
+              "type": "text",
+              "media_type": "text/plain",
+              "data": "trip notes"
+            }
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "Use the tool.",
+            "signature": "c2ln"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01",
+            "name": "get_weather",
+            "input": {
+              "city": "Paris"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01",
+            "content": "18C, clear",
+            "is_error": false
+          }
+        ]
+      },
+      {
+        "role": "system",
+        "content": "Answer in French."
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "server_tool_use",
+            "id": "srvtoolu_01",
+            "name": "web_search",
+            "input": {
+              "query": "Paris events"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": "merci"
+      }
+    ]
+  },
+  "response": {
+    "id": "msg_01",
+    "type": "message",
+    "role": "assistant",
+    "model": "example-model",
+    "content": [
+      {
+        "type": "text",
+        "text": "Il fait 18C."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 40,
+      "output_tokens": 6
+    }
+  },
+  "sse": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_02\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"example-model\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":40,\"output_tokens\":1}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Je \"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"regarde.\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_02\",\"name\":\"get_weather\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\":\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"Lyon\\\"}\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":12}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+}

@@ -15,6 +15,7 @@
 package wire
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/detection/turn"
@@ -38,19 +39,122 @@ const TurnVersion = 1
 // is the first 1 MiB of what the client received and is present only when
 // the upstream answered 2xx and the relay completed. Byte fields are base64
 // on the wire.
+//
+// Op is what the route does (OpGenerate or OpBatch; the gateway sends no
+// other). Dialect names the wire format the gateway read the bodies in
+// ("anthropic", "openai_chat", ...), "" when the route has none. When it
+// could read them, Conversation is the request and Answer the response
+// (when there is one), in one canonical shape whatever the dialect; when it
+// could not, NormalizeError says why and only the raw bodies are there.
+// Items is reserved for batches and not sent yet.
 type Turn struct {
-	V          int       `json:"v,omitempty"`
-	ID         string    `json:"id"`
-	TenantID   string    `json:"tenant_id"`
-	SessionID  string    `json:"session_id,omitempty"`
-	KeyID      string    `json:"key_id,omitempty"`
-	Principal  string    `json:"principal,omitempty"`
-	Model      string    `json:"model,omitempty"`
-	Path       string    `json:"path,omitempty"`
-	At         time.Time `json:"at"`
-	StatusCode int       `json:"status_code,omitempty"`
-	Request    []byte    `json:"request"`
-	Response   []byte    `json:"response,omitempty"`
+	V              int           `json:"v,omitempty"`
+	ID             string        `json:"id"`
+	TenantID       string        `json:"tenant_id"`
+	SessionID      string        `json:"session_id,omitempty"`
+	KeyID          string        `json:"key_id,omitempty"`
+	Principal      string        `json:"principal,omitempty"`
+	Model          string        `json:"model,omitempty"`
+	Path           string        `json:"path,omitempty"`
+	At             time.Time     `json:"at"`
+	StatusCode     int           `json:"status_code,omitempty"`
+	Request        []byte        `json:"request"`
+	Response       []byte        `json:"response,omitempty"`
+	Dialect        string        `json:"dialect,omitempty"`
+	Op             string        `json:"op,omitempty"`
+	Conversation   *Conversation `json:"conversation,omitempty"`
+	Answer         *Answer       `json:"answer,omitempty"`
+	NormalizeError string        `json:"normalize_error,omitempty"`
+	Items          []TurnItem    `json:"items,omitempty"`
+}
+
+// Turn.Op values.
+const (
+	OpGenerate = "generate" // one model call
+	OpBatch    = "batch"    // a batch of model calls submitted at once
+)
+
+// ConversationVersion is Conversation.Version ("cv"): bumped on a change an
+// older reader would misread. Fields are only ever added.
+const ConversationVersion = 1
+
+// Conversation.History values: how much of the conversation the request
+// carries.
+const (
+	HistoryFull       = "full"        // the whole conversation (messages APIs)
+	HistoryServerSide = "server_side" // earlier turns live on the vendor
+	HistoryPrompt     = "prompt"      // a bare prompt, no turns
+)
+
+// Conversation is a request in the canonical shape: the system prompt, the
+// messages oldest first, and the names of the tools offered. Message roles
+// are "user", "assistant" and "system" (a system or developer message after
+// the first turn).
+type Conversation struct {
+	Version  int            `json:"cv"`
+	System   []ContentBlock `json:"system,omitempty"`
+	Messages []Message      `json:"messages"`
+	Tools    []string       `json:"tools,omitempty"`
+	History  string         `json:"history"`
+}
+
+// Message is one conversation turn.
+type Message struct {
+	Role    string         `json:"role"`
+	Content []ContentBlock `json:"content"`
+}
+
+// ContentBlock types.
+const (
+	ContentText       = "text"
+	ContentToolUse    = "tool_use"
+	ContentToolResult = "tool_result"
+	ContentThinking   = "thinking"
+	ContentImage      = "image"
+	ContentDocument   = "document"
+	ContentOpaque     = "opaque"
+)
+
+// MaxOpaqueRaw bounds ContentBlock.Raw. A block whose wire form is larger
+// carries its first MaxOpaqueRaw bytes as a JSON string instead.
+const MaxOpaqueRaw = 64 << 10
+
+// ContentBlock is one content block; which fields are set depends on Type.
+// text and thinking: Text. tool_use: ID, Name, Input (the arguments,
+// verbatim JSON; a JSON string when a cut stream left them incomplete).
+// tool_result: ToolUseID, Content, IsError. image and document: MediaType
+// and Bytes (the size of the inline payload as sent; 0 for a reference such
+// as a URL or file id); the payload itself is dropped. opaque (a kind the
+// canonical shape has no slot for): Raw, the wire block verbatim, or its
+// first MaxOpaqueRaw bytes as a JSON string when larger, and Bytes, its
+// full size.
+type ContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   []ContentBlock  `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+	MediaType string          `json:"media_type,omitempty"`
+	Bytes     int             `json:"bytes,omitempty"`
+	Raw       json.RawMessage `json:"raw,omitempty"`
+}
+
+// Answer is a response in the canonical shape. Truncated is set when the
+// response was cut (the 1 MiB copy ended first, or the stream ended before
+// the model finished): Content is what was read up to there.
+type Answer struct {
+	Content    []ContentBlock `json:"content"`
+	StopReason string         `json:"stop_reason,omitempty"`
+	Truncated  bool           `json:"truncated,omitempty"`
+}
+
+// TurnItem is one request of a batch (reserved: not sent yet).
+type TurnItem struct {
+	CustomID     string       `json:"custom_id"`
+	Conversation Conversation `json:"conversation"`
 }
 
 // MetaOfTurn is the Meta of a gateway turn. Meta has no field for

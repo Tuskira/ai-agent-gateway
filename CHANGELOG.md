@@ -238,8 +238,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Messages) and `openai_chat` (OpenAI Chat Completions requests, the
   inverse of the `openai_compat` provider's). Readers are strict: a repeated
   key, two keys differing only by case, or an unknown role is refused. A
-  `llmtest.RunReader` conformance suite runs them against golden files. No
-  plane uses readers yet; serving behaviour is unchanged.
+  `llmtest.RunReader` conformance suite runs them against golden files.
+  Serving behaviour is unchanged.
+- **Detection tee: route capability and a canonical conversation.** Each
+  LLM provider describes its endpoints (generate, batch, count, utility,
+  and the wire format the client speaks there); the tee sends generation
+  and batch calls only (it used to send every `POST` but a list of utility
+  paths: unknown endpoints such as embeddings are no longer sent) and adds
+  `dialect`, `op`, and, read through the format's `llm.Reader` in the tee's
+  worker, `conversation` and `answer` (with `truncated` for a cut
+  response), or `normalize_error` when the format has no reader yet
+  (Gemini, OpenAI Responses, Bedrock Converse, ...) or the body does not
+  parse. The raw bodies are still sent; the contract stays `v: 1` and the
+  agent's `detection/wire` gains the matching types. See
+  `docs/llm-plane.md`, "Detection agent".
 - **Token Monitoring** console page (`/token-monitoring`): token usage and
   cost by model, by caller (API key, with its role: agent, admin,
   interceptor or other) and by role, for the last 24h / 7d / 30d or custom

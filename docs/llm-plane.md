@@ -300,15 +300,41 @@ repository ships an agent that redacts secrets locally and forwards the
 turn to a remote detection engine, and the contract it speaks to that
 engine (no engine is included): [detection-agent.md](detection-agent.md).
 
-Which calls are sent: every `POST` the plane relays to an upstream, on
-every provider route (Anthropic `/v1/messages`, OpenAI
-`/openai/v1/chat/completions` and `/openai/v1/responses`, Bedrock
-`/model/{id}/invoke` and `converse`, Gemini `…:generateContent`, …),
-except the free utility endpoints (token counting and Message Batches
-management). There is no per-route allow-list in the gateway; the agent
-decides what it can read. Not sent: `GET` calls such as model listing, and
-calls the gateway answered itself without reaching an upstream (a limit
-denial, a registry error, an unbuildable target).
+Which calls are sent: each provider describes its endpoints (a route
+capability: what the endpoint does, and the wire format the client speaks
+there), and the tee sends the calls of the routes that run a generation,
+alone (`op: "generate"`) or as a batch (`op: "batch"`). Token counting,
+model listing, embeddings, batch management and any endpoint a provider
+does not describe are not sent, nor is any method but `POST`. Calls the
+gateway answered itself without reaching an upstream (a limit denial, a
+registry error, an unbuildable target) are not sent either.
+
+| Route | `op` | `dialect` (reader) | Read now |
+|---|---|---|---|
+| Anthropic `POST /v1/messages` | `generate` | `anthropic` | yes |
+| Anthropic `POST /v1/complete` | `generate` | none | no |
+| Anthropic `POST /v1/messages/batches` | `batch` | `anthropic_batch` | no (reserved) |
+| Anthropic `/v1/messages/count_tokens` | `count` | | not sent |
+| Anthropic batch management, `/v1/models` | `utility` | | not sent |
+| OpenAI `POST …/chat/completions` | `generate` | `openai_chat` | yes |
+| OpenAI `POST …/responses` | `generate` | `openai_responses` | no (reserved) |
+| OpenAI `POST …/completions` | `generate` | none | no |
+| OpenAI `…/responses/input_tokens` | `count` | | not sent |
+| OpenAI `…/models`, `…/embeddings`, `…/moderations`, `…/responses/{id}…` | `utility` | | not sent |
+| Gemini `…:generateContent`, `…:streamGenerateContent` | `generate` | `gemini` | no (reserved) |
+| Gemini `…:batchGenerateContent` | `batch` | none | no |
+| Gemini `…:countTokens` | `count` | | not sent |
+| Gemini `…:embedContent`, `…:batchEmbedContents` | `utility` | | not sent |
+| Bedrock `/model/{id}/invoke`, `invoke-with-response-stream`, Anthropic model id | `generate` | `anthropic` | yes |
+| Bedrock `/model/{id}/invoke`, `invoke-with-response-stream`, other models | `generate` | `bedrock_invoke` | no (reserved) |
+| Bedrock `/model/{id}/converse`, `converse-stream` | `generate` | `bedrock_converse` | no (reserved) |
+| Bedrock `/model/{id}/count-tokens` | `count` | | not sent |
+
+The paths are the provider's own (after the `/{provider}/` prefix); a
+query string and a trailing slash do not change the route. An Anthropic
+model id on Bedrock is `anthropic.<model>` or an inference profile
+`<prefix>.anthropic.<model>`. The `dialect` is also the format a gateway
+error on that route would be rendered in.
 
 Flow for one call:
 
@@ -344,6 +370,35 @@ survives. Canonical examples (shared with the agent's tests) live in
 | `status_code` | number | Status the upstream answered with (what the client got). |
 | `request` | base64 | The client's request body, exactly as received, in full. |
 | `response` | base64 | The first 1 MiB (1048576 bytes) of what the client received. Present only when the upstream answered `2xx` **and** the relay to the client completed; absent for an error status, a client that disconnected mid-stream, an upstream that failed mid-body, or the stream deadline. A partial response is never sent. |
+| `dialect` | string | The wire format the route speaks (see the table above); omitted when it has none. |
+| `op` | string | `generate` or `batch`. |
+| `conversation` | object | The request read through the dialect's reader, in the canonical shape below. Omitted when it could not be read. |
+| `answer` | object | The response read the same way: `content` (blocks), `stop_reason`, and `truncated` when the response was cut (the 1 MiB copy ended, or the stream ended before the model finished): `content` is then what was read up to the cut. Omitted when there is no response or it could not be read. |
+| `normalize_error` | string | Why `conversation` or `answer` is missing (or, for a whole response cut at 1 MiB, an empty `truncated` answer): `no reader for <dialect>` (a reserved dialect), `no reader for this route` (none), `decode request: …`, `decode response: …`. |
+| `items` | array | Reserved for batches (`custom_id`, `conversation`); not sent yet. |
+
+The raw `request` and `response` are sent whether or not they could be
+read: the agent scans them for secrets, and they never leave the host (the
+agent is on loopback). Reading happens in the tee's workers, after the
+call, off the request path.
+
+The canonical `conversation` (version `cv: 1`) is a small projection of
+the gateway's neutral LLM types, the same for every dialect:
+
+- `system`: blocks; `messages`: `{role, content}` oldest first, roles
+  `user`, `assistant`, and `system` (a system or developer message after
+  the first turn); `tools`: the names of the tools offered; `history`:
+  `full` (the request carries the whole conversation; `server_side` and
+  `prompt` are reserved for formats that do not).
+- Blocks: `text` and `thinking` (`text`); `tool_use` (`id`, `name`,
+  `input`: the arguments as JSON, or a JSON string when a cut stream left
+  them incomplete); `tool_result` (`tool_use_id`, `content`, `is_error`);
+  `image` and `document` (`media_type`, `bytes`: the size of the inline
+  payload as sent, 0 for a URL or file reference; the payload itself is
+  dropped); `opaque`, any other kind (`raw`: its wire form, or past 64 KiB
+  a JSON string of its first 64 KiB; `bytes`: its full size).
+
+Fields are only ever added; `v` stays `1`.
 
 ### Queue, limits and drops
 

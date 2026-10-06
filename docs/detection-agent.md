@@ -259,6 +259,19 @@ Fields (`wire.Turn`): `v`, `id`, `tenant_id`, `session_id`, `key_id`,
 request body, in full) and `response` (base64, the first 1 MiB, present only
 when the upstream answered `2xx` and the relay completed).
 
+The gateway also sends `dialect` (the wire format of the route), `op`
+(`generate` or `batch`), and, when it could read the bodies, `conversation`
+and `answer`: the request and response in one canonical shape whatever the
+provider (`wire.Conversation`, `wire.Answer`), with `answer.truncated` set
+when the response was cut. When it could not (a dialect with no reader yet,
+such as Gemini or the OpenAI Responses API, or a body that does not parse),
+`normalize_error` says why and only the raw bodies are there. `items` is
+reserved for batches. The per-route table and the canonical shape are in
+[llm-plane.md](llm-plane.md#contract). This agent decodes these fields
+(`wire.Turn`) but still extracts from the raw `request` and `response`;
+reading `conversation` and `answer` instead comes in the next release. The
+raw bodies keep coming either way, for secret scanning on the host.
+
 | Answer | When |
 |---|---|
 | `202` empty body | The turn is accepted: queued, or shed with a `not_judged` marker when the queue is full. The agent answers before it talks to the engine. |

@@ -117,7 +117,13 @@ The LLM plane's detection tee (`llm_proxy.detection`) is not a
 `pkg/sink.LogSink`: a sink only sees the `LLMCall` record, whose bodies are
 cut to the capture cap and absent when `store_bodies` is off, while the
 detection agent needs the full request body. It lives beside the recorder
-in `internal/llmplane` and gets the body the router already holds.
+in `internal/llmplane` and gets the body the router already holds. Which
+calls it sends is the providers' route capability: an optional
+`Route(method, upstreamPath)` on an `internal/llmplane` Provider says what
+an endpoint does (`generate`, `batch`, `count`, `utility`) and which
+`llm.Reader` reads its wire format; the tee sends `generate` and `batch`
+calls (this replaces a list of utility path suffixes) and reads their
+bodies through that Reader into a canonical conversation.
 
 A plugin implements one of these interfaces, registers it (a driver name
 for `pkg/store.Register` or `pkg/session.Register`, or is wired directly
@@ -138,11 +144,12 @@ by wire-format name (`llm.RegisterReader`, `llm.ReaderByName`): `anthropic`
 (the Anthropic Messages dialect) and `openai_chat` (OpenAI Chat
 Completions, in `pkg/llm/openaicompat`). They are strict where two parsers
 could disagree (a repeated key, two keys differing only by case, an unknown
-role), so what is read is what the vendor executes. Nothing in the planes
-calls them yet; they are the building block for looking at every LLM call
-as one neutral conversation whatever format it was made in (for example to
-hand a detection step the same input for every provider). A new format's
-Reader passes `pkg/llm/llmtest.RunReader`.
+role), so what is read is what the vendor executes. The detection tee
+uses them to hand the detection agent every call as one canonical
+conversation whatever format it was made in; a route whose format has no
+Reader yet is sent raw, with the reason. A new format's Reader passes
+`pkg/llm/llmtest.RunReader` and, once registered under the name its routes
+already declare, is used with no plane change.
 
 The session seam is what lets the MCP plane scale out. `internal/
 dataplane/session.Manager` keeps the session logic — minting the id,
@@ -675,7 +682,9 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
     (stdout/otel/clickhouse), independent of step 11.
 13. With `llm_proxy.detection.agent_url` set, the detection tee queues the
     full request body and the first 1 MiB of the response (a complete 2xx
-    relay only) and posts them to a local detection agent asynchronously;
+    relay only) of a generation or batch route, reads them into a
+    canonical conversation in its worker when the route's format has a
+    Reader, and posts them to a local detection agent asynchronously;
     nothing waits on it — see [llm-plane.md](llm-plane.md#detection-agent)
     and, for the agent this repository ships (a separate Go module,
     `detection/`), [detection-agent.md](detection-agent.md).

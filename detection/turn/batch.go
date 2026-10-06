@@ -6,10 +6,10 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/detection/wire/conv"
 )
 
-// ItemUnreadReason is the not-judged detail of a batch request whose
+// itemUnreadReason is the not-judged detail of a batch request whose
 // canonical conversation has nothing to read (no messages, or a version
 // newer than this package).
-const ItemUnreadReason = "not judged: the batch request has no conversation the agent can read"
+const itemUnreadReason = "not judged: the batch request has no conversation the agent can read"
 
 // capItemID bounds a batch request's id as it leaves the host (ItemID).
 const capItemID = 128
@@ -58,7 +58,7 @@ func (b *Batch) values(ctx context.Context) ([]secretMatch, error) {
 // PrepareItem is PrepareCallRequest for one request of the batch, read from
 // its canonical conversation: the request stage, with every value found in
 // the batch's raw body (and in this conversation) removed. A conversation
-// it cannot read is a NotJudgedTurn (ItemUnreadReason); one cut short by
+// it cannot read is a NotJudgedTurn (itemUnreadReason); one cut short by
 // ctx, a NotJudgedTurn (DeadlineReason).
 func (b *Batch) PrepareItem(ctx context.Context, c *conv.Conversation) PreparedTurn {
 	r := newReader(ctx)
@@ -67,7 +67,7 @@ func (b *Batch) PrepareItem(ctx context.Context, c *conv.Conversation) PreparedT
 		return NotJudgedTurn(StageRequest, r.reason)
 	}
 	if !ok {
-		return NotJudgedTurn(StageRequest, ItemUnreadReason)
+		return NotJudgedTurn(StageRequest, itemUnreadReason)
 	}
 	pre, err := b.values(ctx)
 	if err != nil {

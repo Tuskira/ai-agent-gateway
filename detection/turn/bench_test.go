@@ -75,7 +75,7 @@ func BenchmarkPrepareRequest(b *testing.B) {
 					resetScanCache()
 					b.StartTimer()
 				}
-				PrepareRequest(c.body)
+				prepareRequest(c.body)
 			}
 		})
 	}
@@ -90,7 +90,7 @@ func BenchmarkPrepareResponse(b *testing.B) {
 		b.StopTimer()
 		resetScanCache()
 		b.StartTimer()
-		PrepareResponse([]byte(claudeCodeTurn), resp)
+		prepareResponse([]byte(claudeCodeTurn), resp)
 	}
 }
 

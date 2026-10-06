@@ -80,7 +80,7 @@ func TestScanSecretsConcurrent(t *testing.T) {
 
 func TestPrivateKeyBlockRedactedWhole(t *testing.T) {
 	body := `{"messages":[{"role":"user","content":"check this\n` + join("-----BEGIN OPENSSH ", "PRIVATE KEY-----") + `\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\nAAAAEbm9uZQAAAAAAAAAB\n` + join("-----END OPENSSH ", "PRIVATE KEY-----") + `\nthanks"}]}`
-	pt := PrepareRequest([]byte(body))
+	pt := prepareRequest([]byte(body))
 	if hits := pt.Secrets; len(hits) != 1 || hits[0].Kind != "private-key" {
 		t.Fatalf("hits = %+v", hits)
 	}
@@ -103,7 +103,7 @@ func TestAllowCommentDoesNotHideSecret(t *testing.T) {
 		if got := scanSecrets(line); len(got) != 1 || got[0].secret != key {
 			t.Errorf("%q: found %+v, want the key", line, got)
 		}
-		pt := PrepareRequest(userBody("deploy with " + line))
+		pt := prepareRequest(userBody("deploy with " + line))
 		if l := leak(t, pt, key); l != "" {
 			t.Errorf("%q: leaked %s", line, l)
 		}

@@ -19,33 +19,19 @@ type Call struct {
 	Answer       *conv.Answer
 }
 
-// RequestStateFromConversation is RequestState over a canonical
-// conversation: the same fields, by the same rules, whatever wire format
-// the gateway read. ok is false when there is nothing to read (no
-// messages) or the conversation's version is newer than this package.
+// extractConversation is extractRequest over a canonical conversation:
+// the same fields, by the same rules, whatever wire format the gateway
+// read, unclipped and read within r's bounds. ok is false when there is
+// nothing to read (no messages) or the conversation's version is newer
+// than this package.
 //
-// Besides what RequestState reads, the text of a text document and the
+// Besides what extractRequest reads, the text of a text document and the
 // wire form of an opaque block (a kind the canonical shape has no slot
 // for) in the new turn's user or system messages are harness_text, and in
 // a tool result its content. When the request does not carry the whole
 // conversation (history server_side or prompt), user_goal is only the
 // turn's own user_text: the earlier turns are not all there to search,
 // and an empty goal is unknown, not absent.
-func RequestStateFromConversation(c *conv.Conversation) (State, bool) {
-	s, ok := extractConversation(newReader(context.Background()), c)
-	s.clip()
-	return s, ok
-}
-
-// ResponseStateFromAnswer is ResponseState over a canonical answer.
-func ResponseStateFromAnswer(a *conv.Answer) State {
-	s := extractAnswer(newReader(context.Background()), a)
-	s.clip()
-	return s
-}
-
-// extractConversation is RequestStateFromConversation unclipped, read
-// within r's bounds (as extractRequest reads a raw body).
 func extractConversation(r *reader, c *conv.Conversation) (s State, ok bool) {
 	if c == nil || c.Version > conv.ConversationVersion || len(c.Messages) == 0 {
 		return s, false
@@ -134,8 +120,8 @@ func extractConversation(r *reader, c *conv.Conversation) (s State, ok bool) {
 	return s, true
 }
 
-// extractAnswer is ResponseStateFromAnswer unclipped, read within r's
-// bounds.
+// extractAnswer is extractResponse over a canonical answer, read within
+// r's bounds.
 func extractAnswer(r *reader, a *conv.Answer) State {
 	var s State
 	if a == nil || !r.checkBlocks(a.Content, 0) {

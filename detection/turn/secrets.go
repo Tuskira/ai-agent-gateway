@@ -131,7 +131,7 @@ func touches(w string, m secretMatch, lo, hi bool) (bool, bool) {
 
 // runeStart moves i to the nearest rune start in direction dir (1 or -1).
 func runeStart(text string, i, dir int) int {
-	for i > 0 && i < len(text) && !UTF8Start(text[i]) {
+	for i > 0 && i < len(text) && !utf8Start(text[i]) {
 		i += dir
 	}
 	return i
@@ -451,7 +451,7 @@ func (s *State) scrubWith(ctx context.Context, st Stage, extra []string, pre []s
 	return hits, nil
 }
 
-// fits reports whether a string of length l is within cap n. Clip's own
+// fits reports whether a string of length l is within cap n. clipString's own
 // output is n plus its marker, so that is within the cap too.
 func fits(l, n int) bool { return l <= n+len(clipMark) }
 
@@ -518,8 +518,8 @@ func splitAt(text, v string, i int) (int, bool) {
 // so values from a forged or un-redacted turn are not retained.
 var scanCacheOn atomic.Bool
 
-// EnableScanCache turns on the scan cache for PrepareRequest and
-// PrepareResponse in this process. Call it once at start-up, in the agent
+// EnableScanCache turns on the scan cache for the Prepare* functions
+// in this process. Call it once at start-up, in the agent
 // only: it keeps raw secret values in memory (see scanCache).
 func EnableScanCache() { scanCacheOn.Store(true) }
 

@@ -12,7 +12,7 @@ import (
 // found and redacted in every string, and only then was each clipped. Only this redacted state, the ids that
 // point decisions at their events, and where each secret was found travel.
 //
-// PrepareRequest / PrepareResponse build it (the agent's half) and
+// PrepareRequestContext / PrepareResponseContext build it (the agent's half) and
 // the engine decides it (the engine's half); deciding a prepared turn is
 // exactly the same as doing both steps at once, so the split cannot
 // change a decision.
@@ -60,16 +60,11 @@ type SecretHit struct {
 	Index int    `json:"index"`
 }
 
-// PrepareRequest is the customer-side half of judging a request body.
-func PrepareRequest(body []byte) PreparedTurn {
-	return PrepareRequestContext(context.Background(), body)
-}
-
-// PrepareRequestContext is PrepareRequest bounded by ctx: once ctx is done
-// it stops and returns a NotJudgedTurn (DeadlineReason), never a turn left
-// half redacted. Extraction and the scan are linear in the body (every
-// byte of every string is scanned), so only a hostile or huge body runs
-// into a deadline.
+// PrepareRequestContext is the customer-side half of judging a request
+// body, bounded by ctx: once ctx is done it stops and returns a
+// NotJudgedTurn (DeadlineReason), never a turn left half redacted.
+// Extraction and the scan are linear in the body (every byte of every
+// string is scanned), so only a hostile or huge body runs into a deadline.
 func PrepareRequestContext(ctx context.Context, body []byte) PreparedTurn {
 	r := newReader(ctx)
 	s, ok := extractRequest(r, body)
@@ -119,17 +114,12 @@ func unreadableTurn(ctx context.Context, body []byte) (PreparedTurn, error) {
 	return t, nil
 }
 
-// PrepareResponse is the customer-side half of judging a response body
+// PrepareResponseContext is the customer-side half of judging a response body
 // against the request that produced it (for the user's goal and the tool
 // results). It reports false when the reply has nothing to judge. A value
 // found anywhere in the request (the user's turn, the history, the system
 // prompt) is removed from the reply too: a reply echoes what it was given.
-func PrepareResponse(reqBody, respBody []byte) (PreparedTurn, bool) {
-	return PrepareResponseContext(context.Background(), reqBody, respBody)
-}
-
-// PrepareResponseContext is PrepareResponse bounded by ctx, as
-// PrepareRequestContext is.
+// It is bounded by ctx, as PrepareRequestContext is.
 func PrepareResponseContext(ctx context.Context, reqBody, respBody []byte) (PreparedTurn, bool) {
 	r := newReader(ctx)
 	s := extractResponse(r, respBody)
@@ -205,7 +195,7 @@ const (
 	maxSecretHits = 256 // one hit per gitleaks rule; more than it has rules
 	// forgedSlack is how much more than its cap Normalized lets a string
 	// keep, at each side of the cut, before it scans: no honest agent sends
-	// more than the cap (and Clip's marker), so the rest of a longer string
+	// more than the cap (and clipString's marker), so the rest of a longer string
 	// is cut first, keeping the scan's work at a few KB per string.
 	forgedSlack = 4 << 10
 	// capNotJudgedRaw bounds a received not-judged reason before it is
@@ -222,20 +212,20 @@ const (
 // pass a raw secret on to the judge model or the results store.
 //
 // Its work is bounded whatever was received: every string is first cut
-// (head and tail, as Clip cuts) to its cap plus forgedSlack at each side,
+// (head and tail, as clipString cuts) to its cap plus forgedSlack at each side,
 // the reason to capNotJudgedRaw, the lists to their item caps and the hits
 // to maxSecretHits, and only then scanned; hits are checked by their shape
 // and one scan of them all.
 //
-// It is idempotent and changes nothing in a turn PrepareRequest,
-// PrepareResponse or NotJudgedTurn built (scrub's output is a fixed point,
-// and no string of it is longer than its cap and Clip's marker).
+// It is idempotent and changes nothing in a turn PrepareRequestContext,
+// PrepareResponseContext or NotJudgedTurn built (scrub's output is a fixed point,
+// and no string of it is longer than its cap and clipString's marker).
 func (t PreparedTurn) Normalized() PreparedTurn {
 	if t.normalized {
 		return t
 	}
 	if t.NotJudged != "" {
-		r := validUTF8(Clip(t.NotJudged, capNotJudgedRaw))
+		r := validUTF8(clipString(t.NotJudged, capNotJudgedRaw))
 		return PreparedTurn{Stage: t.Stage, NotJudged: clipRedacted(r, capNotJudged, byLength(scanSecrets(r))), normalized: true}
 	}
 	t.Secrets = t.Secrets[:min(len(t.Secrets), maxSecretHits)]
@@ -256,7 +246,7 @@ func (t PreparedTurn) Normalized() PreparedTurn {
 		s.ResponseText, s.ResponseToolCalls = "", nil
 	}
 	for _, r := range s.texts(t.Stage) {
-		*r.p = Clip(*r.p, r.n+2*min(r.n, forgedSlack))
+		*r.p = clipString(*r.p, r.n+2*min(r.n, forgedSlack))
 	}
 	found, _ := s.scrub(context.Background(), t.Stage, nil, false) // no deadline: never an error; never the cache
 	out := newTurn(t.Stage, s, nil)

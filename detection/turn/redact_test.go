@@ -141,9 +141,9 @@ func (f cutField) field(text string, pre, post int) string {
 func (f cutField) prepare(field string) PreparedTurn {
 	req, resp := f.build(field)
 	if resp == nil {
-		return PrepareRequest(req)
+		return prepareRequest(req)
 	}
-	pt, _ := PrepareResponse(req, resp)
+	pt, _ := prepareResponse(req, resp)
 	return pt
 }
 
@@ -205,14 +205,14 @@ func TestSecretRemovedFromEveryString(t *testing.T) {
 	 {"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"aws_secret_access_key = ` + v + `\nregion = us-east-1"}]}]}`
 	resp := `{"content":[{"type":"text","text":"I found ` + v + ` in the file."},
 	 {"type":"tool_use","id":"tu_r","name":"Bash","input":{"cmd":"rotate --old ` + v + ` && aws_secret_access_key = ` + v + `"}}]}`
-	pr := PrepareRequest([]byte(req))
+	pr := prepareRequest([]byte(req))
 	if l := leak(t, pr, v); l != "" {
 		t.Errorf("request: leaked %s", l)
 	}
 	if len(pr.Secrets) != 1 || pr.Secrets[0] != (SecretHit{Kind: "generic-api-key", Field: "tool_results", Index: 0}) {
 		t.Errorf("request hits = %+v", pr.Secrets)
 	}
-	pp, ok := PrepareResponse([]byte(req), []byte(resp))
+	pp, ok := prepareResponse([]byte(req), []byte(resp))
 	if !ok {
 		t.Fatal("response not prepared")
 	}
@@ -224,7 +224,7 @@ func TestSecretRemovedFromEveryString(t *testing.T) {
 	}
 
 	// Deterministic: the same body prepares to the same bytes.
-	a, _ := json.Marshal(PrepareRequest([]byte(req)))
+	a, _ := json.Marshal(prepareRequest([]byte(req)))
 	b, _ := json.Marshal(pr)
 	if string(a) != string(b) {
 		t.Errorf("not deterministic:\n%s\n%s", a, b)
@@ -235,7 +235,7 @@ func TestSecretRemovedFromEveryString(t *testing.T) {
 	short := `{"messages":[{"role":"user","content":"postgres://app:abcd1@db:5432/x"},
 	 {"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{}}]},
 	 {"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"step abcd1 done"}]}]}`
-	ps := PrepareRequest([]byte(short))
+	ps := prepareRequest([]byte(short))
 	if r := ps.State.ToolResults; len(r) != 1 || r[0].Content != "step abcd1 done" {
 		t.Errorf("short value blanked elsewhere: %+v", r)
 	}
@@ -276,7 +276,7 @@ func TestSecretFoundAnywhereInBodyRemoved(t *testing.T) {
 		"trailing prefill": `{"messages":[{"role":"user","content":"deploy now"},` + trailing + `,
 		 {"role":"assistant","content":"Sure, with ` + ctx + `"}]}`,
 	} {
-		pt := PrepareRequest([]byte(body))
+		pt := prepareRequest([]byte(body))
 		if pt.Unreadable {
 			t.Fatalf("%s: unreadable", name)
 		}
@@ -291,7 +291,7 @@ func TestSecretFoundAnywhereInBodyRemoved(t *testing.T) {
 		}
 	}
 	// The prefill is still not judged: it is not the user's turn.
-	pt := PrepareRequest([]byte(`{"messages":[{"role":"user","content":"deploy now"},{"role":"assistant","content":"Sure, with ` + ctx + `"}]}`))
+	pt := prepareRequest([]byte(`{"messages":[{"role":"user","content":"deploy now"},{"role":"assistant","content":"Sure, with ` + ctx + `"}]}`))
 	if st := stateJSON(t, pt); st["user_text"] != "deploy now" || len(st) != 2 {
 		t.Errorf("prefill judged: %v", st)
 	}
@@ -304,7 +304,7 @@ func TestSecretFromRequestRemovedFromReply(t *testing.T) {
 	req := `{"messages":[{"role":"system","content":"env: DB_PASSWORD=\"` + v + `\""},{"role":"user","content":"connect to the db"}]}`
 	resp := `{"type":"message","role":"assistant","content":[{"type":"text","text":"Connecting with ` + v + ` now."},
 	 {"type":"tool_use","id":"tu_r","name":"Bash","input":{"cmd":"psql --password ` + v + `"}}]}`
-	pt, ok := PrepareResponse([]byte(req), []byte(resp))
+	pt, ok := prepareResponse([]byte(req), []byte(resp))
 	if !ok {
 		t.Fatal("response not prepared")
 	}
@@ -324,7 +324,7 @@ func TestOverlappingSecretsRedactedWhole(t *testing.T) {
 	both := join("Zx9Qw7Er5Ty3", "Ui1OpMn8Bv6Cx4Za2")
 	body, _ := json.Marshal(map[string]any{"messages": []map[string]any{{"role": "user",
 		"content": `my api_key = "` + s1 + `" and token = "` + s2 + `"` + "\nconcat: " + both + " end"}}})
-	pt := PrepareRequest(body)
+	pt := prepareRequest(body)
 	for _, v := range []string{s1, s2} {
 		if l := leak(t, pt, v); l != "" {
 			t.Errorf("leaked %s", l)
@@ -369,7 +369,7 @@ func TestEscapedSecretInToolInputRedacted(t *testing.T) {
 		{`found inside the input's JSON`, quote, toolTurn(`{"url":"postgres://app:`+strings.ReplaceAll(quote, `"`, bs+`"`)+`@db:5432/x"}`,
 			"the password is "+quote)},
 	} {
-		pt := PrepareRequest(c.body)
+		pt := prepareRequest(c.body)
 		if pt.Unreadable || len(pt.State.PriorToolCalls) != 1 {
 			t.Fatalf("%s: not read: %+v", c.name, pt)
 		}
@@ -403,7 +403,7 @@ func TestSecretInMiddleOfLongHistoryRemoved(t *testing.T) {
 		}})
 		for _, cache := range []bool{false, true} {
 			withScanCache(t, cache)
-			pt := PrepareRequest(body)
+			pt := prepareRequest(body)
 			if pt.NotJudged != "" {
 				t.Fatalf("%d bytes: not judged: %s", size, pt.NotJudged)
 			}

@@ -440,7 +440,7 @@ func TestWireVersion(t *testing.T) {
 		t.Errorf("code %d, verdict %+v; want a fail-open answer", code, v)
 	}
 	f.next(t)
-	_, err := a.detect(context.Background(), wire.DetectRequest{Meta: wire.Meta{TenantID: "t1", RequestID: "r"}, Turn: turn.PrepareRequest([]byte(`{}`))})
+	_, err := a.detect(context.Background(), wire.DetectRequest{Meta: wire.Meta{TenantID: "t1", RequestID: "r"}, Turn: turn.PrepareRequestContext(context.Background(), []byte(`{}`))})
 	if err == nil || !strings.Contains(err.Error(), "upgrade the engine") || !strings.Contains(err.Error(), "wire version 1") {
 		t.Errorf("err = %v, want a clear version error", err)
 	}

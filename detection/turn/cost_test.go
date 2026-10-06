@@ -68,7 +68,7 @@ func TestPrepareDeadlineSendsNotJudged(t *testing.T) {
 	}
 	// A deadline that falls while it runs: not judged, or the whole turn.
 	big := keyBlockBody(1 << 20)
-	whole := PrepareRequest(big)
+	whole := prepareRequest(big)
 	for _, d := range []time.Duration{time.Microsecond, time.Millisecond, 10 * time.Millisecond, 50 * time.Millisecond} {
 		resetScanCache()
 		ctx, cancel := context.WithTimeout(context.Background(), d)

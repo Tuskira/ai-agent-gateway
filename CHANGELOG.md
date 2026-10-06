@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`detection/turn` API trimmed.** Exported helpers with no callers
+  outside the package's own tests are removed or unexported:
+  `RequestState`, `ResponseState`, `RequestStateFromConversation` and
+  `ResponseStateFromAnswer` (removed), `PrepareRequest` and
+  `PrepareResponse` (use `PrepareRequestContext` /
+  `PrepareResponseContext`, which a deadline bounds), and `Clip`,
+  `UTF8Start` and `ItemUnreadReason` (unexported).
 - **`pkg/analytics` seam:** `Reader.Overview`, `SkillsSummary`, `SkillUsage`,
   `MCPToolUsage` and `MCPServerCalls` take an `analytics.Period`
   (a resolved window with its previous period and granularity) instead of

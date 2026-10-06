@@ -3,11 +3,10 @@ package turn
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"strings"
-
-	"encoding/json/jsontext"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/detection/wire/conv"
 )

@@ -72,7 +72,7 @@ func TestDeeplyNestedBodyGivesUpWithinDeadline(t *testing.T) {
 // same way from the raw body and from the canonical conversation.
 func TestNestedToolResultsFlattened(t *testing.T) {
 	want := strings.TrimSuffix(strings.Repeat("level\n", maxBlockDepth-1), "\n")
-	raw := PrepareRequest(nestedBody(maxBlockDepth, 0))
+	raw := prepareRequest(nestedBody(maxBlockDepth, 0))
 	canonical := PrepareCallRequest(context.Background(), Call{Request: userBody("read it"), Conversation: nestedConversation(maxBlockDepth, 0)})
 	for name, pt := range map[string]PreparedTurn{"raw": raw, "canonical": canonical} {
 		if pt.NotJudged != "" || len(pt.State.ToolResults) != 1 {
@@ -83,7 +83,7 @@ func TestNestedToolResultsFlattened(t *testing.T) {
 		}
 	}
 	for name, pt := range map[string]PreparedTurn{
-		"raw":       PrepareRequest(nestedBody(maxBlockDepth+1, 0)),
+		"raw":       prepareRequest(nestedBody(maxBlockDepth+1, 0)),
 		"canonical": PrepareCallRequest(context.Background(), Call{Request: userBody("read it"), Conversation: nestedConversation(maxBlockDepth+1, 0)}),
 	} {
 		if pt.NotJudged != nestingReason {
@@ -99,7 +99,7 @@ func TestTooManyBlocksNotJudged(t *testing.T) {
 		bs[i] = map[string]any{"type": "text", "text": "x"}
 	}
 	body, _ := json.Marshal(map[string]any{"messages": []map[string]any{{"role": "user", "content": bs}}})
-	if pt := PrepareRequest(body); pt.NotJudged != blocksReason {
+	if pt := prepareRequest(body); pt.NotJudged != blocksReason {
 		t.Errorf("raw: not judged %q", pt.NotJudged)
 	}
 	blocks := make([]conv.ContentBlock, maxBlocks+1)

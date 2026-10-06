@@ -124,7 +124,9 @@ const MaxOpaqueRaw = 64 << 10
 // verbatim JSON; a JSON string when a cut stream left them incomplete).
 // tool_result: ToolUseID, Content, IsError. image and document: MediaType
 // and Bytes (the size of the inline payload as sent; 0 for a reference such
-// as a URL or file id); the payload itself is dropped. opaque (a kind the
+// as a URL or file id); the payload itself is dropped, except that a text
+// document (plain text, a text/* media type, or a content source's text
+// blocks) keeps its text in Text. opaque (a kind the
 // canonical shape has no slot for): Raw, the wire block verbatim, or its
 // first MaxOpaqueRaw bytes as a JSON string when larger, and Bytes, its
 // full size.

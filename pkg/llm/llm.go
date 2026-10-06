@@ -23,11 +23,11 @@
 // Reader "anthropic_complete"), pkg/llm/openaicompat (Provider
 // "openai_compat", Readers "openai_chat", "openai_responses" and
 // "openai_completions"), pkg/llm/gemini (Reader "gemini") and
-// pkg/llm/bedrock (Readers "bedrock-converse" and "bedrock-invoke"). A
+// pkg/llm/bedrock (Readers "bedrock_converse" and "bedrock_invoke"). A
 // binary blank-imports the adapters it wants, exactly as cmd/gateway does.
-// A new vendor is one
-// package that implements Provider, registers it, and passes
-// pkg/llm/llmtest -- see CONTRIBUTING.md, "Adding an LLM provider adapter".
+// A new vendor is one package that implements Provider, registers it, and
+// passes pkg/llm/llmtest -- see CONTRIBUTING.md, "Adding an LLM provider
+// adapter".
 package llm
 
 import (
@@ -101,14 +101,16 @@ type Request struct {
 // HistoryServerSide when the vendor holds the earlier turns (an OpenAI
 // Responses request naming previous_response_id or conversation), or
 // HistoryPrompt when the request is one flat prompt text (a legacy
-// completion request; any turns in Messages were split out of it best
-// effort). With the key absent, Messages is the conversation as sent. A
-// Reader refuses a body that sets this key itself, so a client cannot
-// forge it.
+// completion request, or a prompt-style Bedrock invoke body; any turns in
+// Messages were split out of it best effort). With the key absent, Messages
+// is the whole conversation as sent (HistoryFull). A Reader that sets the
+// key refuses a body that sets it itself, so a client cannot forge it.
 const HistoryKey = "_gateway_history"
 
-// The HistoryKey values.
+// The history values: HistoryFull is implied when HistoryKey is absent and
+// is never set.
 const (
+	HistoryFull       = "full"
 	HistoryServerSide = "server_side"
 	HistoryPrompt     = "prompt"
 )

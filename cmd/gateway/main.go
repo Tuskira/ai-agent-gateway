@@ -45,8 +45,12 @@ import (
 	// Blank-imported for their init() side effects: register the LLM
 	// translation adapters -- dialect "anthropic", providers "anthropic" and
 	// "openai_compat" -- with pkg/llm (a model registry target of another
-	// wire format than the client's is served through them).
+	// wire format than the client's is served through them), and every
+	// Reader the detection tee reads a route's bodies with (anthropic,
+	// openai, gemini and bedrock wire formats).
 	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/anthropic"
+	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/bedrock"
+	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/gemini"
 	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/openaicompat"
 	// Blank-imported for their init() side effects: register session
 	// drivers "memory" and "redis" with pkg/session. See pkg/session.Open.

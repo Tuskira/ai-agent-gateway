@@ -30,7 +30,7 @@
         }
       ],
       "extra": {
-        "history": "prompt"
+        "_gateway_history": "prompt"
       }
     },
     "stream_text": "Once upon ",

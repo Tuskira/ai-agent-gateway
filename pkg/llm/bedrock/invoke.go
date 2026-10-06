@@ -13,16 +13,6 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/openaicompat"
 )
 
-// HistoryKey is the Request.Extra key the invoke Reader sets, to
-// HistoryPrompt, on a request read from a prompt-style body: the whole body
-// is one prompt string, read as one user text turn, so any earlier turns
-// are inside that text (rendered by the client's chat template) rather than
-// in Request.Messages.
-const (
-	HistoryKey    = "history"
-	HistoryPrompt = "prompt"
-)
-
 // InvokeReader is the llm.Reader for InvokeModel and
 // InvokeModelWithResponseStream bodies of non-Anthropic model families
 // (POST /model/{modelId}/invoke and /invoke-with-response-stream). The body
@@ -33,14 +23,15 @@ const (
 //     results[]; stream chunks {outputText, completionReason}.
 //   - Prompt-style bodies (Meta Llama, Mistral's text models, and any other
 //     family that sends {prompt, ...}): one user text turn, with
-//     Extra[HistoryKey] = HistoryPrompt. Responses: Llama's {generation,
-//     stop_reason} and Mistral's {outputs[]{text, stop_reason}}.
+//     Extra[llm.HistoryKey] = llm.HistoryPrompt (earlier turns, if any, are
+//     inside that text). Responses: Llama's {generation, stop_reason} and
+//     Mistral's {outputs[]{text, stop_reason}}.
 //   - Chat-style bodies {messages} in the OpenAI Chat Completions shape
 //     (Mistral Large's chat, OpenAI-compatible models): read as the
 //     "openai_chat" Reader reads them. Responses and stream chunks:
 //     choices[] with message or delta, finish_reason or stop_reason.
 //   - Amazon Nova {messages, system, inferenceConfig, toolConfig}: the
-//     Converse shape, read as the "bedrock-converse" Reader reads it;
+//     Converse shape, read as the "bedrock_converse" Reader reads it;
 //     responses and stream chunks are Converse's too.
 //
 // Anything else, an Anthropic Messages body included (the "anthropic"
@@ -57,6 +48,11 @@ func (InvokeReader) DecodeRequest(body []byte) (*llm.Request, error) {
 	top, err := object(body)
 	if err != nil {
 		return nil, &llm.RequestError{Err: fmt.Errorf("invalid request body: %v", err)}
+	}
+	if has(top, llm.HistoryKey) {
+		// Reserved on every shape, the chat-style one read by the openai_chat
+		// Reader included: a client must not forge it.
+		return nil, &llm.RequestError{Err: fmt.Errorf("%s: reserved", llm.HistoryKey)}
 	}
 	var req *llm.Request
 	switch {
@@ -111,15 +107,12 @@ func promptTurn(req *llm.Request, top map[string]json.RawMessage, key string) er
 	if err := take(top, key, &text); err != nil || isNull(raw) {
 		return fmt.Errorf("%s: must be a string", key)
 	}
-	if has(top, HistoryKey) {
-		return fmt.Errorf("%s: unsupported field in a %s body", HistoryKey, key)
-	}
 	req.Messages = []llm.Message{{Role: "user", Content: []llm.Block{{Type: llm.BlockText, Text: text}}}}
 	return nil
 }
 
 func markPrompt(req *llm.Request, top map[string]json.RawMessage) {
-	top[HistoryKey] = json.RawMessage(`"` + HistoryPrompt + `"`)
+	top[llm.HistoryKey], _ = json.Marshal(llm.HistoryPrompt)
 	req.Extra = top
 }
 

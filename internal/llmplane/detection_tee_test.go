@@ -293,16 +293,33 @@ func TestDetectionTee_QueueFullDrops(t *testing.T) {
 	}
 }
 
-// queue_bytes bounds the bytes held: a turn that does not fit is dropped.
+// queue_bytes bounds the bytes held: a turn whose raw bodies do not fit is
+// dropped when offered, and one whose posted form (raw bodies and the
+// canonical conversation) does not fit is dropped before it is posted.
 func TestDetectionTee_QueueBytesDrops(t *testing.T) {
+	posted := func(tt *teeTurn) int64 {
+		c := *tt
+		c.normalize()
+		return int64(len(marshalJSON(t, &c)))
+	}
+	small := &teeTurn{ID: "small", Request: []byte("{}")}
+	read := &teeTurn{ID: "read", Request: []byte(teeReq), Dialect: readerAnthropic, Op: routeGenerate}
+	limit := posted(small) // small fits as posted; read's raw body fits, its posted form does not
+	if int64(len(teeReq)) > limit || posted(read) <= limit {
+		t.Fatalf("fixture sizes: raw %d, posted %d, limit %d", len(teeReq), posted(read), limit)
+	}
 	agent := newAgentStub(t, nil)
-	tee := newTee(t, DetectionTeeConfig{AgentURL: agent.url, QueueBytes: 16})
-	tee.offer(&teeTurn{ID: "big", Request: []byte(teeReq)})
-	tee.offer(&teeTurn{ID: "small", Request: []byte("{}")})
+	tee := newTee(t, DetectionTeeConfig{AgentURL: agent.url, QueueBytes: limit, MaxInFlight: 1})
+	tee.offer(&teeTurn{ID: "big", Request: []byte(strings.Repeat("x", int(limit)+1))})
+	tee.offer(read)
+	tee.offer(small)
 	agent.wait(t, 1)
 	turns, _ := agent.got()
-	if s := tee.Status(); s["dropped"] != uint64(1) || len(turns) != 1 || turns[0].ID != "small" {
-		t.Errorf("status = %v, turns = %d; want the 16-byte cap to drop only the big turn", s, len(turns))
+	for i := 0; i < 200 && tee.held.Load() != 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s := tee.Status(); s["dropped"] != uint64(2) || s["held_bytes"] != int64(0) || len(turns) != 1 || turns[0].ID != "small" {
+		t.Errorf("status = %v, turns = %d; want big and read dropped, small sent, nothing held", s, len(turns))
 	}
 }
 
@@ -399,8 +416,11 @@ func TestDetectionTee_Routes(t *testing.T) {
 		{http.MethodPost, "/v1/messages", "", true},
 		{http.MethodPost, "/openai/v1/chat/completions", "Bearer sk-x", true},
 		{http.MethodPost, "/openai/v1/responses", "Bearer sk-x", true},
+		{http.MethodPost, "/openai/v1/completions", "Bearer sk-x", true},
 		{http.MethodPost, "/openai/v1/embeddings", "Bearer sk-x", false},
+		{http.MethodPost, "/v1/complete", "", true},
 		{http.MethodPost, "/model/x/invoke", sigv4, true},
+		{http.MethodPost, "/model/x/converse", sigv4, true},
 		{http.MethodPost, "/model/x/count-tokens", sigv4, false},
 		{http.MethodPost, "/gemini/v1beta/models/g:generateContent", "", true},
 		{http.MethodPost, "/gemini/v1beta/models/g:countTokens", "", false},
@@ -419,7 +439,8 @@ func TestDetectionTee_Routes(t *testing.T) {
 	}
 	want := []string{
 		"/v1/messages anthropic", "/openai/v1/chat/completions openai_chat", "/openai/v1/responses openai_responses",
-		"/model/x/invoke bedrock_invoke", "/gemini/v1beta/models/g:generateContent gemini",
+		"/openai/v1/completions openai_completions", "/v1/complete anthropic_complete",
+		"/model/x/invoke bedrock_invoke", "/model/x/converse bedrock_converse", "/gemini/v1beta/models/g:generateContent gemini",
 	}
 	turns, _ := agent.wait(t, len(want))
 	var got []string
@@ -511,23 +532,27 @@ func TestDetectionTee_Normalized(t *testing.T) {
 	sameJSONValue(t, "answer", marshalJSON(t, got.Answer), []byte(`{"content":[{"type":"text","text":"ok"}]}`))
 }
 
-// On a route whose reader is reserved, or that has none, the raw bodies go
-// with the reason they were not read.
+// On a route with no reader, or whose reader cannot read the body, the raw
+// bodies go with the reason they were not read.
 func TestDetectionTee_UnreadRoute(t *testing.T) {
 	up := teeUpstream(t, http.StatusOK, `{"candidates":[]}`)
 	agent := newAgentStub(t, nil)
 	gw := gateway(t, Config{UpstreamBaseURL: up, GeminiEnabled: true, GeminiBaseURL: up,
 		DetectionTee: newTee(t, DetectionTeeConfig{AgentURL: agent.url, MaxInFlight: 1})}, &lastRec{})
-	for _, path := range []string{"/gemini/v1beta/models/g:generateContent", "/v1/complete"} {
-		if resp, b := do(t, http.MethodPost, gw.URL+path, map[string]string{"x-api-key": "sk"}, teeReq); resp.StatusCode != http.StatusOK {
+	const bad = `{"contents":"hi"}` // contents must be a list
+	for _, path := range []string{"/gemini/v1beta/models/g:batchGenerateContent", "/gemini/v1beta/models/g:generateContent"} {
+		if resp, b := do(t, http.MethodPost, gw.URL+path, map[string]string{"x-api-key": "sk"}, bad); resp.StatusCode != http.StatusOK {
 			t.Fatalf("%s: status %d %s", path, resp.StatusCode, b)
 		}
 	}
 	turns, raw := agent.wait(t, 2)
-	for i, want := range []struct{ dialect, err string }{{readerGemini, "no reader for gemini"}, {"", "no reader for this route"}} {
+	for i, want := range []struct{ op, dialect, err string }{
+		{routeBatch, "", "no reader for this route"},
+		{routeGenerate, readerGemini, "decode request: "},
+	} {
 		got := turns[i]
-		if got.Op != routeGenerate || got.Dialect != want.dialect || got.NormalizeError != want.err ||
-			string(got.Request) != teeReq || len(got.Response) == 0 {
+		if got.Op != want.op || got.Dialect != want.dialect || !strings.HasPrefix(got.NormalizeError, want.err) ||
+			string(got.Request) != bad || len(got.Response) == 0 {
 			t.Errorf("turn %d = %+v", i, got)
 		}
 		if _, ok := raw[i]["conversation"]; ok {

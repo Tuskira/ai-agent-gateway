@@ -38,7 +38,8 @@ type DetectionTee struct {
 	client   *http.Client
 	queue    chan *teeTurn
 	maxBytes int64
-	// held is the request+response bytes of turns waiting or being posted.
+	// held is the bytes of turns waiting (their raw bodies) or being posted
+	// (the turn as posted: raw bodies and the canonical conversation).
 	held atomic.Int64
 
 	// mu guards closed, so offer never sends on the closed queue.
@@ -104,6 +105,8 @@ type teeTurn struct {
 	// response copy stopped at teeResponseBytes: how to read Response.
 	respType string
 	respCut  bool
+	// held is what the turn counts in DetectionTee.held.
+	held int64
 }
 
 func (t *teeTurn) size() int64 { return int64(len(t.Request) + len(t.Response)) }
@@ -189,7 +192,7 @@ func (t *teeTurn) normalize() {
 	if req, err := rd.DecodeRequest(t.Request); err != nil {
 		errs = append(errs, "decode request: "+err.Error())
 	} else {
-		c := toConversation(req)
+		c := toConversation(req, t.Dialect)
 		t.Conversation = &c
 	}
 	if len(t.Response) > 0 {
@@ -202,16 +205,22 @@ func (t *teeTurn) normalize() {
 	t.NormalizeError = strings.Join(errs, "; ")
 }
 
-// readAnswer reads Response: as a stream when the client got one (SSE, or
-// Bedrock's eventstream framing of the same events), else as one body.
+// readAnswer reads Response: as a stream when the client got one (SSE; an
+// AWS event stream, which the Bedrock Readers read as framed and which
+// carries the Messages events of an Anthropic model on Bedrock's invoke
+// route; a Gemini stream sent as a JSON array), else as one body.
 func (t *teeTurn) readAnswer(rd llm.Reader) (*teeAnswer, error) {
 	mt, _, _ := mime.ParseMediaType(t.respType)
 	var src io.Reader
-	switch mt {
-	case "text/event-stream":
+	switch {
+	case mt == "text/event-stream":
 		src = bytes.NewReader(t.Response)
-	case "application/vnd.amazon.eventstream":
+	case mt == "application/vnd.amazon.eventstream" && t.Dialect == readerAnthropic:
 		src = newEventStreamToSSE(bytes.NewReader(t.Response))
+	case mt == "application/vnd.amazon.eventstream":
+		src = bytes.NewReader(t.Response)
+	case t.Dialect == readerGemini && bytes.HasPrefix(bytes.TrimLeft(t.Response, " \t\r\n"), []byte("[")):
+		src = bytes.NewReader(t.Response)
 	default:
 		resp, err := rd.DecodeResponse(t.Response)
 		if err != nil {
@@ -247,6 +256,7 @@ func (t *teeTurn) readAnswer(rd llm.Reader) (*teeAnswer, error) {
 // closed tee drops it.
 func (d *DetectionTee) offer(t *teeTurn) {
 	n := t.size()
+	t.held = n
 	if d.held.Add(n) > d.maxBytes {
 		d.held.Add(-n)
 		d.drop(t.ID, "queue_bytes")
@@ -277,7 +287,7 @@ func (d *DetectionTee) run() {
 		} else {
 			d.post(t)
 		}
-		d.held.Add(-t.size())
+		d.held.Add(-t.held)
 	}
 }
 
@@ -287,6 +297,16 @@ func (d *DetectionTee) post(t *teeTurn) {
 	if err != nil {
 		d.fail(t.ID, fmt.Errorf("marshal turn: %w", err))
 		return
+	}
+	// queue_bytes counts what is posted: the raw bodies (base64) and the
+	// canonical conversation. A turn that no longer fits is dropped.
+	if grow := int64(len(b)) - t.held; grow > 0 {
+		if d.held.Add(grow) > d.maxBytes {
+			d.held.Add(-grow)
+			d.drop(t.ID, "queue_bytes")
+			return
+		}
+		t.held += grow
 	}
 	ctx, cancel := context.WithTimeout(d.ctx, d.timeout)
 	defer cancel()

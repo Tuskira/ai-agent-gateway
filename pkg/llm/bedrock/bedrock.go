@@ -1,6 +1,6 @@
 // Package bedrock holds the llm.Readers for Amazon Bedrock's own wire
-// formats: "bedrock-converse" (the Converse and ConverseStream APIs) and
-// "bedrock-invoke" (InvokeModel and InvokeModelWithResponseStream bodies of
+// formats: "bedrock_converse" (the Converse and ConverseStream APIs) and
+// "bedrock_invoke" (InvokeModel and InvokeModelWithResponseStream bodies of
 // model families other than Anthropic's, whose invoke body is the Anthropic
 // Messages body and is read by the "anthropic" Reader). The model id of a
 // Bedrock call is in the URL path, not the body, so Request.Model is empty
@@ -23,8 +23,8 @@ import (
 
 // Registry names of the Readers.
 const (
-	ConverseName = "bedrock-converse"
-	InvokeName   = "bedrock-invoke"
+	ConverseName = "bedrock_converse"
+	InvokeName   = "bedrock_invoke"
 )
 
 func init() {

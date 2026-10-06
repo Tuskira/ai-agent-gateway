@@ -52,7 +52,7 @@
         "User:"
       ],
       "extra": {
-        "history": "prompt"
+        "_gateway_history": "prompt"
       }
     },
     "response": {

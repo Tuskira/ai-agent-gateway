@@ -13,18 +13,20 @@ const (
 	routeUtility  = "utility"  // listing, retrieval, management: no generation
 )
 
-// Reader names a route declares (pkg/llm registry names). anthropic and
-// openai_chat are registered today; the others are reserved: a route names
-// its wire format now, so the detection tee can say what it could not read
-// and the Reader that lands later needs no route change.
+// Reader names a route declares (pkg/llm registry names). Every one is
+// registered by the reader packages cmd/gateway blank-imports, except
+// anthropic_batch: it is reserved, so a batch route names its wire format
+// now and the detection tee says what it could not read.
 const (
-	readerAnthropic       = "anthropic"
-	readerOpenAIChat      = "openai_chat"
-	readerAnthropicBatch  = "anthropic_batch"
-	readerOpenAIResponses = "openai_responses"
-	readerGemini          = "gemini"
-	readerBedrockInvoke   = "bedrock_invoke"
-	readerBedrockConverse = "bedrock_converse"
+	readerAnthropic         = "anthropic"
+	readerAnthropicComplete = "anthropic_complete"
+	readerOpenAIChat        = "openai_chat"
+	readerOpenAICompletions = "openai_completions"
+	readerAnthropicBatch    = "anthropic_batch"
+	readerOpenAIResponses   = "openai_responses"
+	readerGemini            = "gemini"
+	readerBedrockInvoke     = "bedrock_invoke"
+	readerBedrockConverse   = "bedrock_converse"
 )
 
 // RouteInfo describes one endpoint of a Provider. Op is one of the op*
@@ -70,7 +72,7 @@ func (anthropicProvider) Route(_, path string) RouteInfo {
 	case path == "/v1/messages":
 		return RouteInfo{Op: routeGenerate, Reader: readerAnthropic}
 	case path == "/v1/complete":
-		return RouteInfo{Op: routeGenerate}
+		return RouteInfo{Op: routeGenerate, Reader: readerAnthropicComplete}
 	case path == "/v1/messages/count_tokens":
 		return RouteInfo{Op: routeCount}
 	case path == "/v1/messages/batches":
@@ -88,7 +90,7 @@ func (openaiProvider) Route(_, path string) RouteInfo {
 	case strings.HasSuffix(path, "/chat/completions"):
 		return RouteInfo{Op: routeGenerate, Reader: readerOpenAIChat}
 	case strings.HasSuffix(path, "/completions"):
-		return RouteInfo{Op: routeGenerate}
+		return RouteInfo{Op: routeGenerate, Reader: readerOpenAICompletions}
 	case strings.HasSuffix(path, "/responses"):
 		return RouteInfo{Op: routeGenerate, Reader: readerOpenAIResponses}
 	case strings.HasSuffix(path, "/responses/input_tokens"):

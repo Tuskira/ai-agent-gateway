@@ -36,7 +36,7 @@ func TestReadersRegistered(t *testing.T) {
 // stream_frames: check the two agree, so a reviewer can trust the readable
 // form.
 func TestGoldenStreamFrames(t *testing.T) {
-	files, _ := filepath.Glob("../llmtest/testdata/readers/bedrock-*/*.json")
+	files, _ := filepath.Glob("../llmtest/testdata/readers/bedrock_*/*.json")
 	if len(files) == 0 {
 		t.Fatal("no bedrock goldens")
 	}
@@ -106,7 +106,8 @@ func TestReadersReject(t *testing.T) {
 		{ConverseReader{}, `{"messages":[],"Messages":[]}`, "differ only by case"},
 		{InvokeReader{}, `{"inputText":7}`, "inputText: must be a string"},
 		{InvokeReader{}, `{"prompt":"x","max_gen_len":1,"max_tokens":2}`, "only one may be set"},
-		{InvokeReader{}, `{"prompt":"x","history":"y"}`, "history: unsupported field"},
+		{InvokeReader{}, `{"prompt":"x","_gateway_history":"y"}`, "_gateway_history: reserved"},
+		{InvokeReader{}, `{"messages":[{"role":"user","content":"x"}],"_gateway_history":"prompt"}`, "_gateway_history: reserved"},
 		{InvokeReader{}, `{"schemaVersion":"messages-v1","messages":[],"inferenceConfig":{"maxTokens":1,"max_new_tokens":2}}`, "only one may be set"},
 		{InvokeReader{}, `{"anthropic_version":"bedrock-2023-05-31","messages":[]}`, "anthropic reader"},
 		{InvokeReader{}, `{"messages":[{"role":"tool","content":"x"}]}`, "tool_call_id: required"},

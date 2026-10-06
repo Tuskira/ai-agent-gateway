@@ -32,6 +32,7 @@
             },
             {
               "type": "document",
+              "text": "trip notes",
               "media_type": "text/plain",
               "bytes": 10
             }

@@ -1,6 +1,7 @@
 package llmplane
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,18 +13,26 @@ import (
 )
 
 // conversationCase is one golden in testdata/conversation/<reader>.json: a
-// client request, a non-stream response and a response stream, and the
-// canonical conversation and answers the tee makes of them.
+// client request, a non-stream response and a response stream (SSE, or a
+// binary stream as base64 with its content type), and the canonical
+// conversation and answers the tee makes of them. The detection agent's
+// tests read copies of these files (detection/turn/testdata/conversation).
 type conversationCase struct {
-	Request  json.RawMessage `json:"request"`
-	Response json.RawMessage `json:"response"`
-	SSE      string          `json:"sse"`
-	Expect   struct {
-		Conversation json.RawMessage `json:"conversation"`
+	Expect struct {
 		Answer       json.RawMessage `json:"answer"`
+		Conversation json.RawMessage `json:"conversation"`
 		StreamAnswer json.RawMessage `json:"stream_answer"`
 	} `json:"expect"`
+	Request    json.RawMessage `json:"request"`
+	Response   json.RawMessage `json:"response"`
+	SSE        string          `json:"sse,omitempty"`
+	StreamB64  string          `json:"stream_b64,omitempty"`
+	StreamType string          `json:"stream_type,omitempty"`
 }
+
+// updateGoldens, set by UPDATE_CONVERSATION_GOLDENS=1, rewrites each
+// golden's expect from what the tee makes of its inputs.
+var updateGoldens = os.Getenv("UPDATE_CONVERSATION_GOLDENS") == "1"
 
 // normalized is what the worker makes of a turn on dialect's generate route.
 func normalized(t *testing.T, dialect string, req, resp []byte, respType string, cut bool) teeTurn {
@@ -59,9 +68,14 @@ func sameJSONValue(t *testing.T, what string, got, want []byte) {
 // The canonical conversation and answer of each reader's golden: request,
 // whole response and stream, read through the registered Reader.
 func TestConversationGoldens(t *testing.T) {
-	for _, name := range []string{readerAnthropic, readerOpenAIChat} {
+	files, _ := filepath.Glob(filepath.Join("testdata", "conversation", "*.json"))
+	if len(files) == 0 {
+		t.Fatal("no conversation goldens")
+	}
+	for _, file := range files {
+		name := strings.TrimSuffix(filepath.Base(file), ".json")
 		t.Run(name, func(t *testing.T) {
-			raw, err := os.ReadFile(filepath.Join("testdata", "conversation", name+".json"))
+			raw, err := os.ReadFile(file)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,21 +83,43 @@ func TestConversationGoldens(t *testing.T) {
 			if err := json.Unmarshal(raw, &c); err != nil {
 				t.Fatal(err)
 			}
+			stream, streamType := []byte(c.SSE), "text/event-stream; charset=utf-8"
+			if c.StreamB64 != "" {
+				if stream, err = base64.StdEncoding.DecodeString(c.StreamB64); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if c.StreamType != "" {
+				streamType = c.StreamType
+			}
 			whole := normalized(t, name, c.Request, c.Response, "application/json", false)
 			if whole.NormalizeError != "" || whole.Conversation == nil || whole.Answer == nil {
 				t.Fatalf("normalize: %q", whole.NormalizeError)
 			}
+			streamed := normalized(t, name, c.Request, stream, streamType, false)
+			if streamed.NormalizeError != "" || streamed.Answer == nil {
+				t.Fatalf("normalize stream: %q", streamed.NormalizeError)
+			}
+			if updateGoldens {
+				c.Expect.Conversation = marshalJSON(t, whole.Conversation)
+				c.Expect.Answer = marshalJSON(t, whole.Answer)
+				c.Expect.StreamAnswer = marshalJSON(t, streamed.Answer)
+				out, err := json.MarshalIndent(c, "", "  ")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, append(out, '\n'), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
 			sameJSONValue(t, "conversation", marshalJSON(t, whole.Conversation), c.Expect.Conversation)
 			sameJSONValue(t, "answer", marshalJSON(t, whole.Answer), c.Expect.Answer)
-			stream := normalized(t, name, c.Request, []byte(c.SSE), "text/event-stream; charset=utf-8", false)
-			if stream.NormalizeError != "" || stream.Answer == nil {
-				t.Fatalf("normalize stream: %q", stream.NormalizeError)
-			}
-			sameJSONValue(t, "stream answer", marshalJSON(t, stream.Answer), c.Expect.StreamAnswer)
+			sameJSONValue(t, "stream answer", marshalJSON(t, streamed.Answer), c.Expect.StreamAnswer)
 			// Deterministic: the same input marshals to the same bytes.
-			again := normalized(t, name, c.Request, []byte(c.SSE), "text/event-stream", false)
-			if string(marshalJSON(t, again.Conversation)) != string(marshalJSON(t, stream.Conversation)) ||
-				string(marshalJSON(t, again.Answer)) != string(marshalJSON(t, stream.Answer)) {
+			again := normalized(t, name, c.Request, stream, streamType, false)
+			if string(marshalJSON(t, again.Conversation)) != string(marshalJSON(t, streamed.Conversation)) ||
+				string(marshalJSON(t, again.Answer)) != string(marshalJSON(t, streamed.Answer)) {
 				t.Error("two reads of the same turn marshal differently")
 			}
 		})

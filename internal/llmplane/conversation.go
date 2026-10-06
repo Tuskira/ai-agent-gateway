@@ -1,6 +1,7 @@
 package llmplane
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"unicode/utf8"
@@ -21,10 +22,14 @@ const teeConversationVersion = 1
 // JSON string of its first teeOpaqueRaw bytes.
 const teeOpaqueRaw = 64 << 10
 
-// History values: how much of the conversation a request carries.
-const (
-	historyFull = "full" // the whole conversation (messages APIs)
-)
+// historyReaders are the Readers that mark a request whose Messages are
+// not the whole conversation (llm.HistoryKey) and refuse a body that sets
+// the mark itself. Another Reader keeps an unknown top-level field in
+// Extra, so a client could forge it there: its requests are always full.
+var historyReaders = map[string]bool{
+	readerOpenAIResponses: true, readerOpenAICompletions: true,
+	readerAnthropicComplete: true, readerBedrockInvoke: true,
+}
 
 // Canonical block types; anything else is "opaque".
 const (
@@ -50,8 +55,10 @@ type teeMessage struct {
 	Content []teeBlock `json:"content"`
 }
 
-// teeBlock is one content block. image and document keep only their media
-// type and payload size; opaque keeps its wire form (clipped).
+// teeBlock is one content block. image keeps only its media type and
+// payload size; document too, plus its text when it is a text document (an
+// instruction hidden in an attached file is still read); opaque keeps its
+// wire form (clipped).
 type teeBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
@@ -78,19 +85,35 @@ type teeTurnItem struct {
 	Conversation teeConversation `json:"conversation"`
 }
 
-// toConversation projects a request read from a messages API: the system
+// toConversation projects a request read by the named Reader: the system
 // prompt, every message (a mid-conversation system or developer message
-// stays a message) and the tool names, in order.
-func toConversation(req *llm.Request) teeConversation {
+// stays a message), the tool names, in order, and how much of the
+// conversation the request carries.
+func toConversation(req *llm.Request, reader string) teeConversation {
 	c := teeConversation{Version: teeConversationVersion, System: toBlocks(req.System),
-		Messages: make([]teeMessage, 0, len(req.Messages)), History: historyFull}
+		Messages: make([]teeMessage, 0, len(req.Messages)), History: historyOf(req, reader)}
 	for _, m := range req.Messages {
 		c.Messages = append(c.Messages, teeMessage{Role: m.Role, Content: nonNil(toBlocks(m.Content))})
 	}
 	for _, t := range req.Tools {
-		c.Tools = append(c.Tools, t.Name)
+		name := t.Name
+		if name == "" {
+			name = t.Type // a vendor-defined tool known by its type alone (web_search_preview)
+		}
+		c.Tools = append(c.Tools, name)
 	}
 	return c
+}
+
+// historyOf is the request's llm.HistoryKey mark, llm.HistoryFull when it
+// has none or its Reader cannot set one.
+func historyOf(req *llm.Request, reader string) string {
+	var v string
+	if historyReaders[reader] && json.Unmarshal(req.Extra[llm.HistoryKey], &v) == nil &&
+		(v == llm.HistoryServerSide || v == llm.HistoryPrompt) {
+		return v
+	}
+	return llm.HistoryFull
 }
 
 // toAnswer projects a response; truncated marks one that was cut.
@@ -139,6 +162,9 @@ func toBlock(b llm.Block) teeBlock {
 				out.MediaType = "text/plain"
 			}
 			out.Bytes = len(s.Data) + len(s.Content)
+			if b.Type == llm.BlockDocument {
+				out.Text = documentText(s)
+			}
 		}
 		return out
 	}
@@ -147,6 +173,44 @@ func toBlock(b llm.Block) teeBlock {
 	b.Data = ""
 	raw, _ := json.Marshal(b)
 	return opaqueBlock(raw)
+}
+
+// documentText is the text of a text document: plain text, base64 of a
+// text/* media type (valid UTF-8 only), or the text blocks of a content
+// source. "" for anything else (a PDF, a reference such as a URL or file
+// id).
+func documentText(s *llm.Source) string {
+	switch s.Type {
+	case "text":
+		return s.Data
+	case "base64":
+		if !strings.HasPrefix(s.MediaType, "text/") {
+			return ""
+		}
+		b, err := base64.StdEncoding.DecodeString(s.Data)
+		if err != nil || !utf8.Valid(b) {
+			return ""
+		}
+		return string(b)
+	case "content":
+		var str string
+		if json.Unmarshal(s.Content, &str) == nil {
+			return str
+		}
+		var bs []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal(s.Content, &bs)
+		var parts []string
+		for _, b := range bs {
+			if b.Type == "text" && b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	return ""
 }
 
 // opaqueBlock carries raw verbatim, or, past teeOpaqueRaw, its first

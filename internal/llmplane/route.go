@@ -13,10 +13,9 @@ const (
 	routeUtility  = "utility"  // listing, retrieval, management: no generation
 )
 
-// Reader names a route declares (pkg/llm registry names). Every one is
-// registered by the reader packages cmd/gateway blank-imports, except
-// anthropic_batch: it is reserved, so a batch route names its wire format
-// now and the detection tee says what it could not read.
+// Reader names a route declares (pkg/llm registry names): an llm.Reader's
+// on a generate route, an llm.BatchReader's on a batch route. Every one is
+// registered by the reader packages cmd/gateway blank-imports.
 const (
 	readerAnthropic         = "anthropic"
 	readerAnthropicComplete = "anthropic_complete"
@@ -25,6 +24,7 @@ const (
 	readerAnthropicBatch    = "anthropic_batch"
 	readerOpenAIResponses   = "openai_responses"
 	readerGemini            = "gemini"
+	readerGeminiBatch       = "gemini_batch"
 	readerBedrockInvoke     = "bedrock_invoke"
 	readerBedrockConverse   = "bedrock_converse"
 )
@@ -109,7 +109,7 @@ func (geminiProvider) Route(_, path string) RouteInfo {
 	case strings.HasSuffix(path, ":generateContent"), strings.HasSuffix(path, ":streamGenerateContent"):
 		return RouteInfo{Op: routeGenerate, Reader: readerGemini}
 	case strings.HasSuffix(path, ":batchGenerateContent"):
-		return RouteInfo{Op: routeBatch}
+		return RouteInfo{Op: routeBatch, Reader: readerGeminiBatch}
 	case strings.HasSuffix(path, ":countTokens"):
 		return RouteInfo{Op: routeCount}
 	case strings.HasSuffix(path, ":embedContent"), strings.HasSuffix(path, ":batchEmbedContents"):

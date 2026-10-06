@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -110,6 +111,33 @@ type Reader interface {
 	NewResponseDecoder(r io.Reader) StreamDecoder
 }
 
+// BatchReader reads the body of a batch creation call (many requests
+// submitted at once, run later by the vendor) into its requests, each in
+// the neutral form, so each can be looked at as a call of its own. It is
+// strict as a Reader is, and refuses a body whose items repeat an id: an id
+// is how an item's result is matched to it. It must be safe for concurrent
+// use.
+type BatchReader interface {
+	// Name is the registry name, the batch wire format's ("anthropic_batch").
+	Name() string
+	// DecodeBatch reads a batch creation body, its items in body order. A
+	// malformed or ambiguous body is a *RequestError; a batch whose
+	// requests are not in the body (an uploaded file) is ErrBatchFile. The
+	// body is not capped here: the caller bounds it.
+	DecodeBatch(body []byte) ([]BatchItem, error)
+}
+
+// BatchItem is one request of a batch: the id the client gave it and the
+// request itself.
+type BatchItem struct {
+	CustomID string
+	Request  *Request
+}
+
+// ErrBatchFile reports a batch whose requests live in a file the vendor
+// holds, not in the body: there is nothing to read.
+var ErrBatchFile = errors.New("batch references a file")
+
 // TokenEstimator is implemented by a Provider that can estimate a request's
 // input tokens (for a client's token-count endpoint) better than
 // EstimateTokens.
@@ -150,6 +178,7 @@ var (
 	dialects   = map[string]Dialect{}
 	providers  = map[string]Provider{}
 	readers    = map[string]Reader{}
+	batches    = map[string]BatchReader{}
 )
 
 // RegisterDialect makes d available under d.Name(). It panics on a nil
@@ -194,6 +223,20 @@ func RegisterReader(r Reader) {
 	readers[r.Name()] = r
 }
 
+// RegisterBatchReader makes r available under r.Name(). It panics on a nil
+// BatchReader or a duplicate name.
+func RegisterBatchReader(r BatchReader) {
+	if r == nil {
+		panic("llm: RegisterBatchReader called with a nil BatchReader")
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if _, dup := batches[r.Name()]; dup {
+		panic("llm: RegisterBatchReader called twice for " + r.Name())
+	}
+	batches[r.Name()] = r
+}
+
 // DialectByName returns the Dialect registered under name.
 func DialectByName(name string) (Dialect, error) {
 	registryMu.RLock()
@@ -222,6 +265,16 @@ func ReaderByName(name string) (Reader, error) {
 		return r, nil
 	}
 	return nil, fmt.Errorf("llm: unknown reader %q (registered: %s; missing blank import?)", name, names(readers))
+}
+
+// BatchReaderByName returns the BatchReader registered under name.
+func BatchReaderByName(name string) (BatchReader, error) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	if r, ok := batches[name]; ok {
+		return r, nil
+	}
+	return nil, fmt.Errorf("llm: unknown batch reader %q (registered: %s; missing blank import?)", name, names(batches))
 }
 
 func names[V any](m map[string]V) string {

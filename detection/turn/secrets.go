@@ -287,6 +287,12 @@ func (s *State) texts(st Stage) []textRef {
 // cache scans through scanCache, which keeps the raw values found: only the
 // agent's Prepare* may pass it, never the engine's Normalized.
 func (s *State) scrub(ctx context.Context, st Stage, extra []string, cache bool) ([]SecretHit, error) {
+	return s.scrubWith(ctx, st, extra, nil, cache)
+}
+
+// scrubWith is scrub with pre, values already found elsewhere (a batch's
+// body, Batch.values), removed as the values found in extra are.
+func (s *State) scrubWith(ctx context.Context, st Stage, extra []string, pre []secretMatch, cache bool) ([]SecretHit, error) {
 	refs := s.texts(st)
 	raw := make([]string, len(refs))
 	found := make([][]secretMatch, len(refs))
@@ -332,6 +338,7 @@ func (s *State) scrub(ctx context.Context, st Stage, extra []string, cache bool)
 	for _, x := range extra {
 		addShared(scan(validUTF8(x), capText))
 	}
+	addShared(pre)
 	shared = withEncodings(shared)
 	for i, r := range refs {
 		if err := ctx.Err(); err != nil {

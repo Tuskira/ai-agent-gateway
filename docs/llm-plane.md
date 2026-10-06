@@ -313,7 +313,7 @@ registry error, an unbuildable target) are not sent either.
 |---|---|---|---|
 | Anthropic `POST /v1/messages` | `generate` | `anthropic` | yes |
 | Anthropic `POST /v1/complete` | `generate` | `anthropic_complete` | yes (`history: prompt`) |
-| Anthropic `POST /v1/messages/batches` | `batch` | `anthropic_batch` | no (reserved) |
+| Anthropic `POST /v1/messages/batches` | `batch` | `anthropic_batch` | yes: each request into `items` |
 | Anthropic `/v1/messages/count_tokens` | `count` | | not sent |
 | Anthropic batch management, `/v1/models` | `utility` | | not sent |
 | OpenAI `POST …/chat/completions` | `generate` | `openai_chat` | yes |
@@ -322,7 +322,7 @@ registry error, an unbuildable target) are not sent either.
 | OpenAI `…/responses/input_tokens` | `count` | | not sent |
 | OpenAI `…/models`, `…/embeddings`, `…/moderations`, `…/responses/{id}…` | `utility` | | not sent |
 | Gemini `…:generateContent`, `…:streamGenerateContent` | `generate` | `gemini` | yes (a stream as SSE or a JSON array) |
-| Gemini `…:batchGenerateContent` | `batch` | none | no |
+| Gemini `…:batchGenerateContent` | `batch` | `gemini_batch` | yes: inline requests into `items`; a batch that names an uploaded file is a `normalize_error` |
 | Gemini `…:countTokens` | `count` | | not sent |
 | Gemini `…:embedContent`, `…:batchEmbedContents` | `utility` | | not sent |
 | Bedrock `/model/{id}/invoke`, `invoke-with-response-stream`, Anthropic model id | `generate` | `anthropic` | yes |
@@ -334,9 +334,10 @@ The paths are the provider's own (after the `/{provider}/` prefix); a
 query string and a trailing slash do not change the route. An Anthropic
 model id on Bedrock is `anthropic.<model>` or an inference profile
 `<prefix>.anthropic.<model>`. The `dialect` is also the format a gateway
-error on that route would be rendered in. Every generation route is read;
-only batches are not (`anthropic_batch` is reserved for a batch reader, and
-a batch's results, `GET …/batches/{id}/results`, are a `utility` route).
+error on that route would be rendered in. Every generation route is read,
+batches included: a batch creation call is read request by request into
+`items` (see the contract below). A batch's results, `GET
+…/batches/{id}/results`, are a `utility` route and are not sent.
 
 Flow for one call:
 
@@ -355,8 +356,8 @@ complete turn per call; the agent answers `202 Accepted` and works on it
 asynchronously. The gateway ignores the response body. Byte fields are
 standard base64 of the raw bytes, so a body that is not valid UTF-8
 survives. Canonical examples (shared with the agent's tests) live in
-`internal/llmplane/testdata/detection/`: `turn.json` and
-`turn_no_response.json`; the canonical conversation each reader makes of a
+`internal/llmplane/testdata/detection/`: `turn.json`,
+`turn_no_response.json` and `turn_batch.json`; the canonical conversation each reader makes of a
 request, response and stream is in `internal/llmplane/testdata/conversation/`
 (the agent's tests read copies of both).
 
@@ -378,8 +379,8 @@ request, response and stream is in `internal/llmplane/testdata/conversation/`
 | `op` | string | `generate` or `batch`. |
 | `conversation` | object | The request read through the dialect's reader, in the canonical shape below. Omitted when it could not be read. |
 | `answer` | object | The response read the same way: `content` (blocks), `stop_reason`, and `truncated` when the response was cut (the 1 MiB copy ended, or the stream ended before the model finished): `content` is then what was read up to the cut. Omitted when there is no response or it could not be read. |
-| `normalize_error` | string | Why `conversation` or `answer` is missing (or, for a whole response cut at 1 MiB, an empty `truncated` answer): `no reader for <dialect>` (a reserved dialect, `anthropic_batch`), `no reader for this route` (none), `decode request: …`, `decode response: …`. |
-| `items` | array | Reserved for batches (`custom_id`, `conversation`); not sent yet. |
+| `normalize_error` | string | Why `conversation`, `answer` or `items` is missing (or, for a whole response cut at 1 MiB, an empty `truncated` answer): `no reader for <dialect>` or `no reader for this route` (none), `decode request: …`, `decode response: …`, `batch references a file` (a Gemini batch whose requests are in an uploaded file), or `batch of <n> requests: only the first 1000 are read`. |
+| `items` | array | A batch only (`op: "batch"`): each request of the batch, in body order, as `{custom_id, conversation}`. `custom_id` is the request's `custom_id` (Anthropic) or its `metadata.key` (Gemini; its position, `"0"`, `"1"`, …, when it has none); a batch that repeats an id is not read. At most 1000 items: the rest of a larger batch is not read, and `normalize_error` says so. A batch has no `conversation` and no `answer` (its `response` is the batch object, which holds no generation). |
 
 The raw `request` and `response` are sent whether or not they could be
 read: the agent scans them for secrets, and they never leave the host (the
@@ -877,7 +878,10 @@ them — the first choice only, unknown response fields not kept),
 `openai_responses` (Responses API), `openai_completions` (legacy
 Completions), `gemini` (`generateContent`) and `bedrock_converse` and
 `bedrock_invoke` (Bedrock's Converse and non-Anthropic InvokeModel bodies,
-AWS event streams included). Readers refuse what two parsers could
+AWS event streams included). Two batch readers (`llm.BatchReader`) read a
+batch creation body into its requests: `anthropic_batch` (Message Batches)
+and `gemini_batch` (`batchGenerateContent` with inline requests; one that
+names an uploaded file is `llm.ErrBatchFile`). Readers refuse what two parsers could
 read differently: a key repeated in an object, two keys differing only by
 case, an unknown message role, a malformed content part; a stream with such
 a frame ends with an error after the events before it, and a cut stream

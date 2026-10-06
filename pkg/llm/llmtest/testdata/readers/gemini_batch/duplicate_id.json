@@ -1,0 +1,6 @@
+{
+  "request": {"batch":{"inputConfig":{"requests":{"requests":[{"request":{"contents":[{"parts":[{"text":"a"}]}]},"metadata":{"key":"k"}},{"request":{"contents":[{"parts":[{"text":"b"}]}]},"metadata":{"key":"k"}}]}}}},
+  "expect": {
+    "request_error": "batch.inputConfig.requests.requests.1: id \"k\" repeats item 0"
+  }
+}

@@ -79,7 +79,8 @@ type teeAnswer struct {
 	Truncated  bool       `json:"truncated,omitempty"`
 }
 
-// teeTurnItem is one request of a batch (reserved for batch readers).
+// teeTurnItem is one request of a batch: the id the client gave it and the
+// request read as a conversation.
 type teeTurnItem struct {
 	CustomID     string          `json:"custom_id"`
 	Conversation teeConversation `json:"conversation"`

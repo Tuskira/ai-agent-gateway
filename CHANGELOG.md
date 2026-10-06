@@ -258,8 +258,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths: unknown endpoints such as embeddings are no longer sent) and adds
   `dialect`, `op`, and, read through the format's `llm.Reader` in the tee's
   worker, `conversation` and `answer` (with `truncated` for a cut
-  response), or `normalize_error` when the route has no reader (a batch)
-  or the body does not parse. Every generation route of every provider has
+  response), or `normalize_error` when the route has no reader or the
+  body does not parse. Every generation route of every provider has
   a reader; `history` says when the request is not the whole conversation;
   a text document keeps its text (other attachments only their type and
   size). The raw bodies are still sent, and `queue_bytes` now counts each
@@ -276,6 +276,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text and any block the canonical shape has no slot for; with partial
   history, `user_goal` is only the turn's own text. See
   `docs/detection-agent.md`.
+- **Message Batches are judged item by item.** A new `llm.BatchReader`
+  interface and registry (`llm.RegisterBatchReader`,
+  `llm.BatchReaderByName`, `llmtest.RunBatchReader`) reads a batch creation
+  body into its requests; `anthropic_batch` (`POST /v1/messages/batches`)
+  and `gemini_batch` (`batchGenerateContent` with inline requests; a batch
+  that names an uploaded file is `llm.ErrBatchFile`) ship. The tee sends a
+  batch with `items` (`{custom_id, conversation}` per request, at most
+  1000) and no `conversation` or `answer`; a repeated id is refused. The
+  agent judges each item as its own request stage under the batch's
+  request id with the new `meta.item`, removes every value found in the
+  raw batch body from every item, sends no response stage, and counts a
+  batch as one queued turn. The agent also passes the turn's `dialect`
+  and `op`, and the conversation's `history`, to the engine in
+  `meta`. The contract stays `v: 1`; a new `turn_batch.json` fixture pins
+  it.
 - **Token Monitoring** console page (`/token-monitoring`): token usage and
   cost by model, by caller (API key, with its role: agent, admin,
   interceptor or other) and by role, for the last 24h / 7d / 30d or custom

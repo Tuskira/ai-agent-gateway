@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -495,6 +496,26 @@ func TestDetectionTee_ContractFixtures(t *testing.T) {
 	sameJSON("turn.json", turn(http.StatusOK, `{"type":"message","content":[{"type":"text","text":"hi"},`+
 		`{"type":"tool_use","id":"toolu_1","name":"get_time","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":1}}`))
 	sameJSON("turn_no_response.json", turn(http.StatusTooManyRequests, ""))
+	sameJSON("turn_batch.json", contractBatchTurn())
+}
+
+// contractBatchTurn is the turn of testdata/detection/turn_batch.json: a
+// Message Batches creation call, normalized as the worker does.
+func contractBatchTurn() teeTurn {
+	tt := teeTurn{
+		V: teeVersion, ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "session-1", KeyID: "key-1",
+		Principal: "user-1", Path: "/v1/messages/batches",
+		At:         time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		StatusCode: http.StatusOK, Dialect: readerAnthropicBatch, Op: routeBatch,
+		Request: []byte(`{"requests":[` +
+			`{"custom_id":"q1","params":{"model":"example-model","max_tokens":64,"system":"be brief","messages":[{"role":"user","content":"hello"}]}},` +
+			`{"custom_id":"q2","params":{"model":"example-model","max_tokens":64,"messages":[{"role":"user","content":"what time is it?"}]}}]}`),
+		Response: []byte(`{"id":"msgbatch_1","type":"message_batch","processing_status":"in_progress",` +
+			`"request_counts":{"processing":2,"succeeded":0,"errored":0,"canceled":0,"expired":0}}`),
+		respType: "application/json",
+	}
+	tt.normalize()
+	return tt
 }
 
 // sseUpstream answers every call with an SSE body.
@@ -547,7 +568,7 @@ func TestDetectionTee_UnreadRoute(t *testing.T) {
 	}
 	turns, raw := agent.wait(t, 2)
 	for i, want := range []struct{ op, dialect, err string }{
-		{routeBatch, "", "no reader for this route"},
+		{routeBatch, readerGeminiBatch, "decode request: "},
 		{routeGenerate, readerGemini, "decode request: "},
 	} {
 		got := turns[i]
@@ -591,13 +612,19 @@ func TestDetectionTee_CutStream(t *testing.T) {
 	}
 }
 
-// A batch is sent as one, without a conversation (its items are not read
-// yet); token counting is not sent.
+// A batch creation call is read item by item: items holds each request's
+// conversation under its custom_id, and there is neither a top-level
+// conversation nor an answer (the response is the batch object). Token
+// counting is not sent.
 func TestDetectionTee_Batch(t *testing.T) {
 	agent := newAgentStub(t, nil)
-	gw := gateway(t, Config{UpstreamBaseURL: teeUpstream(t, http.StatusOK, `{"id":"msgbatch_1","type":"message_batch"}`),
+	const batchObject = `{"id":"msgbatch_1","type":"message_batch","processing_status":"in_progress"}`
+	gw := gateway(t, Config{UpstreamBaseURL: teeUpstream(t, http.StatusOK, batchObject),
 		DetectionTee: newTee(t, DetectionTeeConfig{AgentURL: agent.url, MaxInFlight: 1})}, &lastRec{})
-	batch := `{"requests":[{"custom_id":"a","params":` + teeReq + `}]}`
+	batch := `{"requests":[` +
+		`{"custom_id":"a","params":{"model":"m","max_tokens":9,"messages":[{"role":"user","content":"first"}]}},` +
+		`{"custom_id":"b","params":{"model":"m","max_tokens":9,"system":"be brief","messages":[{"role":"user","content":"second"}]}},` +
+		`{"custom_id":"c","params":{"model":"m","max_tokens":9,"messages":[{"role":"user","content":"third"}]}}]}`
 	for _, path := range []string{"/v1/messages/count_tokens", "/v1/messages/batches"} {
 		if resp, b := do(t, http.MethodPost, gw.URL+path, map[string]string{"x-api-key": "sk"}, batch); resp.StatusCode != http.StatusOK {
 			t.Fatalf("%s: status %d %s", path, resp.StatusCode, b)
@@ -607,12 +634,78 @@ func TestDetectionTee_Batch(t *testing.T) {
 	turns, raw := agent.wait(t, 1)
 	got := turns[0]
 	if got.Path != "/v1/messages/batches" || got.Op != routeBatch || got.Dialect != readerAnthropicBatch ||
-		got.NormalizeError != "no reader for anthropic_batch" || string(got.Request) != batch {
+		got.NormalizeError != "" || string(got.Request) != batch || string(got.Response) != batchObject {
 		t.Errorf("turn = %+v", got)
 	}
-	for _, k := range []string{"conversation", "answer", "items"} {
+	for _, k := range []string{"conversation", "answer"} {
 		if _, ok := raw[0][k]; ok {
 			t.Errorf("batch turn has %q: %v", k, raw[0])
 		}
+	}
+	sameJSONValue(t, "items", marshalJSON(t, got.Items), []byte(`[`+
+		`{"custom_id":"a","conversation":{"cv":1,"messages":[{"role":"user","content":[{"type":"text","text":"first"}]}],"history":"full"}},`+
+		`{"custom_id":"b","conversation":{"cv":1,"system":[{"type":"text","text":"be brief"}],"messages":[{"role":"user","content":[{"type":"text","text":"second"}]}],"history":"full"}},`+
+		`{"custom_id":"c","conversation":{"cv":1,"messages":[{"role":"user","content":[{"type":"text","text":"third"}]}],"history":"full"}}]`))
+}
+
+// A Gemini batch is read from its inline requests; one that names an
+// uploaded file goes raw, with the reason.
+func TestDetectionTee_GeminiBatch(t *testing.T) {
+	up := teeUpstream(t, http.StatusOK, `{"name":"batches/1","metadata":{}}`)
+	agent := newAgentStub(t, nil)
+	gw := gateway(t, Config{UpstreamBaseURL: up, GeminiEnabled: true, GeminiBaseURL: up,
+		DetectionTee: newTee(t, DetectionTeeConfig{AgentURL: agent.url, MaxInFlight: 1})}, &lastRec{})
+	inline := `{"batch":{"display_name":"b","input_config":{"requests":{"requests":[` +
+		`{"request":{"contents":[{"parts":[{"text":"one"}]}]},"metadata":{"key":"k1"}},` +
+		`{"request":{"contents":[{"parts":[{"text":"two"}]}]}}]}}}}`
+	file := `{"batch":{"inputConfig":{"fileName":"files/abc"}}}`
+	for _, body := range []string{inline, file} {
+		if resp, b := do(t, http.MethodPost, gw.URL+"/gemini/v1beta/models/g:batchGenerateContent", map[string]string{"x-api-key": "sk"}, body); resp.StatusCode != http.StatusOK {
+			t.Fatalf("status %d %s", resp.StatusCode, b)
+		}
+	}
+	turns, raw := agent.wait(t, 2)
+	if got := turns[0]; got.Dialect != readerGeminiBatch || got.Op != routeBatch || got.NormalizeError != "" {
+		t.Errorf("inline turn = %+v", got)
+	}
+	sameJSONValue(t, "items", marshalJSON(t, turns[0].Items), []byte(`[`+
+		`{"custom_id":"k1","conversation":{"cv":1,"messages":[{"role":"user","content":[{"type":"text","text":"one"}]}],"history":"full"}},`+
+		`{"custom_id":"1","conversation":{"cv":1,"messages":[{"role":"user","content":[{"type":"text","text":"two"}]}],"history":"full"}}]`))
+	if got := turns[1]; got.NormalizeError != "batch references a file" || string(got.Request) != file || len(got.Items) != 0 {
+		t.Errorf("file turn = %+v", got)
+	}
+	for i := range raw {
+		for _, k := range []string{"conversation", "answer"} {
+			if _, ok := raw[i][k]; ok {
+				t.Errorf("turn %d has %q: %v", i, k, raw[i])
+			}
+		}
+	}
+	if _, ok := raw[1]["items"]; ok {
+		t.Errorf("file turn has items: %v", raw[1])
+	}
+}
+
+// A batch past teeBatchItems is read up to the cap and says so.
+func TestDetectionTee_BatchCap(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"requests":[`)
+	for i := range teeBatchItems + 2 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"custom_id":"r%d","params":{"model":"m","max_tokens":1,"messages":[{"role":"user","content":"x"}]}}`, i)
+	}
+	b.WriteString(`]}`)
+	tt := teeTurn{Op: routeBatch, Dialect: readerAnthropicBatch, Request: []byte(b.String()), Response: []byte(`{}`), respType: "application/json"}
+	tt.normalize()
+	if len(tt.Items) != teeBatchItems || tt.Items[teeBatchItems-1].CustomID != fmt.Sprintf("r%d", teeBatchItems-1) ||
+		tt.NormalizeError != fmt.Sprintf("batch of %d requests: only the first %d are read", teeBatchItems+2, teeBatchItems) ||
+		tt.Answer != nil || tt.Conversation != nil {
+		t.Errorf("items %d, error %q", len(tt.Items), tt.NormalizeError)
+	}
+	bad := teeTurn{Op: routeBatch, Dialect: readerAnthropicBatch, Request: []byte(`{"requests":[{"custom_id":"a","params":{}},{"custom_id":"a","params":{}}]}`)}
+	if bad.normalize(); len(bad.Items) != 0 || !strings.Contains(bad.NormalizeError, "repeats") {
+		t.Errorf("duplicate ids: items %d, error %q", len(bad.Items), bad.NormalizeError)
 	}
 }

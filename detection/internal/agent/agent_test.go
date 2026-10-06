@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -762,4 +763,180 @@ func TestTurnsReadConversation(t *testing.T) {
 		t.Errorf("request stage with normalize_error = %+v", got.req.Turn)
 	}
 	f.none(t) // the raw Gemini response holds nothing the raw parsers read
+}
+
+// batchTurn is a Message Batches creation turn as the gateway sends it: the
+// raw body, the batch object as the response, and one item per prompt with
+// custom_id "q<n>" (n from 1).
+func batchTurn(prompts ...string) wire.Turn {
+	type item struct {
+		CustomID string         `json:"custom_id"`
+		Params   map[string]any `json:"params"`
+	}
+	var reqs []item
+	var items []wire.TurnItem
+	for i, p := range prompts {
+		id := fmt.Sprintf("q%d", i+1)
+		reqs = append(reqs, item{id, map[string]any{"model": "m", "max_tokens": 9,
+			"messages": []map[string]string{{"role": "user", "content": p}}}})
+		items = append(items, wire.TurnItem{CustomID: id, Conversation: wire.Conversation{
+			Version: wire.ConversationVersion, History: wire.HistoryFull,
+			Messages: []wire.Message{{Role: "user", Content: []wire.ContentBlock{{Type: wire.ContentText, Text: p}}}},
+		}})
+	}
+	body, _ := json.Marshal(map[string]any{"requests": reqs})
+	return wire.Turn{V: 1, ID: "req-1", TenantID: "t1", Path: "/v1/messages/batches", At: time.Now().UTC(), StatusCode: 200,
+		Request: body, Response: []byte(`{"id":"msgbatch_1","type":"message_batch","processing_status":"in_progress"}`),
+		Dialect: "anthropic_batch", Op: wire.OpBatch, Items: items}
+}
+
+// A batch is judged item by item: one request stage per item, in order,
+// under the batch call's id with the item's id in meta.item, and no
+// response stage. A value found anywhere in the raw batch body (here with
+// its key's context in item 2's prompt only) is removed from every item.
+func TestTurnsBatchItemByItem(t *testing.T) {
+	f := newFakeEngine(t)
+	_, url := startAgent(t, f, Config{})
+	v := join("Qm7Lp2Vx", "9Rt4Kw8Zn3")
+	tr := batchTurn("deploy the service with "+v, `remember my api_key = "`+v+`" for later`, "translate hello to French")
+	if code := postTurn(t, url, tr); code != http.StatusAccepted {
+		t.Fatalf("code %d; want 202", code)
+	}
+	for i, want := range []string{"q1", "q2", "q3"} {
+		got := f.next(t)
+		m, pt := got.req.Meta, got.req.Turn
+		if got.req.V != wire.Version || m.RequestID != "req-1" || m.Item != want || m.TenantID != "t1" ||
+			pt.Stage != turn.StageRequest || pt.NotJudged != "" || pt.Unreadable {
+			t.Errorf("item %d: detect = %s", i, got.raw)
+		}
+		if bytes.Contains(got.raw, []byte(v)) {
+			t.Errorf("item %d: the value left the host: %s", i, got.raw)
+		}
+		switch i {
+		case 0:
+			if !strings.HasPrefix(pt.State.UserText, "deploy the service with [REDACTED:") {
+				t.Errorf("item 1 user_text = %q", pt.State.UserText)
+			}
+		case 1:
+			if !strings.Contains(pt.State.UserText, "[REDACTED:") || len(pt.Secrets) == 0 {
+				t.Errorf("item 2: user_text %q, secrets %v", pt.State.UserText, pt.Secrets)
+			}
+		case 2:
+			if pt.State.UserText != "translate hello to French" {
+				t.Errorf("item 3 user_text = %q", pt.State.UserText)
+			}
+		}
+	}
+	f.none(t) // no response stage: the batch object holds no generation
+}
+
+// Items past wire.MaxBatchItems, or a batch the gateway read only in part,
+// add one not-judged request stage for the whole call after the items.
+func TestTurnsBatchBeyondCap(t *testing.T) {
+	f := newFakeEngine(t)
+	_, url := startAgent(t, f, Config{})
+	prompts := make([]string, wire.MaxBatchItems+3)
+	for i := range prompts {
+		prompts[i] = "p"
+	}
+	if code := postTurn(t, url, batchTurn(prompts...)); code != http.StatusAccepted {
+		t.Fatalf("code %d", code)
+	}
+	for i := range wire.MaxBatchItems {
+		if got := f.next(t); got.req.Meta.Item != fmt.Sprintf("q%d", i+1) || got.req.Turn.NotJudged != "" {
+			t.Fatalf("item %d: %s", i, got.raw)
+		}
+	}
+	got := f.next(t)
+	if got.req.Meta.Item != "" || got.req.Turn.Stage != turn.StageRequest ||
+		got.req.Turn.NotJudged != fmt.Sprintf("not judged: 3 batch requests past the first %d", wire.MaxBatchItems) {
+		t.Errorf("marker = %s", got.raw)
+	}
+	f.none(t)
+
+	tr := batchTurn("a", "b")
+	tr.NormalizeError = "batch of 1500 requests: only the first 1000 are read"
+	postTurn(t, url, tr)
+	f.next(t)
+	f.next(t)
+	if got := f.next(t); got.req.Turn.NotJudged != "not judged: "+tr.NormalizeError || got.req.Meta.Item != "" {
+		t.Errorf("marker = %s", got.raw)
+	}
+	f.none(t)
+}
+
+// A batch is one job in the queue, whatever its number of items: it takes
+// one queue_size slot, and when shed sends one marker.
+func TestTurnsBatchIsOneJob(t *testing.T) {
+	f := newFakeEngine(t)
+	f.hold = make(chan struct{})
+	_, url := startAgent(t, f, Config{MaxInFlight: 1, QueueSize: 1})
+
+	postTurn(t, url, fullTurn("first", false))
+	if got := f.next(t); got.req.Turn.NotJudged != "" {
+		t.Fatalf("first turn not judged: %+v", got.req)
+	}
+	postTurn(t, url, batchTurn("a", "b", "c")) // the one slot
+	postTurn(t, url, batchTurn("d", "e"))      // shed
+	got := f.next(t)
+	if got.req.Turn.NotJudged != errJudgingBusy || got.req.Meta.Item != "" {
+		t.Fatalf("detect = %s; want one not-judged marker", got.raw)
+	}
+	f.none(t)
+	f.release()
+	for _, want := range []string{"q1", "q2", "q3"} {
+		if got := f.next(t); got.req.Meta.Item != want || got.req.Turn.NotJudged != "" {
+			t.Errorf("detect = %s; want item %s", got.raw, want)
+		}
+	}
+	f.none(t)
+}
+
+// The engine gets the turn's dialect and op on every stage, and the
+// conversation's history when the stage was read from one: for a single
+// turn and for each batch item.
+func TestTurnsMetaDialectOpHistory(t *testing.T) {
+	f := newFakeEngine(t)
+	_, url := startAgent(t, f, Config{})
+
+	tr := fullTurn("summarise this", true)
+	tr.Dialect, tr.Op = "openai_responses", wire.OpGenerate
+	tr.Conversation = &wire.Conversation{Version: wire.ConversationVersion, History: wire.HistoryServerSide,
+		Messages: []wire.Message{{Role: "user", Content: []wire.ContentBlock{{Type: wire.ContentText, Text: "summarise this"}}}}}
+	tr.Answer = &wire.Answer{Content: []wire.ContentBlock{{Type: wire.ContentText, Text: "Here it is."}}}
+	postTurn(t, url, tr)
+	for range 2 {
+		got := f.next(t)
+		if m := got.req.Meta; m.Dialect != "openai_responses" || m.Op != wire.OpGenerate || m.History != wire.HistoryServerSide || m.Item != "" {
+			t.Errorf("single turn meta = %s", got.raw)
+		}
+	}
+
+	raw := fullTurn("hello", false) // read from the raw body: no history
+	raw.Dialect, raw.Op = "anthropic", wire.OpGenerate
+	postTurn(t, url, raw)
+	if got := f.next(t); got.req.Meta.Dialect != "anthropic" || got.req.Meta.Op != wire.OpGenerate ||
+		bytes.Contains(got.raw, []byte(`"history"`)) {
+		t.Errorf("raw turn meta = %s", got.raw)
+	}
+
+	b := batchTurn("a", "b")
+	b.Items[1].Conversation.History = wire.HistoryPrompt
+	postTurn(t, url, b)
+	for i, want := range []struct{ item, history string }{{"q1", wire.HistoryFull}, {"q2", wire.HistoryPrompt}} {
+		got := f.next(t)
+		if m := got.req.Meta; m.Dialect != "anthropic_batch" || m.Op != wire.OpBatch || m.Item != want.item || m.History != want.history {
+			t.Errorf("item %d meta = %s", i, got.raw)
+		}
+		var meta map[string]any
+		_ = json.Unmarshal(got.raw, &struct {
+			Meta *map[string]any `json:"meta"`
+		}{&meta})
+		for _, k := range []string{"dialect", "op", "item", "history"} {
+			if _, ok := meta[k]; !ok {
+				t.Errorf("item %d meta lacks %q: %s", i, k, got.raw)
+			}
+		}
+	}
+	f.none(t)
 }

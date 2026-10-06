@@ -48,7 +48,7 @@ func TestRouteOf(t *testing.T) {
 		{gemini, post, "/v1beta/models/gemini-2.5-pro:generateContent", RouteInfo{routeGenerate, readerGemini}},
 		{gemini, post, "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse", RouteInfo{routeGenerate, readerGemini}},
 		{gemini, post, "/v1beta/models/gemini-2.5-pro:countTokens", RouteInfo{Op: routeCount}},
-		{gemini, post, "/v1beta/models/gemini-2.5-pro:batchGenerateContent", RouteInfo{Op: routeBatch}},
+		{gemini, post, "/v1beta/models/gemini-2.5-pro:batchGenerateContent", RouteInfo{routeBatch, readerGeminiBatch}},
 		{gemini, post, "/v1beta/models/text-embedding-004:embedContent", RouteInfo{Op: routeUtility}},
 		{gemini, get, "/v1beta/models", RouteInfo{Op: routeUtility}},
 		{gemini, post, "/v1beta/cachedContents", RouteInfo{}},

@@ -1,0 +1,6 @@
+{
+  "request": {"requests":[{"custom_id":"a","params":{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"x"}]}},{"custom_id":"a","params":{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"y"}]}}]},
+  "expect": {
+    "request_error": "requests.1.custom_id: \"a\" repeats requests.0"
+  }
+}

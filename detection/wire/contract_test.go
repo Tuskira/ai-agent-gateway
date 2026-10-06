@@ -43,7 +43,7 @@ func TestGatewayContractFixtures(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"turn.json", "turn_no_response.json"} {
+	for _, name := range []string{"turn.json", "turn_no_response.json", "turn_batch.json"} {
 		var got Turn
 		if err := json.Unmarshal(read(name), &got); err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -77,6 +77,27 @@ func TestGatewayContractFixtures(t *testing.T) {
 		{Type: ContentToolUse, ID: "toolu_1", Name: "get_time", Input: json.RawMessage(`{}`)},
 	}, StopReason: "tool_use"}
 	sameJSON("turn.json", turn)
+
+	text := func(s string) []ContentBlock { return []ContentBlock{{Type: ContentText, Text: s}} }
+	batch := Turn{
+		V: 1, ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "session-1", KeyID: "key-1",
+		Principal: "user-1", Path: "/v1/messages/batches",
+		At:         time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		StatusCode: 200,
+		Request: []byte(`{"requests":[` +
+			`{"custom_id":"q1","params":{"model":"example-model","max_tokens":64,"system":"be brief","messages":[{"role":"user","content":"hello"}]}},` +
+			`{"custom_id":"q2","params":{"model":"example-model","max_tokens":64,"messages":[{"role":"user","content":"what time is it?"}]}}]}`),
+		Response: []byte(`{"id":"msgbatch_1","type":"message_batch","processing_status":"in_progress",` +
+			`"request_counts":{"processing":2,"succeeded":0,"errored":0,"canceled":0,"expired":0}}`),
+		Dialect: "anthropic_batch", Op: OpBatch,
+		Items: []TurnItem{
+			{CustomID: "q1", Conversation: Conversation{Version: ConversationVersion, System: text("be brief"),
+				Messages: []Message{{Role: "user", Content: text("hello")}}, History: HistoryFull}},
+			{CustomID: "q2", Conversation: Conversation{Version: ConversationVersion,
+				Messages: []Message{{Role: "user", Content: text("what time is it?")}}, History: HistoryFull}},
+		},
+	}
+	sameJSON("turn_batch.json", batch)
 }
 
 // Call hands package turn the canonical forms only when the gateway read

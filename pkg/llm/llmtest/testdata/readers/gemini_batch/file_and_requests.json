@@ -1,0 +1,6 @@
+{
+  "request": {"batch":{"inputConfig":{"fileName":"files/x","requests":{"requests":[{"request":{"contents":[{"parts":[{"text":"a"}]}]}}]}}}},
+  "expect": {
+    "request_error": "batch.inputConfig: fileName and requests are exclusive"
+  }
+}

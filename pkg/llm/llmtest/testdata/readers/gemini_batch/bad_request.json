@@ -1,0 +1,6 @@
+{
+  "request": {"batch":{"inputConfig":{"requests":{"requests":[{"request":{"contents":"hi"}}]}}}},
+  "expect": {
+    "request_error": "batch.inputConfig.requests.requests.0.request: contents:"
+  }
+}

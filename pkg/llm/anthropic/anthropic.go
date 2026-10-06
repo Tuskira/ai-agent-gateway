@@ -50,15 +50,24 @@ func (Dialect) DecodeRequest(body []byte) (*llm.Request, error) {
 	if err := strictjson.Check(body); err != nil {
 		return nil, &llm.RequestError{Err: fmt.Errorf("invalid request body: %v", err)}
 	}
-	req, err := parseRequest(body)
+	req, err := readRequest(body)
 	if err != nil {
 		return nil, &llm.RequestError{Err: err}
+	}
+	return req, nil
+}
+
+// readRequest is DecodeRequest after the strict key check.
+func readRequest(body []byte) (*llm.Request, error) {
+	req, err := parseRequest(body)
+	if err != nil {
+		return nil, err
 	}
 	for i, m := range req.Messages {
 		switch m.Role {
 		case "user", "assistant", "system":
 		default:
-			return nil, &llm.RequestError{Err: fmt.Errorf("messages.%d.role: unknown role %q", i, m.Role)}
+			return nil, fmt.Errorf("messages.%d.role: unknown role %q", i, m.Role)
 		}
 	}
 	return req, nil

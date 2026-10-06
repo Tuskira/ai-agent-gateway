@@ -150,10 +150,15 @@ four packages. Readers are strict where two parsers could disagree (a
 repeated key, two keys differing only by case, an unknown role), so what
 is read is what the vendor executes. The detection tee uses them to hand
 the detection agent every call as one canonical conversation whatever
-format it was made in; a route with no Reader (a batch: `anthropic_batch`
-is reserved) is sent raw, with the reason. A new format's Reader passes
-`pkg/llm/llmtest.RunReader` and, once registered under the name its routes
-already declare, is used with no plane change.
+format it was made in; a route with no Reader is sent raw, with the
+reason. A batch creation call is read by an `llm.BatchReader`
+(`llm.RegisterBatchReader`, `llm.BatchReaderByName`): `anthropic_batch`
+(Message Batches) and `gemini_batch` (inline `batchGenerateContent`) turn
+the body into its requests, which the tee sends as `items`, one
+conversation each. A new format's Reader passes
+`pkg/llm/llmtest.RunReader` (a BatchReader `RunBatchReader`) and, once
+registered under the name its routes already declare, is used with no
+plane change.
 
 The session seam is what lets the MCP plane scale out. `internal/
 dataplane/session.Manager` keeps the session logic — minting the id,

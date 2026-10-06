@@ -1,0 +1,6 @@
+{
+  "request": {"requests":[{"custom_id":"a","params":{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"x"}],"messages":[{"role":"user","content":"y"}]}}]},
+  "expect": {
+    "request_error": "invalid request body: duplicate key \"messages\" in requests.0.params"
+  }
+}

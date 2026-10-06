@@ -71,6 +71,10 @@ const teeVersion = 1
 // teeResponseBytes bounds the response copy sent to the agent.
 const teeResponseBytes = 1 << 20
 
+// teeBatchItems bounds teeTurn.Items: the requests of a larger batch past
+// it are not read (NormalizeError says so); the raw body is sent whole.
+const teeBatchItems = 1000
+
 // teeTurn is one complete call. The id is the gateway request id, which also
 // keys the call's LLM log. Response is the first teeResponseBytes the client
 // received, present only when the upstream answered 2xx and the relay to the
@@ -79,8 +83,10 @@ const teeResponseBytes = 1 << 20
 // Op and Dialect are the route's (RouteInfo). Conversation and Answer are
 // the bodies read through the Dialect's llm.Reader, filled by the worker
 // (normalize), off the request path; NormalizeError says why they are
-// missing. The raw bodies are sent either way. Items is reserved for
-// batches.
+// missing. The raw bodies are sent either way. A batch (Op routeBatch) has
+// Items instead, each request of the batch read through the Dialect's
+// llm.BatchReader, and never an Answer: its response is the batch object,
+// which holds no generation.
 type teeTurn struct {
 	V              int              `json:"v"`
 	ID             string           `json:"id"`
@@ -176,6 +182,10 @@ func teeTurnOf(r *http.Request, info callInfo, route RouteInfo, start time.Time,
 // teeResponseBytes (or before the model finished) is read up to the cut,
 // with Answer.Truncated set.
 func (t *teeTurn) normalize() {
+	if t.Op == routeBatch {
+		t.normalizeBatch()
+		return
+	}
 	var rd llm.Reader
 	if t.Op == routeGenerate && t.Dialect != "" {
 		rd, _ = llm.ReaderByName(t.Dialect)
@@ -203,6 +213,41 @@ func (t *teeTurn) normalize() {
 		t.Answer = a
 	}
 	t.NormalizeError = strings.Join(errs, "; ")
+}
+
+// normalizeBatch reads a batch's requests through its Dialect's
+// BatchReader into Items, the first teeBatchItems of them. Its response,
+// the batch object, holds no generation: no Answer.
+func (t *teeTurn) normalizeBatch() {
+	var br llm.BatchReader
+	if t.Dialect != "" {
+		br, _ = llm.BatchReaderByName(t.Dialect)
+	}
+	if br == nil {
+		name := t.Dialect
+		if name == "" {
+			name = "this route"
+		}
+		t.NormalizeError = "no reader for " + name
+		return
+	}
+	items, err := br.DecodeBatch(t.Request)
+	switch {
+	case errors.Is(err, llm.ErrBatchFile):
+		t.NormalizeError = llm.ErrBatchFile.Error()
+		return
+	case err != nil:
+		t.NormalizeError = "decode request: " + err.Error()
+		return
+	}
+	if len(items) > teeBatchItems {
+		t.NormalizeError = fmt.Sprintf("batch of %d requests: only the first %d are read", len(items), teeBatchItems)
+		items = items[:teeBatchItems]
+	}
+	t.Items = make([]teeTurnItem, 0, len(items))
+	for _, it := range items {
+		t.Items = append(t.Items, teeTurnItem{CustomID: it.CustomID, Conversation: toConversation(it.Request, t.Dialect)})
+	}
 }
 
 // readAnswer reads Response: as a stream when the client got one (SSE; an

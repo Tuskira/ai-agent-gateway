@@ -46,7 +46,13 @@ const TurnVersion = 1
 // could read them, Conversation is the request and Answer the response
 // (when there is one), in one canonical shape whatever the dialect; when it
 // could not, NormalizeError says why and only the raw bodies are there.
-// Items is reserved for batches and not sent yet.
+//
+// A batch (OpBatch) has no Conversation and no Answer (its response is the
+// batch object, which holds no generation): Items holds each request of
+// the batch, at most MaxBatchItems of them, under the id the client gave
+// it. A batch the gateway could not read has no Items and says why in
+// NormalizeError; one it read only in part (more than MaxBatchItems
+// requests) has both.
 type Turn struct {
 	V              int           `json:"v,omitempty"`
 	ID             string        `json:"id"`
@@ -107,7 +113,13 @@ const (
 // MaxOpaqueRaw bounds ContentBlock.Raw.
 const MaxOpaqueRaw = conv.MaxOpaqueRaw
 
-// TurnItem is one request of a batch (reserved: not sent yet).
+// MaxBatchItems bounds Turn.Items: the gateway reads at most this many
+// requests of a batch, and the agent judges at most this many.
+const MaxBatchItems = 1000
+
+// TurnItem is one request of a batch: CustomID is the id the client gave
+// it (custom_id; for a Gemini batch, its metadata key or else its
+// position), Conversation the request in the canonical shape.
 type TurnItem struct {
 	CustomID     string       `json:"custom_id"`
 	Conversation Conversation `json:"conversation"`
@@ -125,11 +137,12 @@ func (t Turn) Call() turn.Call {
 	return c
 }
 
-// MetaOfTurn is the Meta of a gateway turn. Meta has no field for
-// StatusCode, so the engine does not see it.
+// MetaOfTurn is the Meta of a gateway turn, without History (it depends on
+// what each stage is read from). Meta has no field for StatusCode, so the
+// engine does not see it.
 func MetaOfTurn(t Turn) Meta {
 	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID,
-		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path}
+		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
 }
 
 // TurnRequest is one call's stage (inline contract) as the gateway hands it to the agent: the
@@ -177,6 +190,18 @@ type Meta struct {
 	Principal string    `json:"principal,omitempty"`
 	Model     string    `json:"model,omitempty"`
 	Path      string    `json:"path,omitempty"`
+	// Dialect and Op are the gateway turn's (Turn.Dialect, Turn.Op): the
+	// wire format the call was made in and what the route does.
+	Dialect string `json:"dialect,omitempty"`
+	Op      string `json:"op,omitempty"`
+	// Item is, for one request of a batch, its id within the batch
+	// (TurnItem.CustomID, clipped and redacted): each request is judged
+	// as its own call, all under the batch call's RequestID.
+	Item string `json:"item,omitempty"`
+	// History is how much of the conversation the judged request carries
+	// (Conversation.History: full, server_side or prompt), when the stage
+	// was read from a canonical conversation; empty means full.
+	History string `json:"history,omitempty"`
 }
 
 // MetaOf is the Meta of a gateway turn.

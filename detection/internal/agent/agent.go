@@ -85,13 +85,23 @@ type Agent struct {
 	versionWarned atomic.Int64
 }
 
-// job is one background unit: the stages of one call, judged in order by one
-// worker. Each prepare builds the stage's turn to judge within ctx's
-// deadline (false: nothing to judge).
+// job is one background unit: the stages of one call (of a batch, one per
+// request), judged in order by one worker.
 type job struct {
-	m        wire.Meta
-	size     int64 // raw bytes held, counted in Agent.queued
-	prepares []func(ctx context.Context) (turn.PreparedTurn, bool)
+	size   int64 // raw bytes held, counted in Agent.queued
+	stages []stage
+}
+
+// stage is one judgment: prepare builds the turn to judge within ctx's
+// deadline (false: nothing to judge), sent under the Meta meta returns.
+type stage struct {
+	prepare func(ctx context.Context) (turn.PreparedTurn, bool)
+	meta    func() wire.Meta
+}
+
+// stageOf is a stage sent under m.
+func stageOf(m wire.Meta, p func(context.Context) (turn.PreparedTurn, bool)) stage {
+	return stage{prepare: p, meta: func() wire.Meta { return m }}
 }
 
 type cachedPolicy struct {
@@ -171,7 +181,8 @@ func (a *Agent) Queued() int { return len(a.queue) }
 // and sends the request stage, then the response stage when the turn carries
 // a response, so the engine sees them in that order. Each stage is read from
 // the turn's canonical conversation and answer when the gateway sent them
-// (wire.Turn.Call), else from the raw bodies.
+// (wire.Turn.Call), else from the raw bodies. A batch is judged item by
+// item (batchStages); it has no response stage.
 func (a *Agent) turns(w http.ResponseWriter, r *http.Request) {
 	var t wire.Turn
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxTurnBytes)).Decode(&t); err != nil {
@@ -197,24 +208,71 @@ func (a *Agent) turns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := wire.MetaOfTurn(t)
-	// The canonical conversation and answer when the gateway read them,
-	// else the raw bodies; secrets are searched in the raw bodies either way.
-	call := t.Call()
-	prepares := []func(context.Context) (turn.PreparedTurn, bool){
-		func(ctx context.Context) (turn.PreparedTurn, bool) {
+	var stages []stage
+	if len(t.Items) > 0 {
+		stages = batchStages(t, m)
+	} else {
+		// The canonical conversation and answer when the gateway read them,
+		// else the raw bodies; secrets are searched in the raw bodies
+		// either way.
+		call := t.Call()
+		if call.Conversation != nil {
+			m.History = call.Conversation.History
+		}
+		stages = append(stages, stageOf(m, func(ctx context.Context) (turn.PreparedTurn, bool) {
 			return turn.PrepareCallRequest(ctx, call), true
-		},
+		}))
+		if len(t.Response) > 0 && t.Op != wire.OpBatch { // a batch's response is the batch object
+			stages = append(stages, stageOf(m, func(ctx context.Context) (turn.PreparedTurn, bool) {
+				return turn.PrepareCallResponse(ctx, call)
+			}))
+		}
 	}
-	if len(t.Response) > 0 {
-		prepares = append(prepares, func(ctx context.Context) (turn.PreparedTurn, bool) {
-			return turn.PrepareCallResponse(ctx, call)
-		})
-	}
-	queued := a.background(m, len(t.Request)+len(t.Response), prepares...)
+	queued := a.background(len(t.Request)+len(t.Response), stages...)
 	answer(w, http.StatusAccepted, nil)
 	if !queued {
 		a.notJudged(m, turn.StageRequest)
 	}
+}
+
+// batchStages is one request stage per item of a batch, the first
+// wire.MaxBatchItems, each sent under the batch call's id with the item's
+// id in Meta.Item and prepared from the item's conversation, with every
+// value found anywhere in the raw batch body removed (turn.Batch). Items
+// past the cap, or a batch the gateway read only in part (NormalizeError),
+// add one not-judged request stage for the whole call, with the reason.
+func batchStages(t wire.Turn, m wire.Meta) []stage {
+	b := turn.NewBatch(t.Request)
+	items := t.Items[:min(len(t.Items), wire.MaxBatchItems)]
+	stages := make([]stage, 0, len(items)+1)
+	for _, it := range items {
+		var id string // set by prepare, read by meta after it
+		stages = append(stages, stage{
+			prepare: func(ctx context.Context) (turn.PreparedTurn, bool) {
+				pt := b.PrepareItem(ctx, &it.Conversation)
+				id = b.ItemID(it.CustomID)
+				return pt, true
+			},
+			meta: func() wire.Meta {
+				im := m
+				im.Item, im.History = id, it.Conversation.History
+				return im
+			},
+		})
+	}
+	var reason string
+	switch {
+	case len(t.Items) > wire.MaxBatchItems:
+		reason = fmt.Sprintf("not judged: %d batch requests past the first %d", len(t.Items)-wire.MaxBatchItems, wire.MaxBatchItems)
+	case t.NormalizeError != "":
+		reason = "not judged: " + t.NormalizeError
+	}
+	if reason != "" {
+		stages = append(stages, stageOf(m, func(context.Context) (turn.PreparedTurn, bool) {
+			return turn.NotJudgedTurn(turn.StageRequest, reason), true
+		}))
+	}
+	return stages
 }
 
 func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
@@ -235,9 +293,9 @@ func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
 		answerJSON(w, v)
 		return
 	}
-	queued := a.background(m, len(t.Request), func(ctx context.Context) (turn.PreparedTurn, bool) {
+	queued := a.background(len(t.Request), stageOf(m, func(ctx context.Context) (turn.PreparedTurn, bool) {
 		return turn.PrepareRequestContext(ctx, t.Request), true
-	})
+	}))
 	answerJSON(w, v)
 	if !queued {
 		a.notJudged(m, turn.StageRequest)
@@ -250,9 +308,9 @@ func (a *Agent) turnResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := wire.MetaOf(t)
-	queued := a.background(m, len(t.Request)+len(t.Response), func(ctx context.Context) (turn.PreparedTurn, bool) {
+	queued := a.background(len(t.Request)+len(t.Response), stageOf(m, func(ctx context.Context) (turn.PreparedTurn, bool) {
 		return turn.PrepareResponseContext(ctx, t.Request, t.Response)
-	})
+	}))
 	answer(w, http.StatusAccepted, nil)
 	if !queued {
 		a.notJudged(m, turn.StageResponse)
@@ -285,18 +343,19 @@ func (a *Agent) judgeInline(ctx context.Context, m wire.Meta, body []byte) *wire
 	return res.Blocking
 }
 
-// background queues a stage to be judged off the request path. When the
-// queue is full (QueueSize turns, or QueueBytes of them) it reports false
-// and the caller sends the not-judged marker once it has answered. Preparing
-// runs in the worker: it scans for secrets, which is the costly part.
-func (a *Agent) background(m wire.Meta, size int, prepares ...func(context.Context) (turn.PreparedTurn, bool)) bool {
+// background queues the stages of one call, as one job of size raw bytes,
+// to be judged off the request path. When the queue is full (QueueSize
+// jobs, or QueueBytes of them) it reports false and the caller sends the
+// not-judged marker once it has answered. Preparing runs in the worker: it
+// scans for secrets, which is the costly part.
+func (a *Agent) background(size int, stages ...stage) bool {
 	n := int64(size)
 	if a.queued.Add(n) > int64(a.cfg.QueueBytes) {
 		a.queued.Add(-n)
 		return false
 	}
 	select {
-	case a.queue <- job{m: m, size: n, prepares: prepares}:
+	case a.queue <- job{size: n, stages: stages}:
 		return true
 	default:
 		a.queued.Add(-n)
@@ -307,16 +366,17 @@ func (a *Agent) background(m wire.Meta, size int, prepares ...func(context.Conte
 // judge sends the job's stages one after the other; a stage that fails does
 // not stop the next.
 func (a *Agent) judge(j job) {
-	for _, prepare := range j.prepares {
+	for _, st := range j.stages {
 		func() {
 			ctx, cancel := context.WithTimeout(context.Background(), backgroundTimeout)
 			defer cancel()
-			pt, ok := a.prepare(ctx, j.m, prepare)
+			pt, ok := a.prepare(ctx, st.meta(), st.prepare)
 			if !ok {
 				return
 			}
-			if _, err := a.detect(ctx, wire.DetectRequest{Meta: j.m, Turn: pt}); err != nil {
-				a.warn("agent: background judgment failed", err, "request_id", j.m.RequestID, "tenant", j.m.TenantID, "stage", pt.Stage)
+			m := st.meta()
+			if _, err := a.detect(ctx, wire.DetectRequest{Meta: m, Turn: pt}); err != nil {
+				a.warn("agent: background judgment failed", err, "request_id", m.RequestID, "tenant", m.TenantID, "stage", pt.Stage)
 			}
 		}()
 	}

@@ -7,6 +7,14 @@ project_name: ai-agent-gateway
 # already be populated on disk before goreleaser's `go build` runs. That
 # build happens in a dedicated "web" step in .github/workflows/release.yml
 # (npm ci && npm run build --prefix web), not here.
+# The detection agent (detection/, its own module and image) is released on
+# its own with tags detection/vX.Y.Z (.github/workflows/publish-detection-agent.yml).
+# Without this, goreleaser could pick such a tag as a gateway release's
+# previous tag and build the changelog from it.
+git:
+  ignore_tags:
+    - "detection/*"
+
 before:
   hooks:
     - go mod download

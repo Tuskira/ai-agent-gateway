@@ -3,7 +3,7 @@ BINARY  := gateway
 VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build build-go-only run test lint vuln ci snapshot docker-build compose-up compose-down tidy notices ui-install ui-dev ui-build examples-smoke examples-k8s
+.PHONY: build build-go-only run test lint vuln ci snapshot docker-build compose-up compose-down tidy notices detection-build detection-test detection-vet detection-lint detection-vuln detection-contract ui-install ui-dev ui-build examples-smoke examples-k8s
 
 # build produces the full binary with the React admin console embedded:
 # ui-build populates internal/api/ui/dist before the Go compiler runs.
@@ -50,6 +50,7 @@ ci:
 	go test -race -count=1 ./...
 	$(MAKE) lint
 	$(MAKE) vuln
+	$(MAKE) detection-vet detection-build detection-test detection-lint detection-vuln detection-contract
 	npm ci --prefix web
 	npm run typecheck --prefix web
 	npm run lint --prefix web
@@ -113,8 +114,48 @@ tidy:
 # committed -- see .gitignore). Run before a release (.goreleaser.yaml's
 # before.hooks does this) and in CI (the "go" job), but also safe to run
 # any time to check a new dependency's license by hand.
+#
+# The detection agent (detection/, its own module) gets the same check for
+# ./cmd/detection-agent. Its closure includes MPL-2.0 and CC0-1.0 modules
+# (via gitleaks), which the gateway's own list does not accept, so only that
+# run passes -allow.
 notices:
 	go run -C tools/notices . -repo-root ../.. -pkg ./cmd/gateway -out THIRD_PARTY_NOTICES
+	go run -C tools/notices . -repo-root ../../detection -pkg ./cmd/detection-agent -out THIRD_PARTY_NOTICES -allow MPL-2.0,CC0-1.0
+
+# The detection agent is a nested Go module (detection/go.mod, no
+# dependency on the gateway's) versioned on its own with tags detection/vX.Y.Z;
+# see docs/detection-agent.md. These targets run the same checks as the CI
+# "detection" job. The root `go ./...` does not descend into it.
+detection-build:
+	CGO_ENABLED=0 go build -C detection -trimpath -o ../bin/detection-agent ./cmd/detection-agent
+
+detection-test:
+	go test -C detection -race -count=1 ./...
+
+detection-vet:
+	go vet -C detection ./...
+
+detection-lint:
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		cd detection && golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not installed, skipping (see https://golangci-lint.run/welcome/install/)"; \
+	fi
+
+detection-vuln:
+	@if command -v govulncheck >/dev/null 2>&1; then \
+		cd detection && govulncheck ./...; \
+	else \
+		echo "govulncheck not installed, skipping (go install golang.org/x/vuln/cmd/govulncheck@latest)"; \
+	fi
+
+# detection-contract fails when the agent's copy of the gateway's detection
+# wire fixtures drifts from the gateway's (internal/llmplane/testdata/detection).
+# Both sides' tests pin their types to their own copy, so identical copies
+# keep the two ends in step.
+detection-contract:
+	diff -r internal/llmplane/testdata/detection detection/wire/testdata/gateway
 
 ui-install:
 	cd web && npm install

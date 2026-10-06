@@ -17,7 +17,7 @@ const sidebars = {
       type: 'category',
       label: 'Operating the gateway',
       collapsed: false,
-      items: ['connectors-and-credentials', 'profiles', 'models', 'skills', 'llm-plane', 'observability', 'api'],
+      items: ['connectors-and-credentials', 'profiles', 'models', 'skills', 'llm-plane', 'detection-agent', 'observability', 'api'],
     },
     { type: 'doc', id: 'third-party-notices', label: 'Third-Party Notices' },
   ],

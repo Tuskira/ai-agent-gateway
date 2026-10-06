@@ -75,6 +75,75 @@ jobs:
         with:
           version: v2.14.0
 
+  # The detection agent is a nested module (detection/go.mod), so the go
+  # job's ./... never reaches it; same checks, run inside it.
+  detection:
+    name: detection
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: ci-detection-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: detection/go.mod
+          cache: true
+          cache-dependency-path: detection/go.sum
+
+      # The agent's copy of the gateway's wire fixtures must stay
+      # byte-identical (see docs/detection-agent.md).
+      - name: contract fixtures
+        run: make detection-contract
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l detection)"
+          if [ -n "$out" ]; then
+            echo "$out"
+            echo "::error::gofmt found unformatted files (run 'gofmt -w detection')"
+            exit 1
+          fi
+
+      - name: go vet
+        run: make detection-vet
+
+      - name: go build
+        run: make detection-build
+
+      # Same shape as the go job's test step; goes to Codecov as flag
+      # "unit" (paths under detection/ in codecov.yml).
+      - name: go test -race
+        run: go test -C detection -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-detection.out ./...
+
+      - name: upload detection coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: detection/coverage-detection.out
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      # Same third-party license check as the go job's, for the agent's
+      # own dependency closure.
+      - name: license notices
+        run: make notices
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.14.0
+          working-directory: detection
+
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: detection/go.mod
+          work-dir: detection
+
   web:
     name: web
     runs-on: ubuntu-latest
@@ -355,6 +424,15 @@ jobs:
           push: false
           load: true
           tags: ai-agent-gateway:ci-smoke
+
+      # The detection agent's image: built, not run (it needs an engine).
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.detection-agent
+          platforms: linux/amd64
+          push: false
+          tags: detection-agent:ci-build
 
       # A throwaway key minted per run (rather than the docker-compose
       # dev default) -- one less "known" secret-shaped literal for

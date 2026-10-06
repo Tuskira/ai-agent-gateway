@@ -1,0 +1,48 @@
+# syntax=docker/dockerfile:1
+#
+# The detection agent (detection/, its own Go module; see
+# docs/detection-agent.md): a sidecar the gateway's llm_proxy.detection tee
+# posts each completed call to. Built from source like Dockerfile, but with
+# no UI stage and no database.
+#
+#   docker build -f Dockerfile.detection-agent -t detection-agent .
+#
+# DETECTION_ENGINE_URL and DETECTION_AGENT_TOKEN are required at run time.
+# AGENT_LISTEN defaults to 127.0.0.1:8090: the agent's port has no
+# authentication, and a sidecar in the same pod (or the same network
+# namespace) as the gateway reaches it there with nothing else configured.
+# Do not publish the port or listen on a wider address.
+
+FROM golang:1.27-alpine AS builder
+
+WORKDIR /src
+
+# Cache module downloads separately from source changes.
+COPY detection/go.mod detection/go.sum ./detection/
+RUN cd detection && go mod download
+
+COPY detection/ ./detection/
+COPY tools/notices/ ./tools/notices/
+
+RUN cd detection && CGO_ENABLED=0 go build \
+    -trimpath \
+    -ldflags "-s -w" \
+    -o /out/detection-agent \
+    ./cmd/detection-agent
+
+# Same check/generation `make notices` runs for the agent (see Makefile,
+# tools/notices): fails the image build if a Go dependency's license is
+# outside the allow list. MPL-2.0 and CC0-1.0 are accepted for the agent
+# only, because of what the secret scanner (gitleaks) pulls in.
+RUN go run -C tools/notices . -repo-root ../../detection -pkg ./cmd/detection-agent -out /out/THIRD_PARTY_NOTICES -allow MPL-2.0,CC0-1.0
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=builder /out/detection-agent /detection-agent
+
+# Third-party license notices for the Go dependencies and standard library
+# bundled in this image (generated above), and this project's own license.
+COPY --from=builder /out/THIRD_PARTY_NOTICES /licenses/THIRD_PARTY_NOTICES
+COPY LICENSE NOTICE /licenses/
+
+ENTRYPOINT ["/detection-agent"]

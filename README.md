@@ -173,6 +173,7 @@ can run more than one replica, and ClickHouse.
 | [docs/models.md](docs/models.md) | Model catalog vs. registry, the Models page and Connect flow, permissions |
 | [docs/skills.md](docs/skills.md) | Skills & commands registry: versions, attachment, native tool/prompts, MCP Skills Extension, file sync |
 | [docs/llm-plane.md](docs/llm-plane.md) | Provider routes, BYOK setup, Bedrock credential modes, capture, cost |
+| [docs/detection-agent.md](docs/detection-agent.md) | The optional detection agent sidecar: local redaction, the `POST /v1/turns` contract with the gateway's tee, background judging, the agent-to-engine contract (no engine included) |
 | [docs/observability.md](docs/observability.md) | Sinks, analytics API, console pages, sample ClickHouse queries |
 | [docs/api.md](docs/api.md) | Control-plane API: auth, error envelope, pagination, full route table |
 | [deploy/README.md](deploy/README.md) | Docker Compose and Kubernetes (kustomize `base` + `kind`/`analytics` overlays), scaling per plane |

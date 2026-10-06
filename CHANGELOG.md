@@ -255,6 +255,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot be queued or posted is dropped and counted in the LLM plane's
   `/health`. Off unless `agent_url` is set; the contract is in
   `docs/llm-plane.md`.
+- Detection agent, shipped as a nested Go module (`detection/`, versioned
+  with `detection/vX.Y.Z` tags, image
+  `ghcr.io/tuskira/ai-agent-gateway-detection-agent`). It is the local
+  sidecar the gateway's detection tee posts each completed turn to
+  (`POST /v1/turns`): it extracts the new turn, replaces secrets with
+  `[REDACTED:<kind>]` on the host, and sends the request stage, then the
+  response stage when there is one, to a remote detection engine from a
+  background queue. Detection only: on `/v1/turns` it answers `202` at once.
+  The agent and
+  the agent-to-engine contract are included, an engine is not. See
+  [docs/detection-agent.md](docs/detection-agent.md). `make notices` now also
+  covers it, with a new `-allow` flag on `tools/notices` for the two extra
+  licenses its dependencies carry.
 - `examples/13-claude-desktop`: Claude Desktop (macOS) in the console via the
   public [claude-desktop-utility](https://github.com/Tuskira/claude-desktop-utility)
   and `POST /api/v1/ingest`. The walkthrough covers enabling ingest, an

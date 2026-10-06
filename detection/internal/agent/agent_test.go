@@ -728,3 +728,38 @@ func TestTurnsUnreadableBodySendsHitsOnly(t *testing.T) {
 		t.Errorf("engine received %s", got.raw)
 	}
 }
+
+// A turn the gateway read is judged from its canonical conversation and
+// answer, whatever the raw format (here Gemini's, which the raw parsers
+// cannot read); with normalize_error set, from the raw bodies.
+func TestTurnsReadConversation(t *testing.T) {
+	f := newFakeEngine(t)
+	_, url := startAgent(t, f, Config{})
+
+	tr := fullTurn("unused", true)
+	tr.Request = []byte(`{"contents":[{"role":"user","parts":[{"text":"summarise the report"}]}]}`)
+	tr.Response = []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"Here it is."}]}}]}`)
+	tr.Dialect, tr.Op = "gemini", wire.OpGenerate
+	tr.Conversation = &wire.Conversation{Version: wire.ConversationVersion, History: wire.HistoryFull,
+		Messages: []wire.Message{{Role: "user", Content: []wire.ContentBlock{{Type: wire.ContentText, Text: "summarise the report"}}}}}
+	tr.Answer = &wire.Answer{Content: []wire.ContentBlock{{Type: wire.ContentText, Text: "Here it is."}}, StopReason: "end_turn"}
+	if code := postTurn(t, url, tr); code != http.StatusAccepted {
+		t.Fatalf("code %d", code)
+	}
+	req, resp := f.next(t), f.next(t)
+	if st := req.req.Turn; st.Unreadable || st.State.UserText != "summarise the report" {
+		t.Errorf("request stage = %+v", st)
+	}
+	if st := resp.req.Turn; st.State.ResponseText != "Here it is." || st.State.UserGoal != "summarise the report" {
+		t.Errorf("response stage = %+v", st)
+	}
+
+	tr.NormalizeError = "decode response: cut"
+	if code := postTurn(t, url, tr); code != http.StatusAccepted {
+		t.Fatalf("code %d", code)
+	}
+	if got := f.next(t); !got.req.Turn.Unreadable { // the raw Gemini body
+		t.Errorf("request stage with normalize_error = %+v", got.req.Turn)
+	}
+	f.none(t) // the raw Gemini response holds nothing the raw parsers read
+}

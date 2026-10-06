@@ -78,3 +78,25 @@ func TestGatewayContractFixtures(t *testing.T) {
 	}, StopReason: "tool_use"}
 	sameJSON("turn.json", turn)
 }
+
+// Call hands package turn the canonical forms only when the gateway read
+// them without error, in a version this agent knows.
+func TestTurnCall(t *testing.T) {
+	c := &Conversation{Version: ConversationVersion, History: HistoryFull,
+		Messages: []Message{{Role: "user", Content: []ContentBlock{{Type: ContentText, Text: "hi"}}}}}
+	a := &Answer{Content: []ContentBlock{{Type: ContentText, Text: "ok"}}}
+	base := Turn{Request: []byte(`{"messages":[]}`), Response: []byte(`{}`), Conversation: c, Answer: a}
+	if got := base.Call(); got.Conversation != c || got.Answer != a || string(got.Request) != string(base.Request) ||
+		string(got.Response) != string(base.Response) {
+		t.Errorf("read turn: %+v", got)
+	}
+	failed := base
+	failed.NormalizeError = "decode response: cut"
+	newer := base
+	newer.Conversation = &Conversation{Version: ConversationVersion + 1}
+	for name, tr := range map[string]Turn{"normalize_error": failed, "newer version": newer, "no conversation": {Request: base.Request}} {
+		if got := tr.Call(); got.Conversation != nil || got.Answer != nil || string(got.Request) != string(base.Request) {
+			t.Errorf("%s: %+v; want the raw bodies only", name, got)
+		}
+	}
+}

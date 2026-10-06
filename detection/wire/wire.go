@@ -15,10 +15,10 @@
 package wire
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/detection/turn"
+	"github.com/Tuskira/tusk-ai-secured-gateway/detection/wire/conv"
 )
 
 // Paths served by the agent (to the gateway) and the engine (to the agent).
@@ -74,89 +74,55 @@ const (
 	OpBatch    = "batch"    // a batch of model calls submitted at once
 )
 
-// ConversationVersion is Conversation.Version ("cv"): bumped on a change an
-// older reader would misread. Fields are only ever added.
-const ConversationVersion = 1
-
-// Conversation.History values: how much of the conversation the request
-// carries.
-const (
-	HistoryFull       = "full"        // the whole conversation (messages APIs)
-	HistoryServerSide = "server_side" // earlier turns live on the vendor
-	HistoryPrompt     = "prompt"      // a bare prompt, no turns
+// The canonical conversation types and constants live in package conv,
+// which package turn reads too; they are re-exported here as the contract.
+type (
+	Conversation = conv.Conversation
+	Message      = conv.Message
+	ContentBlock = conv.ContentBlock
+	Answer       = conv.Answer
 )
 
-// Conversation is a request in the canonical shape: the system prompt, the
-// messages oldest first, and the names of the tools offered. Message roles
-// are "user", "assistant" and "system" (a system or developer message after
-// the first turn).
-type Conversation struct {
-	Version  int            `json:"cv"`
-	System   []ContentBlock `json:"system,omitempty"`
-	Messages []Message      `json:"messages"`
-	Tools    []string       `json:"tools,omitempty"`
-	History  string         `json:"history"`
-}
+// ConversationVersion is Conversation.Version ("cv").
+const ConversationVersion = conv.ConversationVersion
 
-// Message is one conversation turn.
-type Message struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
-}
+// Conversation.History values.
+const (
+	HistoryFull       = conv.HistoryFull
+	HistoryServerSide = conv.HistoryServerSide
+	HistoryPrompt     = conv.HistoryPrompt
+)
 
 // ContentBlock types.
 const (
-	ContentText       = "text"
-	ContentToolUse    = "tool_use"
-	ContentToolResult = "tool_result"
-	ContentThinking   = "thinking"
-	ContentImage      = "image"
-	ContentDocument   = "document"
-	ContentOpaque     = "opaque"
+	ContentText       = conv.ContentText
+	ContentToolUse    = conv.ContentToolUse
+	ContentToolResult = conv.ContentToolResult
+	ContentThinking   = conv.ContentThinking
+	ContentImage      = conv.ContentImage
+	ContentDocument   = conv.ContentDocument
+	ContentOpaque     = conv.ContentOpaque
 )
 
-// MaxOpaqueRaw bounds ContentBlock.Raw. A block whose wire form is larger
-// carries its first MaxOpaqueRaw bytes as a JSON string instead.
-const MaxOpaqueRaw = 64 << 10
-
-// ContentBlock is one content block; which fields are set depends on Type.
-// text and thinking: Text. tool_use: ID, Name, Input (the arguments,
-// verbatim JSON; a JSON string when a cut stream left them incomplete).
-// tool_result: ToolUseID, Content, IsError. image and document: MediaType
-// and Bytes (the size of the inline payload as sent; 0 for a reference such
-// as a URL or file id); the payload itself is dropped, except that a text
-// document (plain text, a text/* media type, or a content source's text
-// blocks) keeps its text in Text. opaque (a kind the
-// canonical shape has no slot for): Raw, the wire block verbatim, or its
-// first MaxOpaqueRaw bytes as a JSON string when larger, and Bytes, its
-// full size.
-type ContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   []ContentBlock  `json:"content,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
-	MediaType string          `json:"media_type,omitempty"`
-	Bytes     int             `json:"bytes,omitempty"`
-	Raw       json.RawMessage `json:"raw,omitempty"`
-}
-
-// Answer is a response in the canonical shape. Truncated is set when the
-// response was cut (the 1 MiB copy ended first, or the stream ended before
-// the model finished): Content is what was read up to there.
-type Answer struct {
-	Content    []ContentBlock `json:"content"`
-	StopReason string         `json:"stop_reason,omitempty"`
-	Truncated  bool           `json:"truncated,omitempty"`
-}
+// MaxOpaqueRaw bounds ContentBlock.Raw.
+const MaxOpaqueRaw = conv.MaxOpaqueRaw
 
 // TurnItem is one request of a batch (reserved: not sent yet).
 type TurnItem struct {
 	CustomID     string       `json:"custom_id"`
 	Conversation Conversation `json:"conversation"`
+}
+
+// Call is the turn as package turn prepares it: the raw bodies, with the
+// canonical conversation and answer only when the gateway read them
+// without error (NormalizeError empty) in a version this agent knows.
+// Otherwise the raw bodies are read, as from a gateway without readers.
+func (t Turn) Call() turn.Call {
+	c := turn.Call{Request: t.Request, Response: t.Response}
+	if t.NormalizeError == "" && t.Conversation != nil && t.Conversation.Version <= ConversationVersion {
+		c.Conversation, c.Answer = t.Conversation, t.Answer
+	}
+	return c
 }
 
 // MetaOfTurn is the Meta of a gateway turn. Meta has no field for

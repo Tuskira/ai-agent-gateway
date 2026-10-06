@@ -55,10 +55,17 @@ For each judgment the agent sends the engine two things, nothing else:
      taken out of it).
    - `user_goal`: the latest text the user typed anywhere in the
      conversation. This can come from an earlier message than the new turn.
+     When the request does not carry the whole conversation (an OpenAI
+     Responses call that continues a stored one, `history: server_side`, or
+     a flat legacy prompt, `history: prompt`), it is only the new turn's own
+     `user_text`, and empty when the turn has none: the goal is unknown.
    - `harness_text`: text in the new turn that is not the user's words: the
      `<system-reminder>…</system-reminder>` sections of user messages and the
-     turn's `system`/`developer` messages. It is sent, not hidden, because a
-     payload can be wrapped in the tag.
+     turn's mid-conversation `system`/`developer` messages; and, when the
+     agent reads the gateway's canonical conversation, the text of an
+     attached text document and the wire form of a block the canonical shape
+     has no slot for (`opaque`). It is sent, not hidden, because a payload
+     can be wrapped in the tag or hidden in a file.
    - `tool_results`: the tool outputs returned in this turn, each with the
      tool name.
    - `prior_tool_calls`: the assistant's tool calls that produced them.
@@ -263,14 +270,23 @@ The gateway also sends `dialect` (the wire format of the route), `op`
 (`generate` or `batch`), and, when it could read the bodies, `conversation`
 and `answer`: the request and response in one canonical shape whatever the
 provider (`wire.Conversation`, `wire.Answer`), with `answer.truncated` set
-when the response was cut. When it could not (a dialect with no reader yet,
-such as Gemini or the OpenAI Responses API, or a body that does not parse),
-`normalize_error` says why and only the raw bodies are there. `items` is
+when the response was cut. When it could not (a route with no reader, such
+as a message batch, or a body that does not parse), `normalize_error` says
+why and only the raw bodies are there. `items` is
 reserved for batches. The per-route table and the canonical shape are in
-[llm-plane.md](llm-plane.md#contract). This agent decodes these fields
-(`wire.Turn`) but still extracts from the raw `request` and `response`;
-reading `conversation` and `answer` instead comes in the next release. The
-raw bodies keep coming either way, for secret scanning on the host.
+[llm-plane.md](llm-plane.md#contract).
+
+The agent extracts the new turn from `conversation` and the reply from
+`answer` when they are present and `normalize_error` is empty, so every
+generation route a gateway with all its readers relays (Anthropic Messages
+and legacy Text Completions, OpenAI Chat Completions, Responses and legacy
+Completions, Gemini, Bedrock Converse and invoke) is judged the same way.
+Otherwise (an older gateway, a batch, a body the gateway could not read, a
+`cv` newer than the agent's) it falls back to the raw `request` and
+`response`, which it reads in the Anthropic Messages and OpenAI Chat
+Completions shapes. Secret scanning always covers the raw bodies: every
+value found anywhere in them (and in the canonical forms) is removed from
+what is sent, whichever source the turn was read from.
 
 | Answer | When |
 |---|---|

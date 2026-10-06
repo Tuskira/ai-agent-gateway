@@ -169,7 +169,9 @@ func (a *Agent) Queued() int { return len(a.queue) }
 // 202 at once and always works in the background, whatever the engine's
 // /v1/policy says (the tee cannot act on a verdict): one queued job prepares
 // and sends the request stage, then the response stage when the turn carries
-// a response, so the engine sees them in that order.
+// a response, so the engine sees them in that order. Each stage is read from
+// the turn's canonical conversation and answer when the gateway sent them
+// (wire.Turn.Call), else from the raw bodies.
 func (a *Agent) turns(w http.ResponseWriter, r *http.Request) {
 	var t wire.Turn
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxTurnBytes)).Decode(&t); err != nil {
@@ -195,14 +197,17 @@ func (a *Agent) turns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := wire.MetaOfTurn(t)
+	// The canonical conversation and answer when the gateway read them,
+	// else the raw bodies; secrets are searched in the raw bodies either way.
+	call := t.Call()
 	prepares := []func(context.Context) (turn.PreparedTurn, bool){
 		func(ctx context.Context) (turn.PreparedTurn, bool) {
-			return turn.PrepareRequestContext(ctx, t.Request), true
+			return turn.PrepareCallRequest(ctx, call), true
 		},
 	}
 	if len(t.Response) > 0 {
 		prepares = append(prepares, func(ctx context.Context) (turn.PreparedTurn, bool) {
-			return turn.PrepareResponseContext(ctx, t.Request, t.Response)
+			return turn.PrepareCallResponse(ctx, call)
 		})
 	}
 	queued := a.background(m, len(t.Request)+len(t.Response), prepares...)

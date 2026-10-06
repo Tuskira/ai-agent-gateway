@@ -1,0 +1,202 @@
+{
+  "expect": {
+    "answer": {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_C",
+          "name": "get_weather",
+          "input": {
+            "city": "Nice"
+          }
+        }
+      ],
+      "stop_reason": "tool_use"
+    },
+    "conversation": {
+      "cv": 1,
+      "system": [
+        {
+          "type": "text",
+          "text": "You are terse."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Weather in Paris and Lyon?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "call_A",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            },
+            {
+              "type": "tool_use",
+              "id": "call_B",
+              "name": "get_weather",
+              "input": {
+                "city": "Lyon"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "call_A",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "18 C"
+                }
+              ]
+            },
+            {
+              "type": "tool_result",
+              "tool_use_id": "call_B",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "21 C"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "role": "system",
+          "content": [
+            {
+              "type": "text",
+              "text": "Answer in French."
+            }
+          ]
+        }
+      ],
+      "tools": [
+        "get_weather",
+        "web_search_preview"
+      ],
+      "history": "full"
+    },
+    "stream_answer": {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_C",
+          "name": "get_weather",
+          "input": {
+            "city": "Nice"
+          }
+        }
+      ],
+      "stop_reason": "tool_use"
+    }
+  },
+  "request": {
+    "model": "gpt-4.1",
+    "input": [
+      {
+        "role": "user",
+        "content": "Weather in Paris and Lyon?"
+      },
+      {
+        "type": "function_call",
+        "id": "fc_A",
+        "call_id": "call_A",
+        "name": "get_weather",
+        "arguments": "{\"city\":\"Paris\"}",
+        "status": "completed"
+      },
+      {
+        "type": "function_call",
+        "id": "fc_B",
+        "call_id": "call_B",
+        "name": "get_weather",
+        "arguments": "{\"city\":\"Lyon\"}",
+        "status": "completed"
+      },
+      {
+        "type": "function_call_output",
+        "call_id": "call_A",
+        "output": "18 C"
+      },
+      {
+        "type": "function_call_output",
+        "call_id": "call_B",
+        "output": [
+          {
+            "type": "input_text",
+            "text": "21 C"
+          }
+        ]
+      },
+      {
+        "role": "developer",
+        "content": "Answer in French."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "name": "get_weather",
+        "description": "Get the weather.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ]
+        },
+        "strict": true
+      },
+      {
+        "type": "web_search_preview",
+        "search_context_size": "low"
+      }
+    ],
+    "tool_choice": "required",
+    "parallel_tool_calls": false,
+    "instructions": "You are terse."
+  },
+  "response": {
+    "id": "resp_3",
+    "object": "response",
+    "status": "completed",
+    "model": "gpt-4.1",
+    "output": [
+      {
+        "type": "function_call",
+        "id": "fc_C",
+        "call_id": "call_C",
+        "name": "get_weather",
+        "arguments": "{\"city\":\"Nice\"}",
+        "status": "completed"
+      }
+    ],
+    "usage": {
+      "input_tokens": 80,
+      "output_tokens": 15,
+      "total_tokens": 95
+    }
+  },
+  "sse": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_3\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"gpt-4.1\",\"output\":[],\"usage\":null}}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_C\",\"call_id\":\"call_C\",\"name\":\"get_weather\",\"arguments\":\"\",\"status\":\"in_progress\"}}\n\nevent: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"sequence_number\":2,\"item_id\":\"fc_C\",\"output_index\":0,\"delta\":\"{\\\"city\\\":\"}\n\nevent: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"sequence_number\":3,\"item_id\":\"fc_C\",\"output_index\":0,\"delta\":\"\\\"Nice\\\"}\"}\n\nevent: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"sequence_number\":4,\"item_id\":\"fc_C\",\"output_index\":0,\"arguments\":\"{\\\"city\\\":\\\"Nice\\\"}\"}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":5,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_C\",\"call_id\":\"call_C\",\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Nice\\\"}\",\"status\":\"completed\"}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":6,\"response\":{\"id\":\"resp_3\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-4.1\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_C\",\"call_id\":\"call_C\",\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Nice\\\"}\",\"status\":\"completed\"}],\"usage\":{\"input_tokens\":80,\"output_tokens\":15,\"total_tokens\":95}}}\n\n"
+}

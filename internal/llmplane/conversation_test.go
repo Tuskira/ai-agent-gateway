@@ -12,7 +12,8 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm"
 )
 
-// conversationCase is one golden in testdata/conversation/<reader>.json: a
+// conversationCase is one golden in testdata/conversation/<reader>.json
+// (or <reader>.<case>.json): a
 // client request, a non-stream response and a response stream (SSE, or a
 // binary stream as base64 with its content type), and the canonical
 // conversation and answers the tee makes of them. The detection agent's
@@ -73,8 +74,9 @@ func TestConversationGoldens(t *testing.T) {
 		t.Fatal("no conversation goldens")
 	}
 	for _, file := range files {
-		name := strings.TrimSuffix(filepath.Base(file), ".json")
-		t.Run(name, func(t *testing.T) {
+		base := strings.TrimSuffix(filepath.Base(file), ".json")
+		name, _, _ := strings.Cut(base, ".") // <reader>.json or <reader>.<case>.json
+		t.Run(base, func(t *testing.T) {
 			raw, err := os.ReadFile(file)
 			if err != nil {
 				t.Fatal(err)

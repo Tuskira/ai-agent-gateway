@@ -33,7 +33,8 @@ const (
 // or "Assistant:" without the newlines). Each turn's text is trimmed of
 // surrounding whitespace and an empty turn (the final "\n\nAssistant:" cue,
 // say) is dropped. Text before the first marker is the system prompt. A
-// prompt with no marker is one user text block, verbatim. Markers inside a
+// prompt with no marker is one user text block, verbatim; a body with no
+// prompt (absent or null) is refused. Markers inside a
 // turn's own text cannot be told from real ones, so this is a reading, not
 // the model's view: the request is one flat prompt and
 // Extra[llm.HistoryKey] is llm.HistoryPrompt.
@@ -93,9 +94,10 @@ func readCompleteRequest(body []byte) (*llm.Request, error) {
 			return nil, fmt.Errorf("%s: %v", f.key, err)
 		}
 	}
-	if prompt != nil {
-		req.System, req.Messages = splitPrompt(*prompt)
+	if prompt == nil {
+		return nil, errors.New("prompt: required")
 	}
+	req.System, req.Messages = splitPrompt(*prompt)
 	req.Extra = nonEmpty(top)
 	if req.Extra == nil {
 		req.Extra = map[string]json.RawMessage{}

@@ -60,6 +60,8 @@ func TestSplitPrompt(t *testing.T) {
 func TestCompleteReaderRejects(t *testing.T) {
 	for body, want := range map[string]string{
 		`{"model":"m","prompt":7}`:                                 "prompt:",
+		`{"model":"m","max_tokens_to_sample":5}`:                   "prompt: required",
+		`{"model":"m","prompt":null}`:                              "prompt: required",
 		`{"model":"m","prompt":"x","_gateway_history":"x"}`:        "_gateway_history: reserved",
 		`{"model":"m","prompt":"x","stop_sequences":"\n\nHuman:"}`: "stop_sequences:",
 	} {

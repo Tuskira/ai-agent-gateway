@@ -61,7 +61,11 @@ func (b *Batch) values(ctx context.Context) ([]secretMatch, error) {
 // it cannot read is a NotJudgedTurn (ItemUnreadReason); one cut short by
 // ctx, a NotJudgedTurn (DeadlineReason).
 func (b *Batch) PrepareItem(ctx context.Context, c *conv.Conversation) PreparedTurn {
-	s, ok := extractConversation(c)
+	r := newReader(ctx)
+	s, ok := extractConversation(r, c)
+	if r.reason != "" {
+		return NotJudgedTurn(StageRequest, r.reason)
+	}
 	if !ok {
 		return NotJudgedTurn(StageRequest, ItemUnreadReason)
 	}

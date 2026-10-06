@@ -120,6 +120,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Detection agent: a deeply nested request no longer ties up a CPU past
+  the prepare deadline.** Nested `tool_result` content was re-parsed and
+  re-joined at every level before any deadline check, so the work grew with
+  depth times size (a 2.9 MB body nested 3000 levels took about 10 s
+  against the 4 s deadline). Content is now decoded once, flattened in one
+  pass, read with deadline checks in every loop (raw bodies and canonical
+  conversations alike), and capped at 8 levels of nesting and 65536 blocks;
+  past a cap the stage is sent as `not_judged` with the reason.
 - **Detection agent: a secret stated deep inside a long history string is
   removed.** Values were collected only from a window (64 KiB each side of
   the part clipping keeps) of each long string, so a value stated in the

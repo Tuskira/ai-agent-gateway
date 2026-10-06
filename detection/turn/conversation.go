@@ -32,24 +32,30 @@ type Call struct {
 // turn's own user_text: the earlier turns are not all there to search,
 // and an empty goal is unknown, not absent.
 func RequestStateFromConversation(c *conv.Conversation) (State, bool) {
-	s, ok := extractConversation(c)
+	s, ok := extractConversation(newReader(context.Background()), c)
 	s.clip()
 	return s, ok
 }
 
 // ResponseStateFromAnswer is ResponseState over a canonical answer.
 func ResponseStateFromAnswer(a *conv.Answer) State {
-	s := extractAnswer(a)
+	s := extractAnswer(newReader(context.Background()), a)
 	s.clip()
 	return s
 }
 
-// extractConversation is RequestStateFromConversation unclipped.
-func extractConversation(c *conv.Conversation) (s State, ok bool) {
+// extractConversation is RequestStateFromConversation unclipped, read
+// within r's bounds (as extractRequest reads a raw body).
+func extractConversation(r *reader, c *conv.Conversation) (s State, ok bool) {
 	if c == nil || c.Version > conv.ConversationVersion || len(c.Messages) == 0 {
 		return s, false
 	}
 	msgs := c.Messages
+	for _, m := range msgs {
+		if !r.checkBlocks(m.Content, 0) {
+			return s, true
+		}
+	}
 
 	// Tool names and inputs by call id, so each result can say which tool
 	// produced it and with what.
@@ -74,8 +80,11 @@ func extractConversation(c *conv.Conversation) (s State, ok bool) {
 	}
 	var userText, harness []string
 	for _, m := range msgs[start:end] {
+		if !r.ok(0) {
+			break
+		}
 		if m.Role == "system" || m.Role == "developer" {
-			if t := strings.TrimSpace(contentText(m.Content)); t != "" {
+			if t := strings.TrimSpace(r.contentText(m.Content)); t != "" {
 				harness = append(harness, t)
 			}
 			continue
@@ -88,7 +97,7 @@ func extractConversation(c *conv.Conversation) (s State, ok bool) {
 				}
 				harness = append(harness, harnessRe.FindAllString(b.Text, -1)...)
 			case conv.ContentToolResult:
-				s.addResult(ToolResult{Tool: names[b.ToolUseID], Content: contentText(b.Content),
+				s.addResult(ToolResult{Tool: names[b.ToolUseID], Content: r.contentText(b.Content),
 					CallID: b.ToolUseID, CallInput: inputs[b.ToolUseID]})
 			case conv.ContentDocument, conv.ContentOpaque:
 				if t := strings.TrimSpace(blockText(b)); t != "" {
@@ -110,7 +119,7 @@ func extractConversation(c *conv.Conversation) (s State, ok bool) {
 	if c.History != conv.HistoryFull {
 		return s, true
 	}
-	for i := start - 1; s.UserGoal == "" && i >= 0; i-- {
+	for i := start - 1; s.UserGoal == "" && i >= 0 && r.ok(0); i-- {
 		if msgs[i].Role != "user" {
 			continue
 		}
@@ -125,10 +134,11 @@ func extractConversation(c *conv.Conversation) (s State, ok bool) {
 	return s, true
 }
 
-// extractAnswer is ResponseStateFromAnswer unclipped.
-func extractAnswer(a *conv.Answer) State {
+// extractAnswer is ResponseStateFromAnswer unclipped, read within r's
+// bounds.
+func extractAnswer(r *reader, a *conv.Answer) State {
 	var s State
-	if a == nil {
+	if a == nil || !r.checkBlocks(a.Content, 0) {
 		return s
 	}
 	var text []string
@@ -162,25 +172,6 @@ func inputText(raw json.RawMessage) string {
 		return str
 	}
 	return string(raw)
-}
-
-// contentText concatenates the text of blocks: text blocks, the text of a
-// text document, an opaque block's wire form, and one level of nested
-// tool_result content, one per line.
-func contentText(bs []conv.ContentBlock) string {
-	var parts []string
-	for _, b := range bs {
-		if b.Type == conv.ContentToolResult {
-			if t := contentText(b.Content); t != "" {
-				parts = append(parts, t)
-			}
-			continue
-		}
-		if t := blockText(b); t != "" {
-			parts = append(parts, t)
-		}
-	}
-	return strings.Join(parts, "\n")
 }
 
 // blockText is the text a block carries: a text block's or a text
@@ -223,7 +214,11 @@ func conversationTexts(c *conv.Conversation, a *conv.Answer) []string {
 // raw body (and of the conversation) is searched for values to remove, so
 // no secret found anywhere in the raw body leaves.
 func PrepareCallRequest(ctx context.Context, c Call) PreparedTurn {
-	s, ok := extractConversation(c.Conversation)
+	r := newReader(ctx)
+	s, ok := extractConversation(r, c.Conversation)
+	if r.reason != "" {
+		return NotJudgedTurn(StageRequest, r.reason)
+	}
 	if !ok {
 		return PrepareRequestContext(ctx, c.Request)
 	}
@@ -241,11 +236,15 @@ func PrepareCallRequest(ctx context.Context, c Call) PreparedTurn {
 // both come from the raw bodies. Values are removed as PrepareCallRequest
 // removes them, from both raw bodies.
 func PrepareCallResponse(ctx context.Context, c Call) (PreparedTurn, bool) {
-	req, ok := extractConversation(c.Conversation)
-	if !ok || c.Answer == nil {
+	r := newReader(ctx)
+	req, ok := extractConversation(r, c.Conversation)
+	if r.reason == "" && (!ok || c.Answer == nil) {
 		return PrepareResponseContext(ctx, c.Request, c.Response)
 	}
-	s := extractAnswer(c.Answer)
+	s := extractAnswer(r, c.Answer)
+	if r.reason != "" {
+		return NotJudgedTurn(StageResponse, r.reason), true
+	}
 	if s.ResponseText == "" && len(s.ResponseToolCalls) == 0 {
 		return PreparedTurn{}, false
 	}

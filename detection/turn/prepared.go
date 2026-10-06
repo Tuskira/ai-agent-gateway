@@ -71,7 +71,11 @@ func PrepareRequest(body []byte) PreparedTurn {
 // byte of every string is scanned), so only a hostile or huge body runs
 // into a deadline.
 func PrepareRequestContext(ctx context.Context, body []byte) PreparedTurn {
-	s, ok := extractRequest(body)
+	r := newReader(ctx)
+	s, ok := extractRequest(r, body)
+	if r.reason != "" {
+		return NotJudgedTurn(StageRequest, r.reason)
+	}
 	if !ok {
 		t, err := unreadableTurn(ctx, body)
 		if err != nil {
@@ -127,12 +131,19 @@ func PrepareResponse(reqBody, respBody []byte) (PreparedTurn, bool) {
 // PrepareResponseContext is PrepareResponse bounded by ctx, as
 // PrepareRequestContext is.
 func PrepareResponseContext(ctx context.Context, reqBody, respBody []byte) (PreparedTurn, bool) {
-	s := extractResponse(respBody)
+	r := newReader(ctx)
+	s := extractResponse(r, respBody)
+	if r.reason != "" {
+		return NotJudgedTurn(StageResponse, r.reason), true
+	}
 	if s.ResponseText == "" && len(s.ResponseToolCalls) == 0 {
 		return PreparedTurn{}, false
 	}
-	if req, ok := extractRequest(reqBody); ok {
+	if req, ok := extractRequest(r, reqBody); ok {
 		s.UserGoal, s.ToolResults = req.UserGoal, req.ToolResults
+	}
+	if r.reason != "" {
+		return NotJudgedTurn(StageResponse, r.reason), true
 	}
 	extra := append(bodyTexts(reqBody), bodyTexts(respBody)...)
 	hits, err := s.scrub(ctx, StageResponse, extra, scanCacheOn.Load())

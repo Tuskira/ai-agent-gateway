@@ -1,7 +1,10 @@
 // Package openaicompat is the pkg/llm Provider for OpenAI-compatible Chat
 // Completions endpoints (OpenAI, xAI, DeepSeek, GLM, Kimi, Mistral, Groq,
-// Gemini's OpenAI endpoint, Ollama, vLLM, ...). It registers as
-// "openai_compat" from init(); blank-import the package to use it.
+// Gemini's OpenAI endpoint, Ollama, vLLM, ...), the Reader of that wire
+// (ChatReader), and Readers of OpenAI's Responses API (ResponsesReader) and
+// legacy Completions (CompletionsReader). They register as "openai_compat",
+// "openai_chat", "openai_responses" and "openai_completions" from init();
+// blank-import the package to use them.
 //
 // One Provider serves every such vendor, so it sends only the fields they all
 // share. What it cannot carry is declared in Capabilities, and the engine
@@ -24,7 +27,10 @@ import (
 // Name is the registry name.
 const Name = "openai_compat"
 
-func init() { llm.RegisterProvider(Provider{}) }
+func init() {
+	llm.RegisterProvider(Provider{})
+	llm.RegisterReader(ChatReader{})
+}
 
 // Provider calls an OpenAI-compatible Chat Completions endpoint at
 // {Target.BaseURL}/chat/completions with "Authorization: Bearer

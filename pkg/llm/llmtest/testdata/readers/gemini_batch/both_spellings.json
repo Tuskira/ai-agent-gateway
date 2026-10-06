@@ -1,0 +1,6 @@
+{
+  "request": {"batch":{"inputConfig":{"requests":{"requests":[]}},"input_config":{"fileName":"files/x"}}},
+  "expect": {
+    "request_error": "batch: keys \"inputConfig\" and \"input_config\" name the same field"
+  }
+}

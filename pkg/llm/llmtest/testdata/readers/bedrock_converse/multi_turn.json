@@ -1,0 +1,126 @@
+{
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "What is 2+2?"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "reasoningContent": {
+              "reasoningText": {
+                "text": "2+2=4",
+                "signature": "sig-1"
+              }
+            }
+          },
+          {
+            "text": "4."
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "And times 3?"
+          }
+        ]
+      }
+    ]
+  },
+  "response": {
+    "output": {
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "reasoningContent": {
+              "reasoningText": {
+                "text": "4*3=12",
+                "signature": "sig-2"
+              }
+            }
+          },
+          {
+            "text": "12."
+          }
+        ]
+      }
+    },
+    "stopReason": "end_turn",
+    "usage": {
+      "inputTokens": 30,
+      "outputTokens": 9,
+      "totalTokens": 139,
+      "cacheReadInputTokens": 100
+    }
+  },
+  "expect": {
+    "request": {
+      "model": "",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What is 2+2?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "2+2=4",
+              "signature": "sig-1"
+            },
+            {
+              "type": "text",
+              "text": "4."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "And times 3?"
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "id": "",
+      "model": "",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "4*3=12",
+          "signature": "sig-2"
+        },
+        {
+          "type": "text",
+          "text": "12."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 30,
+        "output_tokens": 9,
+        "cache_read_tokens": 100
+      }
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "v": 1,
+  "id": "req_0123456789abcdef",
+  "tenant_id": "tenant-1",
+  "session_id": "session-1",
+  "key_id": "key-1",
+  "principal": "user-1",
+  "path": "/v1/messages/batches",
+  "at": "2026-01-02T03:04:05Z",
+  "status_code": 200,
+  "request": "eyJyZXF1ZXN0cyI6W3siY3VzdG9tX2lkIjoicTEiLCJwYXJhbXMiOnsibW9kZWwiOiJleGFtcGxlLW1vZGVsIiwibWF4X3Rva2VucyI6NjQsInN5c3RlbSI6ImJlIGJyaWVmIiwibWVzc2FnZXMiOlt7InJvbGUiOiJ1c2VyIiwiY29udGVudCI6ImhlbGxvIn1dfX0seyJjdXN0b21faWQiOiJxMiIsInBhcmFtcyI6eyJtb2RlbCI6ImV4YW1wbGUtbW9kZWwiLCJtYXhfdG9rZW5zIjo2NCwibWVzc2FnZXMiOlt7InJvbGUiOiJ1c2VyIiwiY29udGVudCI6IndoYXQgdGltZSBpcyBpdD8ifV19fV19",
+  "response": "eyJpZCI6Im1zZ2JhdGNoXzEiLCJ0eXBlIjoibWVzc2FnZV9iYXRjaCIsInByb2Nlc3Npbmdfc3RhdHVzIjoiaW5fcHJvZ3Jlc3MiLCJyZXF1ZXN0X2NvdW50cyI6eyJwcm9jZXNzaW5nIjoyLCJzdWNjZWVkZWQiOjAsImVycm9yZWQiOjAsImNhbmNlbGVkIjowLCJleHBpcmVkIjowfX0=",
+  "dialect": "anthropic_batch",
+  "op": "batch",
+  "items": [
+    {
+      "custom_id": "q1",
+      "conversation": {
+        "cv": 1,
+        "system": [
+          {
+            "type": "text",
+            "text": "be brief"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "history": "full"
+      }
+    },
+    {
+      "custom_id": "q2",
+      "conversation": {
+        "cv": 1,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "what time is it?"
+              }
+            ]
+          }
+        ],
+        "history": "full"
+      }
+    }
+  ]
+}

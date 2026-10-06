@@ -1,0 +1,138 @@
+{
+  "request": {
+    "model": "gpt-4o",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "hi"
+          },
+          {
+            "type": "input_audio",
+            "input_audio": {
+              "data": "UklGRg==",
+              "format": "wav"
+            }
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "hello",
+        "refusal": null,
+        "audio": {
+          "id": "audio_1"
+        }
+      }
+    ],
+    "seed": 7,
+    "user": "u-1",
+    "response_format": {
+      "type": "json_object"
+    },
+    "reasoning_effort": "low",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "response": {
+    "id": "chatcmpl-4",
+    "object": "chat.completion",
+    "model": "deepseek-chat",
+    "system_fingerprint": "fp_1",
+    "service_tier": "default",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "reasoning_content": "Think.",
+          "content": "Done.",
+          "annotations": []
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 5,
+      "completion_tokens": 3
+    }
+  },
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "gpt-4o",
+      "stream": true,
+      "effort": "low",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi"
+            },
+            {
+              "type": "input_audio",
+              "raw": {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "UklGRg==",
+                  "format": "wav"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "hello",
+              "extra": {
+                "refusal": null,
+                "audio": {
+                  "id": "audio_1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "seed": 7,
+        "user": "u-1",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream_options": {
+          "include_usage": true
+        }
+      }
+    },
+    "response": {
+      "id": "chatcmpl-4",
+      "model": "deepseek-chat",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Think."
+        },
+        {
+          "type": "text",
+          "text": "Done."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 5,
+        "output_tokens": 3
+      }
+    }
+  }
+}

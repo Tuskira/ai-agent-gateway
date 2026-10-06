@@ -1,0 +1,97 @@
+{
+  "request": {"requests":[
+ {"custom_id":"first-1","params":{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"Summarise the attached notes."}]}},
+ {"custom_id":"second_2","params":{"model":"claude-sonnet-4-5","max_tokens":64,"system":"Be brief.","messages":[{"role":"user","content":[{"type":"text","text":"What time is it?"}]}],"tools":[{"name":"get_time","input_schema":{"type":"object"}}]}},
+ {"custom_id":"third","params":{"model":"claude-haiku-4-5","max_tokens":32,"messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello."},{"role":"user","content":"Translate it to French."}]}}
+]},
+  "expect": {
+    "items": [
+      {
+        "custom_id": "first-1",
+        "request": {
+          "max_tokens": 64,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "Summarise the attached notes.",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "claude-sonnet-4-5"
+        }
+      },
+      {
+        "custom_id": "second_2",
+        "request": {
+          "max_tokens": 64,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "What time is it?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "claude-sonnet-4-5",
+          "system": [
+            {
+              "text": "Be brief.",
+              "type": "text"
+            }
+          ],
+          "tools": [
+            {
+              "input_schema": {
+                "type": "object"
+              },
+              "name": "get_time"
+            }
+          ]
+        }
+      },
+      {
+        "custom_id": "third",
+        "request": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "Hi",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "text": "Hello.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "text": "Translate it to French.",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "claude-haiku-4-5"
+        }
+      }
+    ]
+  }
+}

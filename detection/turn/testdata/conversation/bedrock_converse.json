@@ -1,0 +1,237 @@
+{
+  "expect": {
+    "answer": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Let me check."
+        },
+        {
+          "type": "tool_use",
+          "id": "tooluse_1",
+          "name": "get_weather",
+          "input": {
+            "city": "Paris"
+          }
+        }
+      ],
+      "stop_reason": "tool_use"
+    },
+    "conversation": {
+      "cv": 1,
+      "system": [
+        {
+          "type": "text",
+          "text": "You are terse."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What's the weather in Paris?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Let me check."
+            },
+            {
+              "type": "tool_use",
+              "id": "tooluse_1",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "tooluse_1",
+              "content": [
+                {
+                  "type": "opaque",
+                  "bytes": 100,
+                  "raw": {
+                    "json": {
+                      "temp_c": 18
+                    }
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": "sunny"
+                }
+              ]
+            },
+            {
+              "type": "tool_result",
+              "tool_use_id": "tooluse_2",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "station offline"
+                }
+              ],
+              "is_error": true
+            }
+          ]
+        }
+      ],
+      "tools": [
+        "get_weather"
+      ],
+      "history": "full"
+    },
+    "stream_answer": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Let me check."
+        },
+        {
+          "type": "tool_use",
+          "id": "tooluse_1",
+          "name": "get_weather",
+          "input": {
+            "city": "Paris"
+          }
+        }
+      ],
+      "stop_reason": "tool_use"
+    }
+  },
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "What's the weather in Paris?"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "text": "Let me check."
+          },
+          {
+            "toolUse": {
+              "toolUseId": "tooluse_1",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "toolResult": {
+              "toolUseId": "tooluse_1",
+              "content": [
+                {
+                  "json": {
+                    "temp_c": 18
+                  }
+                },
+                {
+                  "text": "sunny"
+                }
+              ],
+              "status": "success"
+            }
+          },
+          {
+            "toolResult": {
+              "toolUseId": "tooluse_2",
+              "content": [
+                {
+                  "text": "station offline"
+                }
+              ],
+              "status": "error"
+            }
+          }
+        ]
+      }
+    ],
+    "toolConfig": {
+      "tools": [
+        {
+          "toolSpec": {
+            "name": "get_weather",
+            "description": "Current weather",
+            "inputSchema": {
+              "json": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "toolChoice": {
+        "tool": {
+          "name": "get_weather"
+        }
+      }
+    },
+    "system": [
+      {
+        "text": "You are terse."
+      }
+    ]
+  },
+  "response": {
+    "output": {
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "text": "Let me check."
+          },
+          {
+            "toolUse": {
+              "toolUseId": "tooluse_1",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "stopReason": "tool_use",
+    "usage": {
+      "inputTokens": 50,
+      "outputTokens": 20,
+      "totalTokens": 70
+    }
+  },
+  "stream_b64": "AAAAdgAAAFKW1freDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTptZXNzYWdlLXR5cGUHAAVldmVudHsicm9sZSI6ImFzc2lzdGFudCJ92MXf9wAAAJ8AAABXw3ur/w06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcAEWNvbnRlbnRCbG9ja0RlbHRhDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjAsImRlbHRhIjp7InRleHQiOiJMZXQgbWUgY2hlY2suIn19KMUAGQAAAH0AAABW5mgP1g06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcAEGNvbnRlbnRCbG9ja1N0b3ANOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6MH3lfAY5AAAAwQAAAFdEWNpVDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwARY29udGVudEJsb2NrU3RhcnQNOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6MSwic3RhcnQiOnsidG9vbFVzZSI6eyJ0b29sVXNlSWQiOiJ0b29sdXNlXzEiLCJuYW1lIjoiZ2V0X3dlYXRoZXIifX19ZrzW0AAAAKkAAABX7Rrm2Q06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcAEWNvbnRlbnRCbG9ja0RlbHRhDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjEsImRlbHRhIjp7InRvb2xVc2UiOnsiaW5wdXQiOiJ7XCJjaXR5XCI6In19fbnLf10AAACpAAAAV+0a5tkNOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24LOmV2ZW50LXR5cGUHABFjb250ZW50QmxvY2tEZWx0YQ06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjoxLCJkZWx0YSI6eyJ0b29sVXNlIjp7ImlucHV0IjoiXCJQYXJpc1wifSJ9fX04vzxzAAAAfQAAAFbmaA/WDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAQY29udGVudEJsb2NrU3RvcA06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjoxffxnN3gAAAB6AAAAUcosRmUNOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24LOmV2ZW50LXR5cGUHAAttZXNzYWdlU3RvcA06bWVzc2FnZS10eXBlBwAFZXZlbnR7InN0b3BSZWFzb24iOiJ0b29sX3VzZSJ9Loml8wAAALkAAABO6ZHZmw06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcACG1ldGFkYXRhDTptZXNzYWdlLXR5cGUHAAVldmVudHsidXNhZ2UiOnsiaW5wdXRUb2tlbnMiOjUwLCJvdXRwdXRUb2tlbnMiOjIwLCJ0b3RhbFRva2VucyI6NzB9LCJtZXRyaWNzIjp7ImxhdGVuY3lNcyI6NTEwfX0IW4nY",
+  "stream_type": "application/vnd.amazon.eventstream"
+}

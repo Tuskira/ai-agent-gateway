@@ -1,0 +1,35 @@
+{
+  "request": {
+    "model": "gpt-4o",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Tell me a story."
+      }
+    ]
+  },
+  "response": null,
+  "sse": "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Once upon \"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a ti",
+  "expect": {
+    "request": {
+      "model": "gpt-4o",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Tell me a story."
+            }
+          ]
+        }
+      ]
+    },
+    "stream_text": "Once upon ",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "",
+    "stream_error": "unexpected EOF"
+  }
+}

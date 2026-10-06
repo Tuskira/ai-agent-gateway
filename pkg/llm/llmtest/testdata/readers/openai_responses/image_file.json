@@ -1,0 +1,114 @@
+{
+  "request": {
+    "model": "gpt-4.1",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Describe these."
+          },
+          {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,iVBORw0KGgo=",
+            "detail": "high"
+          },
+          {
+            "type": "input_image",
+            "image_url": "https://example.com/cat.png",
+            "detail": "auto"
+          },
+          {
+            "type": "input_image",
+            "file_id": "file-img1"
+          },
+          {
+            "type": "input_file",
+            "file_data": "data:application/pdf;base64,JVBERi0xLjQ=",
+            "filename": "report.pdf"
+          },
+          {
+            "type": "input_file",
+            "file_id": "file-abc123"
+          },
+          {
+            "type": "input_file",
+            "file_url": "https://example.com/paper.pdf"
+          }
+        ]
+      }
+    ]
+  },
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "gpt-4.1",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Describe these."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgo="
+              },
+              "extra": {
+                "detail": "high"
+              }
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://example.com/cat.png"
+              },
+              "extra": {
+                "detail": "auto"
+              }
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "file",
+                "file_id": "file-img1"
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "JVBERi0xLjQ="
+              },
+              "extra": {
+                "filename": "report.pdf"
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "file",
+                "file_id": "file-abc123"
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "url",
+                "url": "https://example.com/paper.pdf"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

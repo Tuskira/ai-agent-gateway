@@ -1,0 +1,43 @@
+{
+  "request": {
+    "model": "gpt-4.1",
+    "previous_response_id": "resp_3",
+    "store": true,
+    "input": [
+      {
+        "type": "function_call_output",
+        "call_id": "call_C",
+        "output": "{\"temp\":21}"
+      }
+    ]
+  },
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "gpt-4.1",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "call_C",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"temp\":21}"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "previous_response_id": "resp_3",
+        "store": true,
+        "_gateway_history": "server_side"
+      }
+    }
+  }
+}

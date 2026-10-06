@@ -1,0 +1,88 @@
+{
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "inline_data": {
+              "mime_type": "image/jpeg",
+              "data": "/9j/4AAQSkZJRg=="
+            }
+          },
+          {
+            "inlineData": {
+              "mimeType": "application/pdf",
+              "data": "JVBERi0xLjQ="
+            }
+          },
+          {
+            "fileData": {
+              "mimeType": "image/png",
+              "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/img-1"
+            }
+          },
+          {
+            "file_data": {
+              "mime_type": "audio/mpeg",
+              "file_uri": "https://generativelanguage.googleapis.com/v1beta/files/aud-1"
+            }
+          },
+          {
+            "text": "Describe these."
+          }
+        ]
+      }
+    ]
+  },
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": "/9j/4AAQSkZJRg=="
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "JVBERi0xLjQ="
+              }
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "file",
+                "media_type": "image/png",
+                "file_id": "https://generativelanguage.googleapis.com/v1beta/files/img-1"
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "file",
+                "media_type": "audio/mpeg",
+                "file_id": "https://generativelanguage.googleapis.com/v1beta/files/aud-1"
+              }
+            },
+            {
+              "type": "text",
+              "text": "Describe these."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

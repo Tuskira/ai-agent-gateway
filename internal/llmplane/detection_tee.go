@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm"
 )
 
 // DetectionTee hands each relayed call to a detection agent running next to
@@ -34,7 +38,8 @@ type DetectionTee struct {
 	client   *http.Client
 	queue    chan *teeTurn
 	maxBytes int64
-	// held is the request+response bytes of turns waiting or being posted.
+	// held is the bytes of turns waiting (their raw bodies) or being posted
+	// (the turn as posted: raw bodies and the canonical conversation).
 	held atomic.Int64
 
 	// mu guards closed, so offer never sends on the closed queue.
@@ -66,23 +71,48 @@ const teeVersion = 1
 // teeResponseBytes bounds the response copy sent to the agent.
 const teeResponseBytes = 1 << 20
 
+// teeBatchItems bounds teeTurn.Items: the requests of a larger batch past
+// it are not read (NormalizeError says so); the raw body is sent whole.
+const teeBatchItems = 1000
+
 // teeTurn is one complete call. The id is the gateway request id, which also
 // keys the call's LLM log. Response is the first teeResponseBytes the client
 // received, present only when the upstream answered 2xx and the relay to the
 // client completed.
+//
+// Op and Dialect are the route's (RouteInfo). Conversation and Answer are
+// the bodies read through the Dialect's llm.Reader, filled by the worker
+// (normalize), off the request path; NormalizeError says why they are
+// missing. The raw bodies are sent either way. A batch (Op routeBatch) has
+// Items instead, each request of the batch read through the Dialect's
+// llm.BatchReader, and never an Answer: its response is the batch object,
+// which holds no generation.
 type teeTurn struct {
-	V          int       `json:"v"`
-	ID         string    `json:"id"`
-	TenantID   string    `json:"tenant_id"`
-	SessionID  string    `json:"session_id,omitempty"`
-	KeyID      string    `json:"key_id,omitempty"`
-	Principal  string    `json:"principal,omitempty"`
-	Model      string    `json:"model,omitempty"`
-	Path       string    `json:"path"`
-	At         time.Time `json:"at"`
-	StatusCode int       `json:"status_code"`
-	Request    []byte    `json:"request"`
-	Response   []byte    `json:"response,omitempty"`
+	V              int              `json:"v"`
+	ID             string           `json:"id"`
+	TenantID       string           `json:"tenant_id"`
+	SessionID      string           `json:"session_id,omitempty"`
+	KeyID          string           `json:"key_id,omitempty"`
+	Principal      string           `json:"principal,omitempty"`
+	Model          string           `json:"model,omitempty"`
+	Path           string           `json:"path"`
+	At             time.Time        `json:"at"`
+	StatusCode     int              `json:"status_code"`
+	Request        []byte           `json:"request"`
+	Response       []byte           `json:"response,omitempty"`
+	Dialect        string           `json:"dialect,omitempty"`
+	Op             string           `json:"op,omitempty"`
+	Conversation   *teeConversation `json:"conversation,omitempty"`
+	Answer         *teeAnswer       `json:"answer,omitempty"`
+	NormalizeError string           `json:"normalize_error,omitempty"`
+	Items          []teeTurnItem    `json:"items,omitempty"`
+
+	// respType is the Content-Type the client got, and respCut whether the
+	// response copy stopped at teeResponseBytes: how to read Response.
+	respType string
+	respCut  bool
+	// held is what the turn counts in DetectionTee.held.
+	held int64
 }
 
 func (t *teeTurn) size() int64 { return int64(len(t.Request) + len(t.Response)) }
@@ -129,33 +159,141 @@ func NewDetectionTee(cfg DetectionTeeConfig) *DetectionTee {
 	return d
 }
 
-// teeable reports whether a call goes to the tee: every POST the plane
-// relays except the utility endpoints (token counting, batch management),
-// which run no generation. There is no per-route allow-list: the agent
-// decides what it can read.
-func teeable(r *http.Request) bool {
-	return r.Method == http.MethodPost && !utilityPath(r.URL.Path)
+// teed reports whether a call on route goes to the tee: one that runs a
+// generation, alone or in a batch. Token counting, listing and management
+// endpoints, and endpoints the provider does not describe, are not sent.
+func teed(route RouteInfo) bool {
+	return route.Op == routeGenerate || route.Op == routeBatch
 }
 
-// utilityPath reports the endpoints that run no generation: token counting
-// on each provider and Anthropic's Message Batches management/results API.
-// The batches match is on whole path segments, so a path merely prefixed by
-// it (/v1/messages/batches-export) still counts as a call.
-func utilityPath(path string) bool {
-	return strings.HasSuffix(path, "/count_tokens") || // Anthropic
-		strings.HasSuffix(path, "/count-tokens") || // Bedrock CountTokens
-		strings.HasSuffix(path, ":countTokens") || // Gemini
-		strings.HasSuffix(path, "/input_tokens") || // OpenAI Responses input-token count
-		strings.HasSuffix(path, "/messages/batches") || // Anthropic Message Batches: the collection
-		strings.Contains(path, "/messages/batches/") // ... and anything under one batch
-}
-
-func teeTurnOf(r *http.Request, info callInfo, start time.Time, status int, reqBody, respBody []byte) *teeTurn {
+// teeTurnOf is the turn for a call, without its response.
+func teeTurnOf(r *http.Request, info callInfo, route RouteInfo, start time.Time, status int, reqBody []byte) *teeTurn {
 	ctx := r.Context()
 	return &teeTurn{
 		V: teeVersion, ID: requestIDOf(ctx), TenantID: tenantOf(ctx), SessionID: sessionOf(ctx), KeyID: keyIDOf(ctx),
 		Principal: principalOf(ctx), Model: info.requestedModel, Path: r.URL.Path, At: start, StatusCode: status,
-		Request: reqBody, Response: respBody,
+		Request: reqBody, Dialect: route.Reader, Op: route.Op,
+	}
+}
+
+// normalize reads the turn's bodies through its Dialect's Reader into
+// Conversation and Answer. A body it cannot read leaves its field empty
+// and says why in NormalizeError. A streamed response cut at
+// teeResponseBytes (or before the model finished) is read up to the cut,
+// with Answer.Truncated set.
+func (t *teeTurn) normalize() {
+	if t.Op == routeBatch {
+		t.normalizeBatch()
+		return
+	}
+	var rd llm.Reader
+	if t.Op == routeGenerate && t.Dialect != "" {
+		rd, _ = llm.ReaderByName(t.Dialect)
+	}
+	if rd == nil {
+		name := t.Dialect
+		if name == "" {
+			name = "this route"
+		}
+		t.NormalizeError = "no reader for " + name
+		return
+	}
+	var errs []string
+	if req, err := rd.DecodeRequest(t.Request); err != nil {
+		errs = append(errs, "decode request: "+err.Error())
+	} else {
+		c := toConversation(req, t.Dialect)
+		t.Conversation = &c
+	}
+	if len(t.Response) > 0 {
+		a, err := t.readAnswer(rd)
+		if err != nil {
+			errs = append(errs, "decode response: "+err.Error())
+		}
+		t.Answer = a
+	}
+	t.NormalizeError = strings.Join(errs, "; ")
+}
+
+// normalizeBatch reads a batch's requests through its Dialect's
+// BatchReader into Items, the first teeBatchItems of them. Its response,
+// the batch object, holds no generation: no Answer.
+func (t *teeTurn) normalizeBatch() {
+	var br llm.BatchReader
+	if t.Dialect != "" {
+		br, _ = llm.BatchReaderByName(t.Dialect)
+	}
+	if br == nil {
+		name := t.Dialect
+		if name == "" {
+			name = "this route"
+		}
+		t.NormalizeError = "no reader for " + name
+		return
+	}
+	items, err := br.DecodeBatch(t.Request)
+	switch {
+	case errors.Is(err, llm.ErrBatchFile):
+		t.NormalizeError = llm.ErrBatchFile.Error()
+		return
+	case err != nil:
+		t.NormalizeError = "decode request: " + err.Error()
+		return
+	}
+	if len(items) > teeBatchItems {
+		t.NormalizeError = fmt.Sprintf("batch of %d requests: only the first %d are read", len(items), teeBatchItems)
+		items = items[:teeBatchItems]
+	}
+	t.Items = make([]teeTurnItem, 0, len(items))
+	for _, it := range items {
+		t.Items = append(t.Items, teeTurnItem{CustomID: it.CustomID, Conversation: toConversation(it.Request, t.Dialect)})
+	}
+}
+
+// readAnswer reads Response: as a stream when the client got one (SSE; an
+// AWS event stream, which the Bedrock Readers read as framed and which
+// carries the Messages events of an Anthropic model on Bedrock's invoke
+// route; a Gemini stream sent as a JSON array), else as one body.
+func (t *teeTurn) readAnswer(rd llm.Reader) (*teeAnswer, error) {
+	mt, _, _ := mime.ParseMediaType(t.respType)
+	var src io.Reader
+	switch {
+	case mt == "text/event-stream":
+		src = bytes.NewReader(t.Response)
+	case mt == "application/vnd.amazon.eventstream" && t.Dialect == readerAnthropic:
+		src = newEventStreamToSSE(bytes.NewReader(t.Response))
+	case mt == "application/vnd.amazon.eventstream":
+		src = bytes.NewReader(t.Response)
+	case t.Dialect == readerGemini && bytes.HasPrefix(bytes.TrimLeft(t.Response, " \t\r\n"), []byte("[")):
+		src = bytes.NewReader(t.Response)
+	default:
+		resp, err := rd.DecodeResponse(t.Response)
+		if err != nil {
+			if t.respCut {
+				return &teeAnswer{Content: []teeBlock{}, Truncated: true}, err
+			}
+			return nil, err
+		}
+		a := toAnswer(resp, false)
+		return &a, nil
+	}
+	dec := rd.NewResponseDecoder(src)
+	var evs []llm.Event
+	for {
+		ev, err := dec.Next()
+		if err == nil {
+			evs = append(evs, ev)
+			continue
+		}
+		cut := errors.Is(err, io.ErrUnexpectedEOF)
+		if !cut && !errors.Is(err, io.EOF) {
+			if !t.respCut {
+				return nil, err
+			}
+			cut = true // the copy ended mid-frame
+		}
+		a := toAnswer(foldEvents(evs), cut)
+		return &a, nil
 	}
 }
 
@@ -163,6 +301,7 @@ func teeTurnOf(r *http.Request, info callInfo, start time.Time, status int, reqB
 // closed tee drops it.
 func (d *DetectionTee) offer(t *teeTurn) {
 	n := t.size()
+	t.held = n
 	if d.held.Add(n) > d.maxBytes {
 		d.held.Add(-n)
 		d.drop(t.ID, "queue_bytes")
@@ -193,15 +332,26 @@ func (d *DetectionTee) run() {
 		} else {
 			d.post(t)
 		}
-		d.held.Add(-t.size())
+		d.held.Add(-t.held)
 	}
 }
 
 func (d *DetectionTee) post(t *teeTurn) {
+	t.normalize()
 	b, err := json.Marshal(t)
 	if err != nil {
 		d.fail(t.ID, fmt.Errorf("marshal turn: %w", err))
 		return
+	}
+	// queue_bytes counts what is posted: the raw bodies (base64) and the
+	// canonical conversation. A turn that no longer fits is dropped.
+	if grow := int64(len(b)) - t.held; grow > 0 {
+		if d.held.Add(grow) > d.maxBytes {
+			d.held.Add(-grow)
+			d.drop(t.ID, "queue_bytes")
+			return
+		}
+		t.held += grow
 	}
 	ctx, cancel := context.WithTimeout(d.ctx, d.timeout)
 	defer cancel()

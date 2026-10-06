@@ -1,0 +1,224 @@
+{
+  "expect": {
+    "answer": {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "gemini-call-0-get_weather",
+          "name": "get_weather",
+          "input": {
+            "city": "Nice"
+          }
+        }
+      ],
+      "stop_reason": "tool_use"
+    },
+    "conversation": {
+      "cv": 1,
+      "system": [
+        {
+          "type": "text",
+          "text": "You are terse."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Weather in Paris and Lyon?\u003csystem-reminder\u003eToday is Monday.\u003c/system-reminder\u003e"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "gemini-call-0-get_weather",
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            },
+            {
+              "type": "tool_use",
+              "id": "gemini-call-1-get_weather",
+              "name": "get_weather",
+              "input": {
+                "city": "Lyon"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "gemini-call-0-get_weather",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"output\":\"18 C\"}"
+                }
+              ]
+            },
+            {
+              "type": "tool_result",
+              "tool_use_id": "gemini-call-1-get_weather",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"station offline\"}"
+                }
+              ],
+              "is_error": true
+            }
+          ]
+        }
+      ],
+      "tools": [
+        "get_weather"
+      ],
+      "history": "full"
+    },
+    "stream_answer": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Checking."
+        },
+        {
+          "type": "tool_use",
+          "id": "gemini-call-0-get_weather",
+          "name": "get_weather",
+          "input": {
+            "city": "Nice"
+          }
+        }
+      ],
+      "stop_reason": "tool_use"
+    }
+  },
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Weather in Paris and Lyon?\u003csystem-reminder\u003eToday is Monday.\u003c/system-reminder\u003e"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "city": "Paris"
+              }
+            }
+          },
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "city": "Lyon"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "functionResponse": {
+              "name": "get_weather",
+              "response": {
+                "output": "18 C"
+              }
+            }
+          },
+          {
+            "functionResponse": {
+              "name": "get_weather",
+              "response": {
+                "error": "station offline"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "name": "get_weather",
+            "description": "Get the weather.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "city": {
+                  "type": "STRING"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "toolConfig": {
+      "functionCallingConfig": {
+        "mode": "ANY",
+        "allowedFunctionNames": [
+          "get_weather"
+        ]
+      }
+    },
+    "systemInstruction": {
+      "parts": [
+        {
+          "text": "You are terse."
+        }
+      ]
+    }
+  },
+  "response": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": {
+                "name": "get_weather",
+                "args": {
+                  "city": "Nice"
+                }
+              },
+              "thoughtSignature": "c2lnMg=="
+            }
+          ]
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 80,
+      "candidatesTokenCount": 15,
+      "toolUsePromptTokenCount": 5
+    },
+    "modelVersion": "gemini-2.5-flash",
+    "responseId": "resp-4"
+  },
+  "sse": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Checking.\"}]}}],\"modelVersion\":\"gemini-2.5-flash\",\"responseId\":\"resp-4\"}\n\ndata: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"Nice\"}}}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":80,\"candidatesTokenCount\":15},\"modelVersion\":\"gemini-2.5-flash\",\"responseId\":\"resp-4\"}\n\n"
+}

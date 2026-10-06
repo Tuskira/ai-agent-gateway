@@ -1,0 +1,111 @@
+{
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "Compare these."
+          },
+          {
+            "image": {
+              "format": "png",
+              "source": {
+                "bytes": "iVBORw0KGgo="
+              }
+            }
+          },
+          {
+            "document": {
+              "format": "pdf",
+              "name": "report",
+              "source": {
+                "bytes": "JVBERi0xLjQ="
+              }
+            }
+          },
+          {
+            "document": {
+              "format": "txt",
+              "name": "notes",
+              "source": {
+                "text": "plain notes"
+              }
+            }
+          },
+          {
+            "image": {
+              "format": "jpeg",
+              "source": {
+                "s3Location": {
+                  "uri": "s3://bucket/cat.jpg",
+                  "bucketOwner": "111122223333"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "response": null,
+  "expect": {
+    "request": {
+      "model": "",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Compare these."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgo="
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "JVBERi0xLjQ="
+              },
+              "extra": {
+                "name": "report"
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "text",
+                "media_type": "text/plain",
+                "data": "plain notes"
+              },
+              "extra": {
+                "name": "notes"
+              }
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "media_type": "image/jpeg",
+                "url": "s3://bucket/cat.jpg"
+              },
+              "extra": {
+                "s3Location": {
+                  "bucketOwner": "111122223333"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

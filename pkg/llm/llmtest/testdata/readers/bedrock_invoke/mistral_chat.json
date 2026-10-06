@@ -1,0 +1,89 @@
+{
+  "request": {
+    "messages": [
+      {
+        "role": "system",
+        "content": "Be brief."
+      },
+      {
+        "role": "user",
+        "content": "Say hi in French."
+      }
+    ],
+    "max_tokens": 20,
+    "temperature": 0.3
+  },
+  "response": {
+    "id": "cmpl-1",
+    "object": "chat.completion",
+    "model": "mistral-large",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Bonjour !"
+        },
+        "stop_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 8,
+      "completion_tokens": 3
+    }
+  },
+  "stream_frames": [
+    {
+      "event": "chunk",
+      "chunk": "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Bonjour\"},\"stop_reason\":null}]}"
+    },
+    {
+      "event": "chunk",
+      "chunk": "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\" !\"},\"stop_reason\":\"stop\"}],\"amazon-bedrock-invocationMetrics\":{\"inputTokenCount\":8,\"outputTokenCount\":3,\"invocationLatency\":200,\"firstByteLatency\":90}}"
+    }
+  ],
+  "stream_b64": "AAAA5wAAAEse2Fy+DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAFY2h1bmsNOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJieXRlcyI6ImV5SmphRzlwWTJWeklqcGJleUpwYm1SbGVDSTZNQ3dpYldWemMyRm5aU0k2ZXlKeWIyeGxJam9pWVhOemFYTjBZVzUwSWl3aVkyOXVkR1Z1ZENJNklrSnZibXB2ZFhJaWZTd2ljM1J2Y0Y5eVpXRnpiMjRpT201MWJHeDlYWDA9In1j8qBsAAABhwAAAEtMtvhWDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAFY2h1bmsNOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJieXRlcyI6ImV5SmphRzlwWTJWeklqcGJleUpwYm1SbGVDSTZNQ3dpYldWemMyRm5aU0k2ZXlKeWIyeGxJam9pWVhOemFYTjBZVzUwSWl3aVkyOXVkR1Z1ZENJNklpQWhJbjBzSW5OMGIzQmZjbVZoYzI5dUlqb2ljM1J2Y0NKOVhTd2lZVzFoZW05dUxXSmxaSEp2WTJzdGFXNTJiMk5oZEdsdmJrMWxkSEpwWTNNaU9uc2lhVzV3ZFhSVWIydGxia052ZFc1MElqbzRMQ0p2ZFhSd2RYUlViMnRsYmtOdmRXNTBJam96TENKcGJuWnZZMkYwYVc5dVRHRjBaVzVqZVNJNk1qQXdMQ0ptYVhKemRFSjVkR1ZNWVhSbGJtTjVJam81TUgxOSJ9OxnJ0A==",
+  "expect": {
+    "request": {
+      "model": "",
+      "system": [
+        {
+          "type": "text",
+          "text": "Be brief."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Say hi in French."
+            }
+          ]
+        }
+      ],
+      "max_tokens": 20,
+      "temperature": 0.3
+    },
+    "response": {
+      "id": "cmpl-1",
+      "model": "mistral-large",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Bonjour !"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 3
+      }
+    },
+    "stream_text": "Bonjour !",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

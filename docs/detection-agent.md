@@ -55,10 +55,17 @@ For each judgment the agent sends the engine two things, nothing else:
      taken out of it).
    - `user_goal`: the latest text the user typed anywhere in the
      conversation. This can come from an earlier message than the new turn.
+     When the request does not carry the whole conversation (an OpenAI
+     Responses call that continues a stored one, `history: server_side`, or
+     a flat legacy prompt, `history: prompt`), it is only the new turn's own
+     `user_text`, and empty when the turn has none: the goal is unknown.
    - `harness_text`: text in the new turn that is not the user's words: the
      `<system-reminder>…</system-reminder>` sections of user messages and the
-     turn's `system`/`developer` messages. It is sent, not hidden, because a
-     payload can be wrapped in the tag.
+     turn's mid-conversation `system`/`developer` messages; and, when the
+     agent reads the gateway's canonical conversation, the text of an
+     attached text document and the wire form of a block the canonical shape
+     has no slot for (`opaque`). It is sent, not hidden, because a payload
+     can be wrapped in the tag or hidden in a file.
    - `tool_results`: the tool outputs returned in this turn, each with the
      tool name.
    - `prior_tool_calls`: the assistant's tool calls that produced them.
@@ -158,6 +165,20 @@ the engine in this order:
 Both stages go out under the gateway's request id. `status_code` is not
 passed on: the engine's `meta` has no field for it.
 
+A **batch** (`op: "batch"` with `items`: a Message Batches or Gemini
+`batchGenerateContent` creation call) is judged item by item instead: one
+request stage per item, in order, each prepared from the item's
+`conversation` as if it were a call of its own, and each sent under the
+batch call's `request_id` with the item's id in `meta.item`. Secret
+scanning covers the whole raw batch body, so a value found in one item's
+prompt is removed from every item. There is no response stage (the
+response is the batch object, which holds no generation). At most 1000
+items are judged; when the turn carries more, or the gateway read only part
+of the batch (`normalize_error` set), one `not_judged` request stage with
+the reason (no `meta.item`) follows the items. A batch the gateway could
+not read at all (no `items`) is judged as one request stage from its raw
+body, as any unread turn is.
+
 Judging is always in the background and never inline, whatever the engine
 says. The engine's [policy](#get-v1policy) `inline` and `want_response`
 flags do not matter for `/v1/turns` (the agent does not even fetch the
@@ -168,7 +189,8 @@ is a recorded outcome, not something that reaches a client.
 
 The queue holds up to `AGENT_QUEUE_SIZE` turns and `AGENT_QUEUE_BYTES` of raw
 turn bytes (request plus response), worked by up to `AGENT_MAX_IN_FLIGHT`
-workers. A turn that does not fit is not judged: the agent still answers
+workers. A batch is one turn there, whatever its number of items: its raw
+bytes count once and it takes one slot. A turn that does not fit is not judged: the agent still answers
 `202` and sends the engine one `not_judged` marker for the request stage (no
 state, a short reason) so the gap is visible there; no response stage
 follows.
@@ -258,6 +280,30 @@ Fields (`wire.Turn`): `v`, `id`, `tenant_id`, `session_id`, `key_id`,
 `principal`, `model`, `path`, `at`, `status_code`, `request` (base64, the raw
 request body, in full) and `response` (base64, the first 1 MiB, present only
 when the upstream answered `2xx` and the relay completed).
+
+The gateway also sends `dialect` (the wire format of the route), `op`
+(`generate` or `batch`), and, when it could read the bodies, `conversation`
+and `answer`: the request and response in one canonical shape whatever the
+provider (`wire.Conversation`, `wire.Answer`), with `answer.truncated` set
+when the response was cut. When it could not (a route with no reader, such
+as a body that does not parse, or a Gemini batch that names an uploaded
+file), `normalize_error` says why and only the raw bodies are there. A
+batch carries `items` instead of `conversation` and `answer`: each request
+of the batch as `{custom_id, conversation}`, at most 1000 (see
+[How a turn is judged](#how-a-turn-is-judged)). The per-route table and the
+canonical shape are in [llm-plane.md](llm-plane.md#contract).
+
+The agent extracts the new turn from `conversation` and the reply from
+`answer` when they are present and `normalize_error` is empty, so every
+generation route a gateway with all its readers relays (Anthropic Messages
+and legacy Text Completions, OpenAI Chat Completions, Responses and legacy
+Completions, Gemini, Bedrock Converse and invoke) is judged the same way.
+Otherwise (an older gateway, a batch it could not read, a body the gateway
+could not read, a `cv` newer than the agent's) it falls back to the raw `request` and
+`response`, which it reads in the Anthropic Messages and OpenAI Chat
+Completions shapes. Secret scanning always covers the raw bodies: every
+value found anywhere in them (and in the canonical forms) is removed from
+what is sent, whichever source the turn was read from.
 
 | Answer | When |
 |---|---|
@@ -366,7 +412,7 @@ Asks the engine to judge one redacted stage. Example (a request-stage turn):
 |---|---|
 | `v` | Contract version, see above. |
 | `sync` | `true` when the agent is waiting for the answer to enforce it (inline contract only; always `false` for turns from the gateway's tee). Informational: record the turn either way. |
-| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `model`, `path`. |
+| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `model`, `path`. For one request of a batch, `item` is its id within the batch (its `custom_id`, at most 128 bytes, any secret in it redacted): every item of a batch shares the batch call's `request_id`, so a record is keyed by `request_id` and `item`. For a turn from the gateway's tee, also `dialect` (the wire format the call was made in, e.g. `anthropic`, `gemini_batch`) and `op` (`generate` or `batch`), and `history` (`full`, `server_side` or `prompt`: how much of the conversation the judged request carries) when the stage was read from the gateway's canonical conversation; absent `history` means `full` or unknown (a stage read from the raw body). All four are optional strings, omitted when empty; an engine that does not know them ignores them, and `v` stays `1`. |
 | `turn.stage` | `request` or `response`. |
 | `turn.state` | The redacted new turn: `user_text`, `user_goal`, `harness_text`, `tool_results` (`[{tool, content}]`), `prior_tool_calls` (`[{name, input}]`), `response_text`, `response_tool_calls` (`[{name, input}]`). Omitted when empty. A request-stage turn has no `response_*` fields; a response-stage turn carries the request's `user_goal` and `tool_results` for context. |
 | `turn.refs` | Per-event ids that are not part of what a judge model reads, so a decision can point at an event: `tool_results` (`[{call_id, call_input}]`), `prior_tool_calls` and `response_tool_calls` (lists of call ids), matched to `state` by index. |
@@ -396,7 +442,9 @@ The answer is `200` with a result, or `null` when no rule applied:
 An engine should record every turn it receives before it answers, whether or
 not a rule fired. It receives the request stage first and then, when there
 is one, the response stage of the same `request_id`; the two come from one
-worker, one after the other.
+worker, one after the other. For a batch it receives one request stage per
+item, all with the same `request_id` and each with its own `meta.item`, in
+the batch's order, from one worker.
 
 ## Security notes
 

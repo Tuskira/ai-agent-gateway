@@ -1,0 +1,33 @@
+{
+  "request": {
+    "message": "Hi",
+    "chat_history": [
+      {
+        "role": "USER",
+        "message": "earlier"
+      }
+    ],
+    "max_tokens": 50
+  },
+  "response": {
+    "response_id": "r1",
+    "text": "Hello",
+    "generation_id": "g1",
+    "finish_reason": "COMPLETE"
+  },
+  "stream_frames": [
+    {
+      "event": "chunk",
+      "chunk": "{\"text\":\"Hi\",\"is_finished\":false,\"event_type\":\"text-generation\"}"
+    }
+  ],
+  "stream_b64": "AAAAvwAAAEsWu9i0DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAFY2h1bmsNOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJieXRlcyI6ImV5SjBaWGgwSWpvaVNHa2lMQ0pwYzE5bWFXNXBjMmhsWkNJNlptRnNjMlVzSW1WMlpXNTBYM1I1Y0dVaU9pSjBaWGgwTFdkbGJtVnlZWFJwYjI0aWZRPT0ifW8oBBI=",
+  "expect": {
+    "request_error": "unsupported Bedrock body format",
+    "response_error": "unsupported Bedrock body format",
+    "stream_text": "",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "",
+    "stream_error": "unsupported Bedrock body format"
+  }
+}

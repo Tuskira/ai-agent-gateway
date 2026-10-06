@@ -1,0 +1,127 @@
+{
+  "request": {
+    "system_instruction": {
+      "parts": [
+        {
+          "text": "You are a cat."
+        },
+        {
+          "text": "Your name is Neko."
+        }
+      ]
+    },
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Hello there"
+          }
+        ]
+      }
+    ],
+    "generation_config": {
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "top_k": 40,
+      "stop_sequences": [
+        "END"
+      ],
+      "candidate_count": 1,
+      "response_mime_type": "text/plain"
+    }
+  },
+  "response": {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "The user greets.",
+              "thought": true
+            },
+            {
+              "text": "Meow, I am Neko.",
+              "thoughtSignature": "c2lnMQ=="
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 12,
+      "candidatesTokenCount": 6,
+      "thoughtsTokenCount": 20,
+      "cachedContentTokenCount": 8
+    },
+    "modelVersion": "gemini-2.5-pro",
+    "responseId": "resp-2"
+  },
+  "sse": "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"The user greets.\",\"thought\":true}],\"role\":\"model\"}}],\"usageMetadata\":{\"promptTokenCount\":12,\"cachedContentTokenCount\":8},\"modelVersion\":\"gemini-2.5-pro\",\"responseId\":\"resp-2\"}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Meow, \",\"thoughtSignature\":\"c2lnMQ==\"}],\"role\":\"model\"}}],\"modelVersion\":\"gemini-2.5-pro\",\"responseId\":\"resp-2\"}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"I am Neko.\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":12,\"candidatesTokenCount\":6,\"thoughtsTokenCount\":20,\"cachedContentTokenCount\":8},\"modelVersion\":\"gemini-2.5-pro\",\"responseId\":\"resp-2\"}\n\n",
+  "expect": {
+    "request": {
+      "model": "",
+      "system": [
+        {
+          "type": "text",
+          "text": "You are a cat."
+        },
+        {
+          "type": "text",
+          "text": "Your name is Neko."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hello there"
+            }
+          ]
+        }
+      ],
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "top_k": 40,
+      "stop_sequences": [
+        "END"
+      ],
+      "extra": {
+        "generationConfig": {
+          "candidateCount": 1,
+          "responseMimeType": "text/plain"
+        }
+      }
+    },
+    "response": {
+      "id": "resp-2",
+      "model": "gemini-2.5-pro",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "The user greets."
+        },
+        {
+          "type": "text",
+          "text": "Meow, I am Neko.",
+          "extra": {
+            "thoughtSignature": "c2lnMQ=="
+          }
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 26,
+        "cache_read_tokens": 8
+      }
+    },
+    "stream_text": "Meow, I am Neko.",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

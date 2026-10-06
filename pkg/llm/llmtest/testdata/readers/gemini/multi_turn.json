@@ -1,0 +1,120 @@
+{
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Hi"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Hello! How can I help?"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Write a long poem."
+          }
+        ]
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 10,
+      "thinkingConfig": {
+        "thinkingBudget": 1024,
+        "includeThoughts": true
+      }
+    }
+  },
+  "response": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Roses are red,"
+            }
+          ]
+        },
+        "finishReason": "MAX_TOKENS"
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 20,
+      "candidatesTokenCount": 10
+    },
+    "modelVersion": "gemini-2.5-flash",
+    "responseId": "resp-3"
+  },
+  "sse": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Roses \"}]}}],\"modelVersion\":\"gemini-2.5-flash\",\"responseId\":\"resp-3\"}\n\ndata: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"are red,\"}]},\"finishReason\":\"MAX_TOKENS\"}],\"usageMetadata\":{\"promptTokenCount\":20,\"candidatesTokenCount\":10},\"modelVersion\":\"gemini-2.5-flash\",\"responseId\":\"resp-3\"}\n\n",
+  "expect": {
+    "request": {
+      "model": "",
+      "max_tokens": 10,
+      "thinking": {
+        "type": "enabled",
+        "budget_tokens": 1024,
+        "extra": {
+          "includeThoughts": true
+        }
+      },
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hi"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hello! How can I help?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Write a long poem."
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "id": "resp-3",
+      "model": "gemini-2.5-flash",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Roses are red,"
+        }
+      ],
+      "stop_reason": "max_tokens",
+      "usage": {
+        "input_tokens": 20,
+        "output_tokens": 10
+      }
+    },
+    "stream_text": "Roses are red,",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "max_tokens"
+  }
+}

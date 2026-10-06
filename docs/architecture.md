@@ -110,14 +110,20 @@ implementations:
 | Connector/cache/profile ops | `pkg/ops.ConnectorOps` / `CacheOps` / `ProfileOps` | `internal/dataplane`'s `opsAdapter` | API plane's health/discover/cache routes and profile-cache invalidation |
 | Analytics read | `pkg/analytics.Reader` / `LLMCallReader` | `pkg/sink/clickhouse.Sink`; `pkg/sink/postgres.Sink` (`LLMCallReader` only) | `GET /api/v1/analytics/*`; LLM Logs without ClickHouse |
 | Body offload | `pkg/sink.BodyStore` | `pkg/sink/bodystore/{fs,s3}` | LLM capture (`llm_proxy.capture.body_store`), LLM-log detail |
-| LLM translation | `pkg/llm.Dialect` / `Provider` (registry) | `pkg/llm/anthropic`, `pkg/llm/openaicompat` | model-registry targets in another wire format |
+| LLM translation | `pkg/llm.Dialect` / `Provider` / `Reader` (registry) | `pkg/llm/anthropic`, `pkg/llm/openaicompat`; Readers also in `pkg/llm/gemini`, `pkg/llm/bedrock` | model-registry targets in another wire format; the detection tee's canonical conversation |
 | Ingest | `pkg/sink.IngestSink` | `pkg/sink/clickhouse.Sink` | `POST /api/v1/ingest` |
 
 The LLM plane's detection tee (`llm_proxy.detection`) is not a
 `pkg/sink.LogSink`: a sink only sees the `LLMCall` record, whose bodies are
 cut to the capture cap and absent when `store_bodies` is off, while the
 detection agent needs the full request body. It lives beside the recorder
-in `internal/llmplane` and gets the body the router already holds.
+in `internal/llmplane` and gets the body the router already holds. Which
+calls it sends is the providers' route capability: an optional
+`Route(method, upstreamPath)` on an `internal/llmplane` Provider says what
+an endpoint does (`generate`, `batch`, `count`, `utility`) and which
+`llm.Reader` reads its wire format; the tee sends `generate` and `batch`
+calls (this replaces a list of utility path suffixes) and reads their
+bodies through that Reader into a canonical conversation.
 
 A plugin implements one of these interfaces, registers it (a driver name
 for `pkg/store.Register` or `pkg/session.Register`, or is wired directly
@@ -129,6 +135,30 @@ Likewise a session backend implements `pkg/session.Store` (and
 `pkg/session.Notifier` if it can carry a broadcast), passes
 `pkg/session/sessiontest`, and is selected with `sessions.store: <name>`.
 See [CONTRIBUTING.md](https://github.com/Tuskira/ai-agent-gateway/blob/main/CONTRIBUTING.md) for the concrete steps.
+
+The LLM translation seam also has a read-only side: an `llm.Reader` reads
+one wire format into the neutral types — the request a client sent
+(`DecodeRequest`) and the answer it received, whole (`DecodeResponse`) or
+streamed (`NewResponseDecoder`) — without serving anyone. Readers register
+by wire-format name (`llm.RegisterReader`, `llm.ReaderByName`), one per
+generation format the LLM plane relays: `anthropic` (Messages) and
+`anthropic_complete` (legacy Text Completions) in `pkg/llm/anthropic`;
+`openai_chat`, `openai_responses` and `openai_completions` in
+`pkg/llm/openaicompat`; `gemini` in `pkg/llm/gemini`; `bedrock_converse`
+and `bedrock_invoke` in `pkg/llm/bedrock`. `cmd/gateway` blank-imports all
+four packages. Readers are strict where two parsers could disagree (a
+repeated key, two keys differing only by case, an unknown role), so what
+is read is what the vendor executes. The detection tee uses them to hand
+the detection agent every call as one canonical conversation whatever
+format it was made in; a route with no Reader is sent raw, with the
+reason. A batch creation call is read by an `llm.BatchReader`
+(`llm.RegisterBatchReader`, `llm.BatchReaderByName`): `anthropic_batch`
+(Message Batches) and `gemini_batch` (inline `batchGenerateContent`) turn
+the body into its requests, which the tee sends as `items`, one
+conversation each. A new format's Reader passes
+`pkg/llm/llmtest.RunReader` (a BatchReader `RunBatchReader`) and, once
+registered under the name its routes already declare, is used with no
+plane change.
 
 The session seam is what lets the MCP plane scale out. `internal/
 dataplane/session.Manager` keeps the session logic — minting the id,
@@ -661,7 +691,9 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
     (stdout/otel/clickhouse), independent of step 11.
 13. With `llm_proxy.detection.agent_url` set, the detection tee queues the
     full request body and the first 1 MiB of the response (a complete 2xx
-    relay only) and posts them to a local detection agent asynchronously;
+    relay only) of a generation or batch route, reads them into a
+    canonical conversation in its worker (every generation route has a
+    Reader), and posts them to a local detection agent asynchronously;
     nothing waits on it — see [llm-plane.md](llm-plane.md#detection-agent)
     and, for the agent this repository ships (a separate Go module,
     `detection/`), [detection-agent.md](detection-agent.md).

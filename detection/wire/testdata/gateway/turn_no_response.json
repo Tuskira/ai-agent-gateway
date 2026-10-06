@@ -9,5 +9,31 @@
   "path": "/v1/messages",
   "at": "2026-01-02T03:04:05Z",
   "status_code": 429,
-  "request": "eyJtb2RlbCI6ImV4YW1wbGUtbW9kZWwiLCJtYXhfdG9rZW5zIjo2NCwibWVzc2FnZXMiOlt7InJvbGUiOiJ1c2VyIiwiY29udGVudCI6ImhlbGxvIn1dfQ=="
+  "request": "eyJtb2RlbCI6ImV4YW1wbGUtbW9kZWwiLCJtYXhfdG9rZW5zIjo2NCwic3lzdGVtIjoiYmUgYnJpZWYiLCJ0b29scyI6W3sibmFtZSI6ImdldF90aW1lIiwiaW5wdXRfc2NoZW1hIjp7InR5cGUiOiJvYmplY3QifX1dLCJtZXNzYWdlcyI6W3sicm9sZSI6InVzZXIiLCJjb250ZW50IjoiaGVsbG8ifV19",
+  "dialect": "anthropic",
+  "op": "generate",
+  "conversation": {
+    "cv": 1,
+    "system": [
+      {
+        "type": "text",
+        "text": "be brief"
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "hello"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      "get_time"
+    ],
+    "history": "full"
+  }
 }

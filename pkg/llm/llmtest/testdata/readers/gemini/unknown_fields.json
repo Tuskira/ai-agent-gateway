@@ -1,0 +1,221 @@
+{
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Run it."
+          },
+          {
+            "fileData": {
+              "mimeType": "video/mp4",
+              "fileUri": "https://www.youtube.com/watch?v=abc"
+            },
+            "videoMetadata": {
+              "startOffset": "10s",
+              "endOffset": "20s"
+            }
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "executableCode": {
+              "language": "PYTHON",
+              "code": "print(1)"
+            }
+          },
+          {
+            "codeExecutionResult": {
+              "outcome": "OUTCOME_OK",
+              "output": "1\n"
+            }
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "googleSearch": {},
+        "codeExecution": {}
+      }
+    ],
+    "toolConfig": {
+      "functionCallingConfig": {
+        "mode": "VALIDATED"
+      },
+      "retrievalConfig": {
+        "languageCode": "en"
+      }
+    },
+    "safetySettings": [
+      {
+        "category": "HARM_CATEGORY_HARASSMENT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      }
+    ],
+    "cachedContent": "cachedContents/xyz",
+    "generationConfig": {
+      "seed": 7,
+      "responseMimeType": "application/json",
+      "thinkingConfig": {
+        "thinkingLevel": "high",
+        "includeThoughts": true
+      }
+    }
+  },
+  "response": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Answer: 1"
+            }
+          ]
+        },
+        "finishReason": "STOP",
+        "index": 0,
+        "safetyRatings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "probability": "NEGLIGIBLE"
+          }
+        ],
+        "citationMetadata": {
+          "citationSources": []
+        },
+        "avgLogprobs": -0.1
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 30,
+      "candidatesTokenCount": 3,
+      "totalTokenCount": 33,
+      "trafficType": "ON_DEMAND"
+    },
+    "modelVersion": "gemini-3-pro-preview",
+    "responseId": "resp-6",
+    "createTime": "2026-01-01T00:00:00Z"
+  },
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "",
+      "effort": "high",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Run it."
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "file",
+                "media_type": "video/mp4",
+                "file_id": "https://www.youtube.com/watch?v=abc"
+              },
+              "extra": {
+                "videoMetadata": {
+                  "startOffset": "10s",
+                  "endOffset": "20s"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "executableCode",
+              "text": "print(1)",
+              "raw": {
+                "executableCode": {
+                  "language": "PYTHON",
+                  "code": "print(1)"
+                }
+              }
+            },
+            {
+              "type": "codeExecutionResult",
+              "text": "1\n",
+              "raw": {
+                "codeExecutionResult": {
+                  "outcome": "OUTCOME_OK",
+                  "output": "1\n"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "type": "codeExecution",
+          "name": "codeExecution",
+          "extra": {
+            "codeExecution": {}
+          }
+        },
+        {
+          "type": "googleSearch",
+          "name": "googleSearch",
+          "extra": {
+            "googleSearch": {}
+          }
+        }
+      ],
+      "tool_choice": {
+        "type": "auto"
+      },
+      "extra": {
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "VALIDATED"
+          },
+          "retrievalConfig": {
+            "languageCode": "en"
+          }
+        },
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "BLOCK_ONLY_HIGH"
+          }
+        ],
+        "cachedContent": "cachedContents/xyz",
+        "generationConfig": {
+          "seed": 7,
+          "responseMimeType": "application/json",
+          "thinkingConfig": {
+            "includeThoughts": true
+          }
+        }
+      }
+    },
+    "response": {
+      "id": "resp-6",
+      "model": "gemini-3-pro-preview",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Answer: 1"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 30,
+        "output_tokens": 3
+      }
+    }
+  }
+}

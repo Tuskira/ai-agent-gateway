@@ -1,0 +1,116 @@
+{
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 100,
+    "temperature": 0.2,
+    "stop_sequences": [
+      "END"
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is 2+2?"
+      },
+      {
+        "role": "assistant",
+        "content": "4."
+      },
+      {
+        "role": "user",
+        "content": "And times 3?"
+      },
+      {
+        "role": "system",
+        "content": "Reply with a number."
+      }
+    ]
+  },
+  "response": {
+    "id": "msg_02",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-5",
+    "content": [
+      {
+        "type": "text",
+        "text": "12"
+      }
+    ],
+    "stop_reason": "stop_sequence",
+    "stop_sequence": "END",
+    "usage": {
+      "input_tokens": 30,
+      "output_tokens": 2,
+      "cache_read_input_tokens": 20,
+      "cache_creation_input_tokens": 5
+    }
+  },
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 100,
+      "temperature": 0.2,
+      "stop_sequences": [
+        "END"
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What is 2+2?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "4."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "And times 3?"
+            }
+          ]
+        },
+        {
+          "role": "system",
+          "content": [
+            {
+              "type": "text",
+              "text": "Reply with a number."
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "id": "msg_02",
+      "model": "claude-sonnet-4-5",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "12"
+        }
+      ],
+      "stop_reason": "stop_sequence",
+      "stop_sequence": "END",
+      "usage": {
+        "input_tokens": 30,
+        "output_tokens": 2,
+        "cache_read_tokens": 20,
+        "cache_write_tokens": 5
+      }
+    }
+  }
+}

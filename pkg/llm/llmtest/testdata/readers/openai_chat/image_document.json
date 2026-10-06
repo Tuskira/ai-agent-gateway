@@ -1,0 +1,96 @@
+{
+  "request": {
+    "model": "gpt-4o",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Describe these."
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/png;base64,iVBORw0KGgo=",
+              "detail": "high"
+            }
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://example.com/cat.png"
+            }
+          },
+          {
+            "type": "file",
+            "file": {
+              "file_data": "data:application/pdf;base64,JVBERi0xLjQ=",
+              "filename": "report.pdf"
+            }
+          },
+          {
+            "type": "file",
+            "file": {
+              "file_id": "file-abc123"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "gpt-4o",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Describe these."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgo="
+              },
+              "extra": {
+                "detail": "high"
+              }
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://example.com/cat.png"
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "JVBERi0xLjQ="
+              },
+              "extra": {
+                "filename": "report.pdf"
+              }
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "file",
+                "file_id": "file-abc123"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

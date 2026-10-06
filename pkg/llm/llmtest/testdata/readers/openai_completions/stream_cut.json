@@ -1,0 +1,33 @@
+{
+  "request": {
+    "model": "gpt-3.5-turbo-instruct",
+    "prompt": "Tell me a story.",
+    "stream": true
+  },
+  "response": null,
+  "sse": "data: {\"id\":\"cmpl-4\",\"object\":\"text_completion\",\"created\":1700000000,\"model\":\"gpt-3.5-turbo-instruct\",\"choices\":[{\"text\":\"Once upon \",\"index\":0,\"logprobs\":null,\"finish_reason\":null}]}\n\ndata: {\"id\":\"cmpl-4\",\"object\":\"text_completion\",\"choices\":[{\"text\":\"a ti",
+  "expect": {
+    "request": {
+      "model": "gpt-3.5-turbo-instruct",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Tell me a story."
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "_gateway_history": "prompt"
+      }
+    },
+    "stream_text": "Once upon ",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "",
+    "stream_error": "unexpected EOF"
+  }
+}

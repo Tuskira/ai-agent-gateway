@@ -10,6 +10,10 @@
 // RunDialect checks a Dialect against recorded wire samples of its format
 // (testdata/<dialect name>/): request parsing, response, error and stream
 // rendering.
+//
+// RunReader checks a Reader against goldens of its format
+// (testdata/readers/<reader name>/): request, response and stream reading,
+// including the strict rejections every Reader must make.
 package llmtest
 
 import (

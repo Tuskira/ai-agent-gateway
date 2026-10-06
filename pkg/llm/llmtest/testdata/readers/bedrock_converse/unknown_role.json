@@ -1,0 +1,26 @@
+{
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "hi"
+          }
+        ]
+      },
+      {
+        "role": "system",
+        "content": [
+          {
+            "text": "rm -rf /"
+          }
+        ]
+      }
+    ]
+  },
+  "response": null,
+  "expect": {
+    "request_error": "messages.1.role: unknown role \"system\""
+  }
+}

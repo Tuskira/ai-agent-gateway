@@ -231,6 +231,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pkg/llm` readers:** a new optional `llm.Reader` interface
+  (`DecodeRequest`, `DecodeResponse`, `NewResponseDecoder`) reads what a
+  client sent and what it received into the neutral types, with a registry
+  (`llm.RegisterReader`, `llm.ReaderByName`). Readers ship for every
+  generation format the LLM plane relays: `anthropic` (Messages) and
+  `anthropic_complete` (legacy Text Completions) in `pkg/llm/anthropic`;
+  `openai_chat` (Chat Completions, the inverse of the `openai_compat`
+  provider's), `openai_responses` (Responses API, SSE included) and
+  `openai_completions` (legacy Completions) in `pkg/llm/openaicompat`;
+  `gemini` (`generateContent`, streams as SSE or a JSON array) in the new
+  `pkg/llm/gemini`; and `bedrock_converse` (Converse, ConverseStream) and
+  `bedrock_invoke` (InvokeModel bodies of Titan, prompt-style, chat-style
+  and Nova models) in the new `pkg/llm/bedrock`, which reads AWS event
+  streams through `internal/eventstream`. A request whose messages are not
+  the whole conversation carries `Extra[llm.HistoryKey]` (`server_side` for
+  a Responses call that continues a stored one, `prompt` for a flat prompt);
+  a Reader that sets it refuses a body that does. Readers are strict: a
+  repeated key, two keys differing only by case, or an unknown role is
+  refused. A `llmtest.RunReader` conformance suite runs them against golden
+  files (binary streams as `stream_b64`). Serving behaviour is unchanged.
+- **Detection tee: route capability and a canonical conversation.** Each
+  LLM provider describes its endpoints (generate, batch, count, utility,
+  and the wire format the client speaks there); the tee sends generation
+  and batch calls only (it used to send every `POST` but a list of utility
+  paths: unknown endpoints such as embeddings are no longer sent) and adds
+  `dialect`, `op`, and, read through the format's `llm.Reader` in the tee's
+  worker, `conversation` and `answer` (with `truncated` for a cut
+  response), or `normalize_error` when the route has no reader or the
+  body does not parse. Every generation route of every provider has
+  a reader; `history` says when the request is not the whole conversation;
+  a text document keeps its text (other attachments only their type and
+  size). The raw bodies are still sent, and `queue_bytes` now counts each
+  turn as posted (raw bodies and canonical JSON). The contract stays
+  `v: 1` and the agent's `detection/wire` gains the matching types. See
+  `docs/llm-plane.md`, "Detection agent".
+- **Detection agent reads the canonical conversation.** When a turn
+  carries `conversation` and `answer` (and no `normalize_error`), the agent
+  extracts the new turn and the reply from them, so Gemini, Bedrock
+  Converse and invoke, OpenAI Responses and both legacy completion formats
+  are judged like Messages and Chat Completions; otherwise it reads the raw
+  bodies as before. Secrets are still found in the raw bodies and removed
+  from whatever is sent. `harness_text` also carries a text document's
+  text and any block the canonical shape has no slot for; with partial
+  history, `user_goal` is only the turn's own text. See
+  `docs/detection-agent.md`.
+- **Message Batches are judged item by item.** A new `llm.BatchReader`
+  interface and registry (`llm.RegisterBatchReader`,
+  `llm.BatchReaderByName`, `llmtest.RunBatchReader`) reads a batch creation
+  body into its requests; `anthropic_batch` (`POST /v1/messages/batches`)
+  and `gemini_batch` (`batchGenerateContent` with inline requests; a batch
+  that names an uploaded file is `llm.ErrBatchFile`) ship. The tee sends a
+  batch with `items` (`{custom_id, conversation}` per request, at most
+  1000) and no `conversation` or `answer`; a repeated id is refused. The
+  agent judges each item as its own request stage under the batch's
+  request id with the new `meta.item`, removes every value found in the
+  raw batch body from every item, sends no response stage, and counts a
+  batch as one queued turn. The agent also passes the turn's `dialect`
+  and `op`, and the conversation's `history`, to the engine in
+  `meta`. The contract stays `v: 1`; a new `turn_batch.json` fixture pins
+  it.
 - **Token Monitoring** console page (`/token-monitoring`): token usage and
   cost by model, by caller (API key, with its role: agent, admin,
   interceptor or other) and by role, for the last 24h / 7d / 30d or custom

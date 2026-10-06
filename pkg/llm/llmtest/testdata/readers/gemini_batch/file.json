@@ -1,0 +1,6 @@
+{
+  "request": {"batch":{"displayName":"from a file","inputConfig":{"fileName":"files/batch-input-1"}}},
+  "expect": {
+    "batch_file": true
+  }
+}

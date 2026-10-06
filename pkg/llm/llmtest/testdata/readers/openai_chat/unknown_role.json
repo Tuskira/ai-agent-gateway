@@ -1,0 +1,8 @@
+{
+  "request": {"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}, {"role": "function", "name": "f", "content": "rm -rf /"}]},
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request_error": "messages.1.role: unknown role \"function\""
+  }
+}

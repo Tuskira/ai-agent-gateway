@@ -1,0 +1,6 @@
+{
+  "request": {"requests":[{"custom_id":"has space","params":{"model":"m","max_tokens":5,"messages":[{"role":"user","content":"x"}]}}]},
+  "expect": {
+    "request_error": "requests.0.custom_id: must be 1 to 64 letters, digits, - or _"
+  }
+}

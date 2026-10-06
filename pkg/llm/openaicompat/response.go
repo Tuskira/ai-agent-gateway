@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -166,6 +167,16 @@ func newID(prefix string) string { return prefix + rand.Text() }
 
 // ParseResponse converts a non-stream Chat Completions response.
 func (Provider) ParseResponse(resp *http.Response) (*llm.Response, error) {
+	out, err := parseResponse(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("upstream response: %v", err)
+	}
+	return out, nil
+}
+
+// parseResponse converts a non-stream Chat Completions body; the error is
+// the decoder's.
+func parseResponse(body io.Reader) (*llm.Response, error) {
 	var in struct {
 		ID      string `json:"id"`
 		Choices []struct {
@@ -175,8 +186,8 @@ func (Provider) ParseResponse(resp *http.Response) (*llm.Response, error) {
 		} `json:"choices"`
 		Usage *chatUsage `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&in); err != nil {
-		return nil, fmt.Errorf("upstream response: %v", err)
+	if err := json.NewDecoder(body).Decode(&in); err != nil {
+		return nil, err
 	}
 	out := &llm.Response{Role: "assistant", Content: []llm.Block{}, Usage: in.Usage.neutral()}
 	finish, stopSeq, sawTool := "", "", false

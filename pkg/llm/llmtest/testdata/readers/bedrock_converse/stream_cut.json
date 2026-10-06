@@ -1,0 +1,55 @@
+{
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "Go"
+          }
+        ]
+      }
+    ],
+    "inferenceConfig": {
+      "maxTokens": 10
+    }
+  },
+  "response": null,
+  "stream_frames": [
+    {
+      "event": "messageStart",
+      "payload": "{\"role\":\"assistant\"}"
+    },
+    {
+      "event": "contentBlockDelta",
+      "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"Partial \"}}"
+    },
+    {
+      "event": "contentBlockDelta",
+      "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"answer\"}}",
+      "cut": true
+    }
+  ],
+  "stream_b64": "AAAAdgAAAFKW1freDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTptZXNzYWdlLXR5cGUHAAVldmVudHsicm9sZSI6ImFzc2lzdGFudCJ92MXf9wAAAJoAAABXC5skjw06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcAEWNvbnRlbnRCbG9ja0RlbHRhDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjAsImRlbHRhIjp7InRleHQiOiJQYXJ0aWFsICJ9ffCb0S8AAACYAAAAV3Fbd+8NOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24LOmV2ZW50LXR5cGUHABFjb250ZW50QmxvY2tEZWx0",
+  "expect": {
+    "request": {
+      "model": "",
+      "max_tokens": 10,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Go"
+            }
+          ]
+        }
+      ]
+    },
+    "stream_text": "Partial ",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "",
+    "stream_error": "unexpected EOF"
+  }
+}

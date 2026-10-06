@@ -1,0 +1,25 @@
+{
+  "request": null,
+  "response": null,
+  "sse": "[{\n  \"candidates\": [{\"content\": {\"role\": \"model\", \"parts\": [{\"text\": \"Hello\"}]}}],\n  \"modelVersion\": \"gemini-2.5-flash\",\n  \"responseId\": \"resp-8\"\n}\n,\r\n{\n  \"candidates\": [{\"content\": {\"role\": \"model\", \"parts\": [{\"text\": \" world\"}]}}],\n  \"modelVersion\": \"gemini-2.5-flash\",\n  \"responseId\": \"resp-8\"\n}\n,\r\n{\n  \"candidates\": [{\"content\": {\"role\": \"model\", \"parts\": [{\"functionCall\": {\"name\": \"get_time\", \"args\": {\"tz\": \"UTC\"}}}, {\"functionCall\": {\"name\": \"get_time\", \"args\": {\"tz\": \"CET\"}}}]}, \"finishReason\": \"STOP\"}],\n  \"usageMetadata\": {\"promptTokenCount\": 9, \"candidatesTokenCount\": 12},\n  \"modelVersion\": \"gemini-2.5-flash\",\n  \"responseId\": \"resp-8\"\n}\n]",
+  "expect": {
+    "stream_text": "Hello world",
+    "stream_tool_calls": [
+      {
+        "id": "gemini-call-0-get_time",
+        "name": "get_time",
+        "input": {
+          "tz": "UTC"
+        }
+      },
+      {
+        "id": "gemini-call-1-get_time",
+        "name": "get_time",
+        "input": {
+          "tz": "CET"
+        }
+      }
+    ],
+    "stream_stop_reason": "tool_use"
+  }
+}

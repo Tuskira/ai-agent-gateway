@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/detection/turn"
+	"github.com/Tuskira/tusk-ai-secured-gateway/detection/wire/conv"
 )
 
 // Paths served by the agent (to the gateway) and the engine (to the agent).
@@ -38,26 +39,110 @@ const TurnVersion = 1
 // is the first 1 MiB of what the client received and is present only when
 // the upstream answered 2xx and the relay completed. Byte fields are base64
 // on the wire.
+//
+// Op is what the route does (OpGenerate or OpBatch; the gateway sends no
+// other). Dialect names the wire format the gateway read the bodies in
+// ("anthropic", "openai_chat", ...), "" when the route has none. When it
+// could read them, Conversation is the request and Answer the response
+// (when there is one), in one canonical shape whatever the dialect; when it
+// could not, NormalizeError says why and only the raw bodies are there.
+//
+// A batch (OpBatch) has no Conversation and no Answer (its response is the
+// batch object, which holds no generation): Items holds each request of
+// the batch, at most MaxBatchItems of them, under the id the client gave
+// it. A batch the gateway could not read has no Items and says why in
+// NormalizeError; one it read only in part (more than MaxBatchItems
+// requests) has both.
 type Turn struct {
-	V          int       `json:"v,omitempty"`
-	ID         string    `json:"id"`
-	TenantID   string    `json:"tenant_id"`
-	SessionID  string    `json:"session_id,omitempty"`
-	KeyID      string    `json:"key_id,omitempty"`
-	Principal  string    `json:"principal,omitempty"`
-	Model      string    `json:"model,omitempty"`
-	Path       string    `json:"path,omitempty"`
-	At         time.Time `json:"at"`
-	StatusCode int       `json:"status_code,omitempty"`
-	Request    []byte    `json:"request"`
-	Response   []byte    `json:"response,omitempty"`
+	V              int           `json:"v,omitempty"`
+	ID             string        `json:"id"`
+	TenantID       string        `json:"tenant_id"`
+	SessionID      string        `json:"session_id,omitempty"`
+	KeyID          string        `json:"key_id,omitempty"`
+	Principal      string        `json:"principal,omitempty"`
+	Model          string        `json:"model,omitempty"`
+	Path           string        `json:"path,omitempty"`
+	At             time.Time     `json:"at"`
+	StatusCode     int           `json:"status_code,omitempty"`
+	Request        []byte        `json:"request"`
+	Response       []byte        `json:"response,omitempty"`
+	Dialect        string        `json:"dialect,omitempty"`
+	Op             string        `json:"op,omitempty"`
+	Conversation   *Conversation `json:"conversation,omitempty"`
+	Answer         *Answer       `json:"answer,omitempty"`
+	NormalizeError string        `json:"normalize_error,omitempty"`
+	Items          []TurnItem    `json:"items,omitempty"`
 }
 
-// MetaOfTurn is the Meta of a gateway turn. Meta has no field for
-// StatusCode, so the engine does not see it.
+// Turn.Op values.
+const (
+	OpGenerate = "generate" // one model call
+	OpBatch    = "batch"    // a batch of model calls submitted at once
+)
+
+// The canonical conversation types and constants live in package conv,
+// which package turn reads too; they are re-exported here as the contract.
+type (
+	Conversation = conv.Conversation
+	Message      = conv.Message
+	ContentBlock = conv.ContentBlock
+	Answer       = conv.Answer
+)
+
+// ConversationVersion is Conversation.Version ("cv").
+const ConversationVersion = conv.ConversationVersion
+
+// Conversation.History values.
+const (
+	HistoryFull       = conv.HistoryFull
+	HistoryServerSide = conv.HistoryServerSide
+	HistoryPrompt     = conv.HistoryPrompt
+)
+
+// ContentBlock types.
+const (
+	ContentText       = conv.ContentText
+	ContentToolUse    = conv.ContentToolUse
+	ContentToolResult = conv.ContentToolResult
+	ContentThinking   = conv.ContentThinking
+	ContentImage      = conv.ContentImage
+	ContentDocument   = conv.ContentDocument
+	ContentOpaque     = conv.ContentOpaque
+)
+
+// MaxOpaqueRaw bounds ContentBlock.Raw.
+const MaxOpaqueRaw = conv.MaxOpaqueRaw
+
+// MaxBatchItems bounds Turn.Items: the gateway reads at most this many
+// requests of a batch, and the agent judges at most this many.
+const MaxBatchItems = 1000
+
+// TurnItem is one request of a batch: CustomID is the id the client gave
+// it (custom_id; for a Gemini batch, its metadata key or else its
+// position), Conversation the request in the canonical shape.
+type TurnItem struct {
+	CustomID     string       `json:"custom_id"`
+	Conversation Conversation `json:"conversation"`
+}
+
+// Call is the turn as package turn prepares it: the raw bodies, with the
+// canonical conversation and answer only when the gateway read them
+// without error (NormalizeError empty) in a version this agent knows.
+// Otherwise the raw bodies are read, as from a gateway without readers.
+func (t Turn) Call() turn.Call {
+	c := turn.Call{Request: t.Request, Response: t.Response}
+	if t.NormalizeError == "" && t.Conversation != nil && t.Conversation.Version <= ConversationVersion {
+		c.Conversation, c.Answer = t.Conversation, t.Answer
+	}
+	return c
+}
+
+// MetaOfTurn is the Meta of a gateway turn, without History (it depends on
+// what each stage is read from). Meta has no field for StatusCode, so the
+// engine does not see it.
 func MetaOfTurn(t Turn) Meta {
 	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID,
-		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path}
+		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
 }
 
 // TurnRequest is one call's stage (inline contract) as the gateway hands it to the agent: the
@@ -105,6 +190,18 @@ type Meta struct {
 	Principal string    `json:"principal,omitempty"`
 	Model     string    `json:"model,omitempty"`
 	Path      string    `json:"path,omitempty"`
+	// Dialect and Op are the gateway turn's (Turn.Dialect, Turn.Op): the
+	// wire format the call was made in and what the route does.
+	Dialect string `json:"dialect,omitempty"`
+	Op      string `json:"op,omitempty"`
+	// Item is, for one request of a batch, its id within the batch
+	// (TurnItem.CustomID, clipped and redacted): each request is judged
+	// as its own call, all under the batch call's RequestID.
+	Item string `json:"item,omitempty"`
+	// History is how much of the conversation the judged request carries
+	// (Conversation.History: full, server_side or prompt), when the stage
+	// was read from a canonical conversation; empty means full.
+	History string `json:"history,omitempty"`
 }
 
 // MetaOf is the Meta of a gateway turn.

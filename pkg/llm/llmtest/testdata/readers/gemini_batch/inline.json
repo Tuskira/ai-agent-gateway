@@ -1,0 +1,51 @@
+{
+  "request": {"batch":{"display_name":"nightly","input_config":{"requests":{"requests":[
+ {"request":{"contents":[{"role":"user","parts":[{"text":"Describe a cat."}]}]},"metadata":{"key":"cat"}},
+ {"request":{"systemInstruction":{"parts":[{"text":"Be brief."}]},"contents":[{"parts":[{"text":"Describe a dog."}]}],"generationConfig":{"maxOutputTokens":40}}}
+]}}}},
+  "expect": {
+    "items": [
+      {
+        "custom_id": "cat",
+        "request": {
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "Describe a cat.",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": ""
+        }
+      },
+      {
+        "custom_id": "1",
+        "request": {
+          "max_tokens": 40,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "Describe a dog.",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "",
+          "system": [
+            {
+              "text": "Be brief.",
+              "type": "text"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

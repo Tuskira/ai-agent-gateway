@@ -1,0 +1,6 @@
+{
+  "request": {"requests":[]},
+  "expect": {
+    "request_error": "requests: must hold at least one request"
+  }
+}

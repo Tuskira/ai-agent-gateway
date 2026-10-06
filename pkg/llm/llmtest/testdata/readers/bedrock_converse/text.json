@@ -1,0 +1,101 @@
+{
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "Hello there"
+          }
+        ]
+      }
+    ],
+    "inferenceConfig": {
+      "maxTokens": 256
+    }
+  },
+  "response": {
+    "output": {
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "text": "Hi! How can I help?"
+          }
+        ]
+      }
+    },
+    "stopReason": "end_turn",
+    "usage": {
+      "inputTokens": 10,
+      "outputTokens": 7,
+      "totalTokens": 17
+    },
+    "metrics": {
+      "latencyMs": 320
+    }
+  },
+  "stream_frames": [
+    {
+      "event": "messageStart",
+      "payload": "{\"role\":\"assistant\"}"
+    },
+    {
+      "event": "contentBlockDelta",
+      "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"Hi! \"}}"
+    },
+    {
+      "event": "contentBlockDelta",
+      "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"How can I help?\"}}"
+    },
+    {
+      "event": "contentBlockStop",
+      "payload": "{\"contentBlockIndex\":0}"
+    },
+    {
+      "event": "messageStop",
+      "payload": "{\"stopReason\":\"end_turn\"}"
+    },
+    {
+      "event": "metadata",
+      "payload": "{\"usage\":{\"inputTokens\":10,\"outputTokens\":7,\"totalTokens\":17},\"metrics\":{\"latencyMs\":320}}"
+    }
+  ],
+  "stream_b64": "AAAAdgAAAFKW1freDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTptZXNzYWdlLXR5cGUHAAVldmVudHsicm9sZSI6ImFzc2lzdGFudCJ92MXf9wAAAJYAAABXzmvJjg06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcAEWNvbnRlbnRCbG9ja0RlbHRhDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjAsImRlbHRhIjp7InRleHQiOiJIaSEgIn19H/ZZtQAAAKEAAABX3WqtGA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcAEWNvbnRlbnRCbG9ja0RlbHRhDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjAsImRlbHRhIjp7InRleHQiOiJIb3cgY2FuIEkgaGVscD8ifX30Fk4hAAAAfQAAAFbmaA/WDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uCzpldmVudC10eXBlBwAQY29udGVudEJsb2NrU3RvcA06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjowfeV8BjkAAAB6AAAAUcosRmUNOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24LOmV2ZW50LXR5cGUHAAttZXNzYWdlU3RvcA06bWVzc2FnZS10eXBlBwAFZXZlbnR7InN0b3BSZWFzb24iOiJlbmRfdHVybiJ97P2FjgAAALgAAABO1PHwKw06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbgs6ZXZlbnQtdHlwZQcACG1ldGFkYXRhDTptZXNzYWdlLXR5cGUHAAVldmVudHsidXNhZ2UiOnsiaW5wdXRUb2tlbnMiOjEwLCJvdXRwdXRUb2tlbnMiOjcsInRvdGFsVG9rZW5zIjoxN30sIm1ldHJpY3MiOnsibGF0ZW5jeU1zIjozMjB9fdZklFI=",
+  "expect": {
+    "request": {
+      "model": "",
+      "max_tokens": 256,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hello there"
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "id": "",
+      "model": "",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hi! How can I help?"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 7
+      }
+    },
+    "stream_text": "Hi! How can I help?",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "end_turn"
+  }
+}

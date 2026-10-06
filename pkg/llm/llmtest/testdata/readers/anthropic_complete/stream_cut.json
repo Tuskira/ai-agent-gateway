@@ -1,0 +1,35 @@
+{
+  "request": {
+    "model": "claude-2.1",
+    "prompt": "\n\nHuman: Tell me a story.\n\nAssistant:",
+    "max_tokens_to_sample": 50,
+    "stream": true
+  },
+  "response": null,
+  "sse": "event: completion\ndata: {\"type\":\"completion\",\"id\":\"compl_4\",\"completion\":\" Once\",\"stop_reason\":null,\"stop\":null,\"model\":\"claude-2.1\",\"log_id\":\"compl_4\"}\n\nevent: completion\ndata: {\"type\":\"completion\",\"id\":\"compl_4\",\"completion\":\" upon\",\"stop_reason\":null,\"stop\":null,\"model\":\"claude-2.1\",\"log_id\":\"compl_4\"}\n\nevent: completion\ndata: {\"type\":\"completion\",\"id\":\"compl_4\",\"completion\":\" a ti",
+  "expect": {
+    "request": {
+      "model": "claude-2.1",
+      "max_tokens": 50,
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Tell me a story."
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "_gateway_history": "prompt"
+      }
+    },
+    "stream_text": " Once upon",
+    "stream_tool_calls": [],
+    "stream_stop_reason": "",
+    "stream_error": "unexpected EOF"
+  }
+}

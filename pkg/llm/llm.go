@@ -14,12 +14,20 @@
 // Provider that speaks the client's own wire can pass them through, and the
 // engine can refuse them for a Provider that cannot.
 //
-// Two adapters ship in this module and register themselves from an init():
-// pkg/llm/anthropic (Dialect "anthropic" and Provider "anthropic") and
-// pkg/llm/openaicompat (Provider "openai_compat"). A binary blank-imports
-// the adapters it wants, exactly as cmd/gateway does. A new vendor is one
-// package that implements Provider, registers it, and passes
-// pkg/llm/llmtest -- see CONTRIBUTING.md, "Adding an LLM provider adapter".
+// A Reader reads a wire format into the same neutral types without serving
+// anyone: what a client sent and what it received, whatever the format, so
+// the gateway can look at every call the same way.
+//
+// Four adapters ship in this module and register themselves from an
+// init(): pkg/llm/anthropic (Dialect, Provider and Reader "anthropic",
+// Reader "anthropic_complete"), pkg/llm/openaicompat (Provider
+// "openai_compat", Readers "openai_chat", "openai_responses" and
+// "openai_completions"), pkg/llm/gemini (Reader "gemini") and
+// pkg/llm/bedrock (Readers "bedrock_converse" and "bedrock_invoke"). A
+// binary blank-imports the adapters it wants, exactly as cmd/gateway does.
+// A new vendor is one package that implements Provider, registers it, and
+// passes pkg/llm/llmtest -- see CONTRIBUTING.md, "Adding an LLM provider
+// adapter".
 package llm
 
 import (
@@ -87,6 +95,25 @@ type Request struct {
 	// refuses them unless they are on its documented drop list.
 	Extra map[string]json.RawMessage `json:"extra,omitempty"`
 }
+
+// HistoryKey is the Request.Extra key a Reader sets when Messages is not the
+// whole conversation as the model sees it. Its value is a JSON string:
+// HistoryServerSide when the vendor holds the earlier turns (an OpenAI
+// Responses request naming previous_response_id or conversation), or
+// HistoryPrompt when the request is one flat prompt text (a legacy
+// completion request, or a prompt-style Bedrock invoke body; any turns in
+// Messages were split out of it best effort). With the key absent, Messages
+// is the whole conversation as sent (HistoryFull). A Reader that sets the
+// key refuses a body that sets it itself, so a client cannot forge it.
+const HistoryKey = "_gateway_history"
+
+// The history values: HistoryFull is implied when HistoryKey is absent and
+// is never set.
+const (
+	HistoryFull       = "full"
+	HistoryServerSide = "server_side"
+	HistoryPrompt     = "prompt"
+)
 
 // Message is one conversation turn.
 type Message struct {

@@ -300,15 +300,44 @@ repository ships an agent that redacts secrets locally and forwards the
 turn to a remote detection engine, and the contract it speaks to that
 engine (no engine is included): [detection-agent.md](detection-agent.md).
 
-Which calls are sent: every `POST` the plane relays to an upstream, on
-every provider route (Anthropic `/v1/messages`, OpenAI
-`/openai/v1/chat/completions` and `/openai/v1/responses`, Bedrock
-`/model/{id}/invoke` and `converse`, Gemini `…:generateContent`, …),
-except the free utility endpoints (token counting and Message Batches
-management). There is no per-route allow-list in the gateway; the agent
-decides what it can read. Not sent: `GET` calls such as model listing, and
-calls the gateway answered itself without reaching an upstream (a limit
-denial, a registry error, an unbuildable target).
+Which calls are sent: each provider describes its endpoints (a route
+capability: what the endpoint does, and the wire format the client speaks
+there), and the tee sends the calls of the routes that run a generation,
+alone (`op: "generate"`) or as a batch (`op: "batch"`). Token counting,
+model listing, embeddings, batch management and any endpoint a provider
+does not describe are not sent, nor is any method but `POST`. Calls the
+gateway answered itself without reaching an upstream (a limit denial, a
+registry error, an unbuildable target) are not sent either.
+
+| Route | `op` | `dialect` (reader) | Read |
+|---|---|---|---|
+| Anthropic `POST /v1/messages` | `generate` | `anthropic` | yes |
+| Anthropic `POST /v1/complete` | `generate` | `anthropic_complete` | yes (`history: prompt`) |
+| Anthropic `POST /v1/messages/batches` | `batch` | `anthropic_batch` | yes: each request into `items` |
+| Anthropic `/v1/messages/count_tokens` | `count` | | not sent |
+| Anthropic batch management, `/v1/models` | `utility` | | not sent |
+| OpenAI `POST …/chat/completions` | `generate` | `openai_chat` | yes |
+| OpenAI `POST …/responses` | `generate` | `openai_responses` | yes (`history: server_side` with `previous_response_id` or `conversation`) |
+| OpenAI `POST …/completions` | `generate` | `openai_completions` | yes (`history: prompt`) |
+| OpenAI `…/responses/input_tokens` | `count` | | not sent |
+| OpenAI `…/models`, `…/embeddings`, `…/moderations`, `…/responses/{id}…` | `utility` | | not sent |
+| Gemini `…:generateContent`, `…:streamGenerateContent` | `generate` | `gemini` | yes (a stream as SSE or a JSON array) |
+| Gemini `…:batchGenerateContent` | `batch` | `gemini_batch` | yes: inline requests into `items`; a batch that names an uploaded file is a `normalize_error` |
+| Gemini `…:countTokens` | `count` | | not sent |
+| Gemini `…:embedContent`, `…:batchEmbedContents` | `utility` | | not sent |
+| Bedrock `/model/{id}/invoke`, `invoke-with-response-stream`, Anthropic model id | `generate` | `anthropic` | yes |
+| Bedrock `/model/{id}/invoke`, `invoke-with-response-stream`, other models | `generate` | `bedrock_invoke` | yes: Titan, prompt-style (`history: prompt`), chat-style and Nova bodies; another family's body is a `normalize_error` |
+| Bedrock `/model/{id}/converse`, `converse-stream` | `generate` | `bedrock_converse` | yes |
+| Bedrock `/model/{id}/count-tokens` | `count` | | not sent |
+
+The paths are the provider's own (after the `/{provider}/` prefix); a
+query string and a trailing slash do not change the route. An Anthropic
+model id on Bedrock is `anthropic.<model>` or an inference profile
+`<prefix>.anthropic.<model>`. The `dialect` is also the format a gateway
+error on that route would be rendered in. Every generation route is read,
+batches included: a batch creation call is read request by request into
+`items` (see the contract below). A batch's results, `GET
+…/batches/{id}/results`, are a `utility` route and are not sent.
 
 Flow for one call:
 
@@ -327,8 +356,10 @@ complete turn per call; the agent answers `202 Accepted` and works on it
 asynchronously. The gateway ignores the response body. Byte fields are
 standard base64 of the raw bytes, so a body that is not valid UTF-8
 survives. Canonical examples (shared with the agent's tests) live in
-`internal/llmplane/testdata/detection/`: `turn.json` and
-`turn_no_response.json`.
+`internal/llmplane/testdata/detection/`: `turn.json`,
+`turn_no_response.json` and `turn_batch.json`; the canonical conversation each reader makes of a
+request, response and stream is in `internal/llmplane/testdata/conversation/`
+(the agent's tests read copies of both).
 
 | Field | Type | Notes |
 |---|---|---|
@@ -344,12 +375,52 @@ survives. Canonical examples (shared with the agent's tests) live in
 | `status_code` | number | Status the upstream answered with (what the client got). |
 | `request` | base64 | The client's request body, exactly as received, in full. |
 | `response` | base64 | The first 1 MiB (1048576 bytes) of what the client received. Present only when the upstream answered `2xx` **and** the relay to the client completed; absent for an error status, a client that disconnected mid-stream, an upstream that failed mid-body, or the stream deadline. A partial response is never sent. |
+| `dialect` | string | The wire format the route speaks (see the table above); omitted when it has none. |
+| `op` | string | `generate` or `batch`. |
+| `conversation` | object | The request read through the dialect's reader, in the canonical shape below. Omitted when it could not be read. |
+| `answer` | object | The response read the same way: `content` (blocks), `stop_reason`, and `truncated` when the response was cut (the 1 MiB copy ended, or the stream ended before the model finished): `content` is then what was read up to the cut. Omitted when there is no response or it could not be read. |
+| `normalize_error` | string | Why `conversation`, `answer` or `items` is missing (or, for a whole response cut at 1 MiB, an empty `truncated` answer): `no reader for <dialect>` or `no reader for this route` (none), `decode request: …`, `decode response: …`, `batch references a file` (a Gemini batch whose requests are in an uploaded file), or `batch of <n> requests: only the first 1000 are read`. |
+| `items` | array | A batch only (`op: "batch"`): each request of the batch, in body order, as `{custom_id, conversation}`. `custom_id` is the request's `custom_id` (Anthropic) or its `metadata.key` (Gemini; its position, `"0"`, `"1"`, …, when it has none); a batch that repeats an id is not read. At most 1000 items: the rest of a larger batch is not read, and `normalize_error` says so. A batch has no `conversation` and no `answer` (its `response` is the batch object, which holds no generation). |
+
+The raw `request` and `response` are sent whether or not they could be
+read: the agent scans them for secrets, and they never leave the host (the
+agent is on loopback). Reading happens in the tee's workers, after the
+call, off the request path.
+
+The canonical `conversation` (version `cv: 1`) is a small projection of
+the gateway's neutral LLM types, the same for every dialect:
+
+- `system`: blocks; `messages`: `{role, content}` oldest first, roles
+  `user`, `assistant`, and `system` (a system or developer message after
+  the first turn); `tools`: the names of the tools offered (a
+  vendor-defined tool with no name by its type); `history`: `full` (the
+  request carries the whole conversation), `server_side` (the vendor holds
+  the earlier turns: an OpenAI Responses request naming
+  `previous_response_id` or `conversation`) or `prompt` (one flat prompt: a
+  legacy completion, or a prompt-style Bedrock invoke body; any turns in
+  `messages` were split out of it best effort). `history` is taken only
+  from a reader that sets it and refuses a body that tries to.
+- Blocks: `text` and `thinking` (`text`); `tool_use` (`id`, `name`,
+  `input`: the arguments as JSON, or a JSON string when a cut stream left
+  them incomplete); `tool_result` (`tool_use_id`, `content`, `is_error`);
+  `image` and `document` (`media_type`, `bytes`: the size of the inline
+  payload as sent, 0 for a URL or file reference; the payload itself is
+  dropped, except that a text document keeps its text in `text`: plain
+  text, a base64 `text/*` payload that is valid UTF-8, or a content
+  source's text blocks, since an instruction can hide in an attached file);
+  `opaque`, any other kind (`raw`: its wire form, or past 64 KiB
+  a JSON string of its first 64 KiB; `bytes`: its full size).
+
+Fields are only ever added; `v` stays `1`.
 
 ### Queue, limits and drops
 
 - At most `queue_size` (default `1024`) turns wait, and the turns waiting
-  or being posted hold at most `queue_bytes` (default 256 MiB) of request
-  and response bytes. A turn past either cap is dropped.
+  or being posted hold at most `queue_bytes` (default 256 MiB): a waiting
+  turn counts its request and response bytes, a turn being posted the JSON
+  actually posted (the raw bodies, base64, and the canonical conversation
+  and answer). A turn past either cap is dropped, when it is offered or,
+  once read, before it is posted.
 - `max_in_flight` (default `8`) workers post at once; each post is bounded
   by `timeout` (default `5s`).
 - Drops and failed posts are counted and logged at most once a minute
@@ -794,6 +865,30 @@ If a vendor returns tool-call arguments that are not a JSON object, the
 one key: `{"_gateway_invalid_arguments": "<raw text>"}` — never replaced by
 `{}`. The tool rejects that input, so the model sees its own mistake and can
 retry.
+
+#### Reading requests and responses
+
+`pkg/llm` can also *read* a call without translating it: an `llm.Reader`
+turns a client's request body, and the response body or SSE stream it got
+back, into the neutral request, response and stream events. One ships for
+each generation format the plane relays: `anthropic` (Messages),
+`anthropic_complete` (legacy Text Completions), `openai_chat` (Chat
+Completions; its responses are read as the `openai_compat` provider reads
+them — the first choice only, unknown response fields not kept),
+`openai_responses` (Responses API), `openai_completions` (legacy
+Completions), `gemini` (`generateContent`) and `bedrock_converse` and
+`bedrock_invoke` (Bedrock's Converse and non-Anthropic InvokeModel bodies,
+AWS event streams included). Two batch readers (`llm.BatchReader`) read a
+batch creation body into its requests: `anthropic_batch` (Message Batches)
+and `gemini_batch` (`batchGenerateContent` with inline requests; one that
+names an uploaded file is `llm.ErrBatchFile`). Readers refuse what two parsers could
+read differently: a key repeated in an object, two keys differing only by
+case, an unknown message role, a malformed content part; a stream with such
+a frame ends with an error after the events before it, and a cut stream
+ends with `io.ErrUnexpectedEOF` after the events seen. Image and document
+payloads are kept whole (base64 included), so a reader's output is as large
+as the body it read. Only the detection tee uses readers (in its workers,
+after the call); nothing about how calls are served changes.
 
 #### Refused, not dropped
 

@@ -1,0 +1,8 @@
+{
+  "request": {"model": "gpt-4.1", "input": [{"role": "user", "content": "hi"}, {"type": "message", "role": "tool", "content": "rm -rf /"}]},
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request_error": "input.1.role: unknown role \"tool\""
+  }
+}

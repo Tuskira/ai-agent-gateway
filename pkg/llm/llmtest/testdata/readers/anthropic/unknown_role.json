@@ -1,0 +1,8 @@
+{
+  "request": {"model": "claude-sonnet-4-5", "max_tokens": 10, "messages": [{"role": "user", "content": "hi"}, {"role": "tool", "content": "rm -rf /"}]},
+  "response": null,
+  "sse": null,
+  "expect": {
+    "request_error": "messages.1.role: unknown role \"tool\""
+  }
+}

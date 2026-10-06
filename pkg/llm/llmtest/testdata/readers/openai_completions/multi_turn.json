@@ -1,0 +1,90 @@
+{
+  "request": {
+    "model": "gpt-3.5-turbo-instruct",
+    "prompt": [
+      "Once upon a time",
+      "The quick brown fox"
+    ],
+    "suffix": " The end.",
+    "stop": [
+      "\n"
+    ],
+    "n": 1,
+    "echo": false,
+    "best_of": 1,
+    "user": "u-1"
+  },
+  "response": {
+    "id": "cmpl-2",
+    "object": "text_completion",
+    "created": 1700000000,
+    "model": "gpt-3.5-turbo-instruct",
+    "choices": [
+      {
+        "text": " jumps",
+        "index": 1,
+        "logprobs": null,
+        "finish_reason": "stop"
+      },
+      {
+        "text": ", there was",
+        "index": 0,
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 9,
+      "completion_tokens": 5,
+      "total_tokens": 14
+    }
+  },
+  "sse": null,
+  "expect": {
+    "request": {
+      "model": "gpt-3.5-turbo-instruct",
+      "stop_sequences": [
+        "\n"
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Once upon a time"
+            },
+            {
+              "type": "text",
+              "text": "The quick brown fox"
+            }
+          ]
+        }
+      ],
+      "extra": {
+        "suffix": " The end.",
+        "n": 1,
+        "echo": false,
+        "best_of": 1,
+        "user": "u-1",
+        "_gateway_history": "prompt"
+      }
+    },
+    "response": {
+      "id": "cmpl-2",
+      "model": "gpt-3.5-turbo-instruct",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": ", there was"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 9,
+        "output_tokens": 5
+      }
+    }
+  }
+}

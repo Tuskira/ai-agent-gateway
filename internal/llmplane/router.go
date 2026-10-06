@@ -309,7 +309,8 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dst, cap := captureTargets(rt.storeBodies, rt.maxCaptureResp, toClient, uHead, uTail)
 	// The detection tee gets a bounded copy of what the client received,
 	// independent of body storage.
-	tee := rt.tee != nil && teeable(r)
+	endpoint := routeOf(p, r.Method, upstreamPath)
+	tee := rt.tee != nil && teed(endpoint)
 	var teeCap *boundedCap
 	if tee && resp.StatusCode/100 == 2 {
 		teeCap = newBoundedCap(teeResponseBytes)
@@ -350,11 +351,11 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// response cut short (client gone, upstream failing, deadline) is not
 	// sent; the request still is.
 	if tee {
-		var out []byte
+		t := teeTurnOf(r, info, endpoint, start, resp.StatusCode, body)
 		if teeCap != nil && relayErr == "" {
-			out = teeCap.Bytes()
+			t.Response, t.respType, t.respCut = teeCap.Bytes(), resp.Header.Get("Content-Type"), teeCap.Truncated
 		}
-		rt.tee.offer(teeTurnOf(r, info, start, resp.StatusCode, body, out))
+		rt.tee.offer(t)
 	}
 }
 

@@ -1,7 +1,8 @@
 // Package anthropic is the Anthropic Messages API adapter for pkg/llm: the
 // "anthropic" Dialect (a client speaking /v1/messages) and the "anthropic"
-// Provider (a vendor speaking it). Both register from init(); blank-import
-// the package to use them.
+// Provider (a vendor speaking it), which also register as Readers, and the
+// "anthropic_complete" Reader of the legacy Text Completions wire. All
+// register from init(); blank-import the package to use them.
 package anthropic
 
 import (

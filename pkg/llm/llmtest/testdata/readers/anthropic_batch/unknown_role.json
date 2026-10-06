@@ -1,0 +1,6 @@
+{
+  "request": {"requests":[{"custom_id":"a","params":{"model":"m","max_tokens":5,"messages":[{"role":"tool","content":"x"}]}}]},
+  "expect": {
+    "request_error": "requests.0.params: messages.0.role: unknown role \"tool\""
+  }
+}

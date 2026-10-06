@@ -1,6 +1,6 @@
 MODULE  := github.com/Tuskira/tusk-ai-secured-gateway
 BINARY  := gateway
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: build build-go-only run test lint vuln ci snapshot docker-build compose-up compose-down tidy notices ui-install ui-dev ui-build examples-smoke examples-k8s

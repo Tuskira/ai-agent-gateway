@@ -69,6 +69,12 @@ type Config struct {
 	// limits.go). Nil = no per-key limits are enforced. The caller builds
 	// it (NewLimiter) so it can also read Limiter.Status for /health.
 	Limiter *Limiter
+
+	// DetectionTee hands each relayed call to a detection agent, off the
+	// request path (llm_proxy.detection; see NewDetectionTee). Nil = off.
+	// The caller owns it: it reads Status for /health and calls Close at
+	// shutdown.
+	DetectionTee *DetectionTee
 }
 
 // Handler builds the provider slice, wires the router and middleware chain, and
@@ -118,6 +124,7 @@ func Handler(cfg Config, rec Recorder) (http.Handler, error) {
 		registry:       cfg.Registry,
 		bedrock:        bedrock,
 		limiter:        cfg.Limiter,
+		tee:            cfg.DetectionTee,
 	}
 	return chain(rt, cfg), nil
 }

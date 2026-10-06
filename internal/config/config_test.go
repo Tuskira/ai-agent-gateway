@@ -31,6 +31,10 @@ func TestDefault(t *testing.T) {
 	if cfg.LLMProxy.PricingFile != "" {
 		t.Errorf("LLMProxy.PricingFile default should be empty (embedded card only), got %q", cfg.LLMProxy.PricingFile)
 	}
+	if d := cfg.LLMProxy.Detection; d.AgentURL != "" || d.Timeout != 5*time.Second || d.QueueSize != 1024 ||
+		d.QueueBytes != 256<<20 || d.MaxInFlight != 8 {
+		t.Errorf("LLMProxy.Detection defaults = %+v", d)
+	}
 	if cfg.Database.Host != "localhost" || cfg.Database.Port != 5432 || cfg.Database.SSLMode != "require" {
 		t.Errorf("Database defaults = %+v", cfg.Database)
 	}
@@ -277,6 +281,33 @@ func TestLoad_EnvOverlay_BodyStore(t *testing.T) {
 	}
 }
 
+func TestLoad_EnvOverlay_Detection(t *testing.T) {
+	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_AGENT_URL", "http://127.0.0.1:8090")
+	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_TIMEOUT", "2s")
+	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_QUEUE_SIZE", "16")
+	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_QUEUE_BYTES", "1048576")
+	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_MAX_IN_FLIGHT", "3")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if d := cfg.LLMProxy.Detection; d.AgentURL != "http://127.0.0.1:8090" || d.Timeout != 2*time.Second ||
+		d.QueueSize != 16 || d.QueueBytes != 1<<20 || d.MaxInFlight != 3 {
+		t.Errorf("Detection = %+v", d)
+	}
+}
+
+// A credential put in agent_url by mistake is refused without echoing it.
+func TestValidate_DetectionAgentURLNotEchoed(t *testing.T) {
+	cfg := Default()
+	cfg.LLMProxy.Detection.AgentURL = "http://user:s3cret@127.0.0.1:8090"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "agent_url") || strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("Validate() = %v; want an error that does not echo the URL", err)
+	}
+}
+
 func TestLoad_EnvOverlayInvalidValue(t *testing.T) {
 	t.Setenv("GATEWAY_DATABASE_PORT", "not-a-number")
 	if _, err := Load(""); err == nil {
@@ -352,6 +383,73 @@ func TestValidate(t *testing.T) {
 			name: "invalid upstream url",
 			mutate: func(c *Config) {
 				c.LLMProxy.UpstreamBaseURL = "not a url"
+			},
+			wantErr: true,
+		},
+		{
+			name: "detection agent url not a url",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "not a url"
+			},
+			wantErr: true,
+		},
+		{
+			name: "detection agent url not http",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "unix:///run/agent.sock"
+			},
+			wantErr: true,
+		},
+		{
+			name: "detection agent url",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "http://127.0.0.1:8090"
+			},
+			wantErr: false,
+		},
+		{
+			name: "detection timeout not positive",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "http://127.0.0.1:8090"
+				c.LLMProxy.Detection.Timeout = 0
+			},
+			wantErr: true,
+		},
+		{
+			name: "detection agent url with userinfo",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "http://user:pass@127.0.0.1:8090"
+			},
+			wantErr: true,
+		},
+		{
+			name: "detection agent url relative",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "/v1/turns"
+			},
+			wantErr: true,
+		},
+		{
+			name: "detection queue_size not positive",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "http://127.0.0.1:8090"
+				c.LLMProxy.Detection.QueueSize = 0
+			},
+			wantErr: true,
+		},
+		{
+			name: "detection queue_bytes not positive",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "http://127.0.0.1:8090"
+				c.LLMProxy.Detection.QueueBytes = -1
+			},
+			wantErr: true,
+		},
+		{
+			name: "detection max_in_flight not positive",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "http://127.0.0.1:8090"
+				c.LLMProxy.Detection.MaxInFlight = 0
 			},
 			wantErr: true,
 		},

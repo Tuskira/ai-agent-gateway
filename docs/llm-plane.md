@@ -284,6 +284,80 @@ is checked first, then the model the request names.
 - `budget_denials` / `rpm_denials` in `/health` count key and model
   denials together.
 
+## Detection agent
+
+With `llm_proxy.detection.agent_url` set, the gateway tees each call it
+relays to a detection agent running next to it. This is detection only:
+the turn is posted after the call has completed, nothing on the request
+path waits for the agent, and the gateway never blocks or changes a call
+because of it. Off when `agent_url` is empty (the default).
+
+What leaves the host: nothing. The agent gets each call's raw request body
+and the start of its response, unredacted, so it must be a trusted process
+on the same host or pod, reached over loopback; see
+[security-model.md](security-model.md#outbound-requests-ssrf).
+
+Which calls are sent: every `POST` the plane relays to an upstream, on
+every provider route (Anthropic `/v1/messages`, OpenAI
+`/openai/v1/chat/completions` and `/openai/v1/responses`, Bedrock
+`/model/{id}/invoke` and `converse`, Gemini `…:generateContent`, …),
+except the free utility endpoints (token counting and Message Batches
+management). There is no per-route allow-list in the gateway; the agent
+decides what it can read. Not sent: `GET` calls such as model listing, and
+calls the gateway answered itself without reaching an upstream (a limit
+denial, a registry error, an unbuildable target).
+
+Flow for one call:
+
+1. The call is relayed and captured as usual (bodies are teed whether or
+   not `capture.store_bodies` is on).
+2. Right after its LLM log row is written, the turn is put on a bounded
+   in-memory queue and the handler returns. If the queue is full the turn
+   is dropped.
+3. A worker posts the turn to the agent. An error or a status other than
+   `202` is logged and the turn is dropped; there is no retry.
+
+### Contract
+
+**`POST {agent_url}/v1/turns`**, `Content-Type: application/json`, one
+complete turn per call; the agent answers `202 Accepted` and works on it
+asynchronously. The gateway ignores the response body. Byte fields are
+standard base64 of the raw bytes, so a body that is not valid UTF-8
+survives. Canonical examples (shared with the agent's tests) live in
+`internal/llmplane/testdata/detection/`: `turn.json` and
+`turn_no_response.json`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `v` | number | Contract version, `1`. |
+| `id` | string | Gateway request id; also the id of the call's LLM log row. |
+| `tenant_id` | string | |
+| `session_id` | string | Omitted when the client sent none. |
+| `key_id` | string | Gateway API key id; omitted when unknown. |
+| `principal` | string | Authenticated principal; omitted when unknown. |
+| `model` | string | Model the client asked for; omitted when the call names none. |
+| `path` | string | Request path, e.g. `/v1/messages`. |
+| `at` | string | RFC 3339 time the gateway received the call. |
+| `status_code` | number | Status the upstream answered with (what the client got). |
+| `request` | base64 | The client's request body, exactly as received, in full. |
+| `response` | base64 | The first 1 MiB (1048576 bytes) of what the client received. Present only when the upstream answered `2xx` **and** the relay to the client completed; absent for an error status, a client that disconnected mid-stream, an upstream that failed mid-body, or the stream deadline. A partial response is never sent. |
+
+### Queue, limits and drops
+
+- At most `queue_size` (default `1024`) turns wait, and the turns waiting
+  or being posted hold at most `queue_bytes` (default 256 MiB) of request
+  and response bytes. A turn past either cap is dropped.
+- `max_in_flight` (default `8`) workers post at once; each post is bounded
+  by `timeout` (default `5s`).
+- Drops and failed posts are counted and logged at most once a minute
+  each. The LLM plane's `/health` reports them under `detection`:
+  `sent`, `dropped` (queue full, or shutdown), `failed` (agent error,
+  timeout, non-`202`), `queued` and `held_bytes`.
+- At shutdown, after the plane stops taking calls, the queue is drained
+  for up to 5 seconds; what is left is dropped with one log line.
+- The agent should accept fast and shed load itself; the gateway never
+  waits for it.
+
 ## Streaming
 
 The plane relays the upstream response to the client via

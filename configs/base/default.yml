@@ -89,6 +89,18 @@ llm_proxy:
     # this setting -- see docs/llm-plane.md, "Capture: durable write vs. analytics tee".
     store: postgres
 
+  # Detection agent (see docs/llm-plane.md "Detection agent"): each relayed
+  # call is posted to a LOCAL agent after it completes, with its raw request
+  # body and the first 1 MiB of its response. Detection only: nothing waits
+  # on the agent and nothing is blocked; a full queue drops the turn.
+  # Empty agent_url (the default) turns it off.
+  # detection:
+  #   agent_url: ""            # e.g. http://127.0.0.1:8090
+  #   timeout: 5s              # one post to the agent
+  #   queue_size: 1024         # turns waiting; more are dropped
+  #   queue_bytes: 268435456   # 256 MiB of bodies held; more are dropped
+  #   max_in_flight: 8         # posts at once
+
   # Optional path to a JSON file, in the same shape as
   # pkg/pricing/prices.json, that overrides the embedded per-model cost
   # rate card. At startup, if set, its models are merged OVER the embedded

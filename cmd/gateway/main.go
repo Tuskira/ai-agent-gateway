@@ -70,6 +70,9 @@ const (
 	dbConnectTimeout   = 10 * time.Second
 	defaultReadTimeout = 30 * time.Second
 	defaultIdleTimeout = 120 * time.Second
+	// detectionDrainTimeout bounds posting the detection tee's queued turns
+	// at shutdown; what is left after it is dropped.
+	detectionDrainTimeout = 5 * time.Second
 )
 
 func main() {
@@ -534,6 +537,21 @@ func run() error {
 		llmCfg.ClientIP = clientIPs.IP
 		llmCfg.Limiter = limiter
 		llmCfg.Registry = modelRegistry
+		if d := cfg.LLMProxy.Detection; d.AgentURL != "" {
+			tee := llmplane.NewDetectionTee(llmplane.DetectionTeeConfig{
+				AgentURL: d.AgentURL, Timeout: d.Timeout, QueueSize: d.QueueSize,
+				QueueBytes: d.QueueBytes, MaxInFlight: d.MaxInFlight,
+			})
+			// Runs after supervisor.Run has stopped the planes, so no handler
+			// is still offering turns: drain for a bounded time, drop the rest.
+			defer func() {
+				ctx, cancel := context.WithTimeout(context.Background(), detectionDrainTimeout)
+				defer cancel()
+				tee.Close(ctx)
+			}()
+			llmCfg.DetectionTee = tee
+			logger.Info("llm detection tee enabled", "agent_url", d.AgentURL)
+		}
 		core, err := llmplane.Handler(llmCfg, recorder)
 		if err != nil {
 			return fmt.Errorf("build llm plane: %w", err)
@@ -541,9 +559,13 @@ func run() error {
 		llmMux := http.NewServeMux()
 		llmMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			health := map[string]any{
 				"status": "ok", "plane": "llm", "version": cfg.Service.Version, "limits": limiter.Status(),
-			})
+			}
+			if llmCfg.DetectionTee != nil {
+				health["detection"] = llmCfg.DetectionTee.Status()
+			}
+			_ = json.NewEncoder(w).Encode(health)
 		})
 		llmMux.Handle("/", authMiddleware(core))
 

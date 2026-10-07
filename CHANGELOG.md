@@ -155,6 +155,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the raw bytes for a turn of text). Inline judgments on the legacy
   `/v1/turns/request` are now bounded to `AGENT_MAX_IN_FLIGHT` at once;
   past that a request fails open and is judged in the background.
+- **Detection agent: a down engine no longer floods the log, and drops are
+  counted.** Each failed engine call logged a warning; now each kind of
+  failure (`unreachable`, `status <code>`, `decode`, `version`) is logged
+  at most once a minute. `GET /healthz` answers JSON with `judged`,
+  `dropped_engine_down`, `dropped_queue_full` and `not_judged_sent`
+  (it answered the text `ok`).
 - **Detection agent robustness.** A panic while preparing a turn is
   recovered in the background workers and on the inline path: logged at
   `error` with its stack, the stage sent as `not_judged`, the process kept

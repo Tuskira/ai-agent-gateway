@@ -709,11 +709,11 @@ func TestVersionWarningRateLimited(t *testing.T) {
 	if n := logs.count("upgrade the engine"); n != 2 {
 		t.Errorf("%d version warnings after a minute, want 2", n)
 	}
-	// Other failures are not rate limited.
+	// Each kind of failure has its own minute: another kind is logged.
 	a.warn("agent: test failure", errors.New("boom"))
 	a.warn("agent: test failure", errors.New("boom"))
-	if n := logs.count("test failure"); n != 2 {
-		t.Errorf("%d other warnings, want 2", n)
+	if n := logs.count("test failure"); n != 1 {
+		t.Errorf("%d other warnings, want 1", n)
 	}
 }
 
@@ -1129,4 +1129,79 @@ func TestInlineBounded(t *testing.T) {
 	if len(a.inline) != 0 {
 		t.Errorf("%d inline slots held after the judgments", len(a.inline))
 	}
+}
+
+// getHealth is the agent's /healthz.
+func getHealth(t *testing.T, url string) Health {
+	t.Helper()
+	resp, err := http.Get(url + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var h Health
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil || resp.StatusCode != http.StatusOK || h.Status != "ok" {
+		t.Fatalf("healthz: %d %+v %v", resp.StatusCode, h, err)
+	}
+	return h
+}
+
+// waitHealth waits until /healthz reports want.
+func waitHealth(t *testing.T, url string, want Health) {
+	t.Helper()
+	want.Status = "ok"
+	var h Health
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if h = getHealth(t, url); h == want {
+			return
+		}
+	}
+	t.Fatalf("healthz = %+v; want %+v", h, want)
+}
+
+// With the engine down, every turn's stage is dropped: logged once a
+// minute (per kind of failure), not once per call, and counted on
+// /healthz.
+func TestEngineDownWarnedOnceAndCounted(t *testing.T) {
+	logs := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	down := httptest.NewServer(http.NotFoundHandler())
+	down.Close() // nothing listens there now
+	a := New(Config{EngineURL: down.URL, Token: "x"})
+	srv := httptest.NewServer(a.Handler())
+	t.Cleanup(func() { srv.Close(); a.Wait() })
+	for range 5 {
+		postTurn(t, srv.URL, fullTurn("hello", false))
+	}
+	waitHealth(t, srv.URL, Health{DroppedEngineDown: 5})
+	if n := logs.count("background judgment failed"); n != 1 {
+		t.Errorf("%d warnings for 5 drops, want 1", n)
+	}
+	if n := logs.count("error_kind=unreachable"); n != 1 {
+		t.Errorf("%d unreachable warnings, want 1", n)
+	}
+}
+
+// /healthz counts judged stages, not-judged turns the engine accepted and
+// turns shed by a full queue.
+func TestHealthCounts(t *testing.T) {
+	f := newFakeEngine(t)
+	f.hold = make(chan struct{})
+	_, url := startAgent(t, f, Config{MaxInFlight: 1, QueueSize: 1})
+	waitHealth(t, url, Health{})
+	postTurn(t, url, fullTurn("first", true)) // held in the worker
+	f.next(t)
+	postTurn(t, url, fullTurn("queued", false))
+	postTurn(t, url, fullTurn("shed", false)) // queue full: the marker
+	if got := f.next(t); got.req.Turn.NotJudged != errJudgingBusy {
+		t.Fatalf("detect = %s; want the marker", got.raw)
+	}
+	waitHealth(t, url, Health{DroppedQueueFull: 1, NotJudgedSent: 1})
+	f.release()
+	f.next(t) // first's response stage
+	f.next(t) // queued
+	waitHealth(t, url, Health{Judged: 3, DroppedQueueFull: 1, NotJudgedSent: 1})
 }

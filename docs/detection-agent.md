@@ -246,9 +246,13 @@ forwarded (`inline: true`) and the background queue.
 Nothing the agent or engine does can affect a call: the gateway has already
 finished it before the turn is posted.
 
-- **Engine down, slow, non-`200`, or an unreadable answer:** logged as a
-  warning, the stage is dropped.
-- **Queue full:** `202`, and one `not_judged` marker as above.
+- **Engine down, slow, non-`200`, or an unreadable answer:** the stage is
+  dropped and counted in `/healthz` (`dropped_engine_down`). It is logged
+  as a warning at most once a minute for each kind of failure
+  (`error_kind`: `unreachable`, `status <code>`, `decode`, `version`), not
+  once per call.
+- **Queue full:** `202`, and one `not_judged` marker as above; counted in
+  `/healthz` (`dropped_queue_full`).
 - **A bug while preparing a turn (a panic):** recovered, in a worker and on
   the inline path. It is logged at `error` level with its stack (the panic
   value only when the Go runtime raised it, since another may quote the
@@ -342,8 +346,19 @@ is not positive, fails startup.
 | `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract only. |
 | `AGENT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (any case). At `debug` the agent logs one line per judged turn: `tenant`, `request_id`, `stages` (e.g. `request,response`), `returned` (judgments the engine answered), `dropped` (judgments that failed), `bytes` (the turn's raw request plus response) and `prepare_ms`. The line carries no text of the turn. |
 
-The agent logs to stderr through `log/slog`, as text. `GET /healthz` answers `200 ok`
-and checks nothing else (not the engine).
+The agent logs to stderr through `log/slog`, as text. `GET /healthz` answers `200`
+with the agent's counts since it started, as JSON, and checks nothing else
+(not the engine):
+
+```json
+{"status":"ok","judged":120,"dropped_engine_down":0,"dropped_queue_full":0,"not_judged_sent":2}
+```
+
+`judged` is stages the engine accepted; `not_judged_sent` is `not_judged`
+turns it accepted (a deadline, a panic, the queue-full marker, a batch past
+its cap); `dropped_engine_down` is stages (and markers) dropped because the
+engine could not be reached or answered other than `200`;
+`dropped_queue_full` is turns shed because the queue was full.
 
 ## The gateway to agent side
 
@@ -393,7 +408,8 @@ the host is as described [above](#what-leaves-the-host): the request stage,
 and the response stage when there is a response, each redacted. The
 `status_code` and the raw bodies stay on the host.
 
-`GET /healthz` answers `200 ok`.
+`GET /healthz` answers `200` with the agent's counts as JSON (see
+[Configuration](#configuration)).
 
 ### Inline contract (not used by the gateway's tee)
 

@@ -126,7 +126,10 @@ to every stage, including those of `POST /v1/turns`. The agent also caches
 scans of strings of 1 KiB or more across calls (an agent client resends its
 history every call, so it is scanned once); only a scan that ran to the end
 is cached. The cache holds raw values, so it is on only in the agent
-(`turn.EnableScanCache`) and never in an engine importing `turn`.
+(`turn.EnableScanCache`) and never in an engine importing `turn`. It keeps
+copies of the values found, never the scanned text, and is bounded by
+`AGENT_SCAN_CACHE_BYTES` (64 MiB by default) as well as by 8192 entries;
+when either is full it drops entries until both are at half.
 
 The scanner ignores gitleaks' inline allow comment (`gitleaks:allow`): in a
 repository it marks a known false positive, but in a call it is only text
@@ -323,6 +326,7 @@ is not positive, fails startup.
 | `AGENT_MAX_IN_FLIGHT` | `256` | Background judgments running at once (also the engine connection pool size). |
 | `AGENT_QUEUE_SIZE` | `1024` | Background turns waiting for a worker. |
 | `AGENT_QUEUE_BYTES` | `268435456` (256 MiB) | Raw request plus response bytes held by queued turns. |
+| `AGENT_SCAN_CACHE_BYTES` | `67108864` (64 MiB) | Memory the secret-scan cache may use for the values it keeps (see [What leaves the host](#what-leaves-the-host)). |
 | `AGENT_ENGINE_TIMEOUT` | `8s` | Budget for one inline judgment (a Go duration such as `8s`). With the 1 second policy lookup it fits a gateway's 10 second wait for a verdict with a second to spare. Inline contract only. |
 | `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract only. |
 | `AGENT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (any case). At `debug` the agent logs one line per judged turn: `tenant`, `request_id`, `stages` (e.g. `request,response`), `returned` (judgments the engine answered), `dropped` (judgments that failed), `bytes` (the turn's raw request plus response) and `prepare_ms`. The line carries no text of the turn. |

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
@@ -508,9 +509,14 @@ func splitAt(text, v string, i int) (int, bool) {
 // scanCache keeps the scan of long strings across calls: an agent resends
 // its whole history on every call, so the same tool outputs and messages
 // come back turn after turn, and scanning them (every byte of each) is the
-// costly part of preparing a turn. Keyed by the text's SHA-256, bounded by
-// entries; when full, half is dropped. Only a scan that ran to the end is
-// kept: one a deadline stopped is not every secret of its text.
+// costly part of preparing a turn. Keyed by the text's SHA-256, it keeps
+// copies of the values found, never the text: a value found by the scan is
+// a substring of its text, so keeping it as it is would keep the whole
+// text alive (200 tool outputs of 1 MiB, 200 MiB). It is bounded by
+// entries (cacheEntries) and by the bytes of what it keeps (scanCacheBytes,
+// SetScanCacheBytes); when either is full, entries are dropped until both
+// are at half. Only a scan that ran to the end is kept: one a deadline
+// stopped is not every secret of its text.
 //
 // It holds raw secret values (the matches), so it is opt-in: off unless the
 // agent, which runs on the customer's host, calls EnableScanCache. The
@@ -523,15 +529,48 @@ var scanCacheOn atomic.Bool
 // only: it keeps raw secret values in memory (see scanCache).
 func EnableScanCache() { scanCacheOn.Store(true) }
 
+// DefaultScanCacheBytes is the scan cache's byte budget unless
+// SetScanCacheBytes sets another.
+const DefaultScanCacheBytes = 64 << 20
+
+// scanCacheBytes is the scan cache's byte budget.
+var scanCacheBytes atomic.Int64
+
+func init() { scanCacheBytes.Store(DefaultScanCacheBytes) }
+
+// SetScanCacheBytes sets the scan cache's budget: how many bytes the
+// entries it keeps may take (the values found and each entry's own
+// overhead). A value of 0 or less is the default. Call it at start-up,
+// before the first Prepare*.
+func SetScanCacheBytes(n int64) {
+	if n <= 0 {
+		n = DefaultScanCacheBytes
+	}
+	scanCacheBytes.Store(n)
+}
+
 var scanCache = struct {
 	sync.Mutex
-	m map[[sha256.Size]byte][]secretMatch
+	m     map[[sha256.Size]byte][]secretMatch
+	bytes int64 // entryBytes of every entry of m
 }{m: map[[sha256.Size]byte][]secretMatch{}}
 
 const (
 	cacheMinText = 1 << 10 // shorter: hashing costs about what scanning does
 	cacheEntries = 8192
+	// cacheEntryOverhead is what an entry takes besides its values: the
+	// key, the slice header and the map's bookkeeping, about.
+	cacheEntryOverhead = sha256.Size + 24 + 48
 )
+
+// entryBytes is what an entry of ms takes in scanCache.
+func entryBytes(ms []secretMatch) int64 {
+	n := int64(cacheEntryOverhead + cap(ms)*int(unsafe.Sizeof(secretMatch{})))
+	for _, m := range ms {
+		n += int64(len(m.kind) + len(m.secret))
+	}
+	return n
+}
 
 // scanText is the scan of one string of a body, every byte of it, through
 // scanCache when cache is set. Past ctx it returns ctx's error. The slice
@@ -557,19 +596,41 @@ func scanText(ctx context.Context, text string, cache bool) ([]secretMatch, erro
 	if err != nil {
 		return nil, err
 	}
-	ms = slices.Clip(ms)
+	// Copies: each value is a substring of text, and keeping it would keep
+	// all of text.
+	kept := make([]secretMatch, len(ms))
+	for i, m := range ms {
+		kept[i] = secretMatch{kind: strings.Clone(m.kind), secret: strings.Clone(m.secret)}
+	}
+	cacheStore(k, kept)
+	return kept, nil
+}
+
+// cacheStore keeps ms under k, first dropping entries (map order is
+// random) until both the entry count and the bytes are at half their
+// bound when either would go past it. An entry larger than half the
+// budget is not kept.
+func cacheStore(k [sha256.Size]byte, ms []secretMatch) {
+	n, budget := entryBytes(ms), scanCacheBytes.Load()
+	if n > budget/2 {
+		return
+	}
 	scanCache.Lock()
-	if len(scanCache.m) >= cacheEntries {
-		i := 0
-		for key := range scanCache.m { // map order is random: drop about half
-			if i++; i%2 == 0 {
-				delete(scanCache.m, key)
+	defer scanCache.Unlock()
+	if _, ok := scanCache.m[k]; ok {
+		return
+	}
+	if len(scanCache.m) >= cacheEntries || scanCache.bytes+n > budget {
+		for key, v := range scanCache.m {
+			if len(scanCache.m) <= cacheEntries/2 && scanCache.bytes+n <= budget/2 {
+				break
 			}
+			scanCache.bytes -= entryBytes(v)
+			delete(scanCache.m, key)
 		}
 	}
 	scanCache.m[k] = ms
-	scanCache.Unlock()
-	return ms, nil
+	scanCache.bytes += n
 }
 
 // validUTF8 is s with each run of invalid UTF-8 replaced by U+FFFD.

@@ -21,6 +21,7 @@ func prepareState(st *State, stage Stage) PreparedTurn {
 func resetScanCache() {
 	scanCache.Lock()
 	clear(scanCache.m)
+	scanCache.bytes = 0
 	scanCache.Unlock()
 }
 

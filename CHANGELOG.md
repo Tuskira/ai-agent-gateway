@@ -133,6 +133,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Detection agent: the secret-scan cache no longer keeps whole texts
+  alive, and is bounded by bytes.** Each cached value was a substring of
+  the text it was found in, so the cache pinned every scanned text (200
+  tool outputs of 1 MiB with one secret each kept 199 MiB live; now under
+  1 MiB). Values are now copied, and the cache is bounded by
+  `AGENT_SCAN_CACHE_BYTES` (default 64 MiB) as well as by 8192 entries.
 - **Detection agent robustness.** A panic while preparing a turn is
   recovered in the background workers and on the inline path: logged at
   `error` with its stack, the stage sent as `not_judged`, the process kept

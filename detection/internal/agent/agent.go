@@ -70,6 +70,10 @@ type Config struct {
 	// hostile body gets near it). Past it the turn is sent as not judged,
 	// with the rest of the stage's budget left to send it. Default 4s.
 	PrepareTimeout time.Duration
+	// ScanCacheBytes is the budget of the secret-scan cache
+	// (turn.SetScanCacheBytes). The cache is process-wide, so the command
+	// applies it, not New; default turn.DefaultScanCacheBytes (64 MiB).
+	ScanCacheBytes int
 }
 
 // Agent serves the gateway's turns and talks to the engine.

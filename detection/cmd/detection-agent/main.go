@@ -37,6 +37,7 @@ func run() error {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	turn.EnableScanCache() // the agent resends history every call; the engine never caches
+	turn.SetScanCacheBytes(int64(cfg.ScanCacheBytes))
 	a := agent.New(cfg)
 	srv := &http.Server{
 		Addr:              listen,
@@ -88,9 +89,10 @@ func config() (cfg agent.Config, listen string, level slog.Level, err error) {
 		}
 	}
 	for name, n := range map[string]*int{
-		"AGENT_MAX_IN_FLIGHT": &cfg.MaxInFlight,
-		"AGENT_QUEUE_SIZE":    &cfg.QueueSize,
-		"AGENT_QUEUE_BYTES":   &cfg.QueueBytes,
+		"AGENT_MAX_IN_FLIGHT":    &cfg.MaxInFlight,
+		"AGENT_QUEUE_SIZE":       &cfg.QueueSize,
+		"AGENT_QUEUE_BYTES":      &cfg.QueueBytes,
+		"AGENT_SCAN_CACHE_BYTES": &cfg.ScanCacheBytes,
 	} {
 		if v := os.Getenv(name); v != "" {
 			if *n, err = strconv.Atoi(v); err != nil || *n <= 0 {

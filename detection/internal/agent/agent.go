@@ -4,7 +4,7 @@
 //
 // The gateway's tee posts each completed call to POST /v1/turns; that is
 // detection only, always judged in the background: queued up to queue_size
-// turns and queue_bytes of raw turn bytes, judged at most max_in_flight at a
+// turns and queue_bytes of what they hold (turnBytes), judged at most max_in_flight at a
 // time. The older inline pair (/v1/turns/request, /v1/turns/response) is
 // kept for a gateway that holds a call for a verdict: there the engine's
 // /v1/policy can ask for a request to be judged before forwarding.
@@ -26,6 +26,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/detection/turn"
 	"github.com/Tuskira/tusk-ai-secured-gateway/detection/wire"
@@ -60,7 +61,7 @@ type Config struct {
 	Token       string
 	MaxInFlight int // background judgments at once; default 256
 	QueueSize   int // background turns waiting for a judgment; default 1024
-	QueueBytes  int // raw request+response bytes of the queued turns; default 256 MiB
+	QueueBytes  int // bytes the queued turns hold (turnBytes); default 256 MiB
 	// EngineTimeout is the inline judgment budget; default 8s, so the policy
 	// lookup (1s) and it fit a gateway's 10s wait with a second to spare.
 	EngineTimeout time.Duration
@@ -70,6 +71,10 @@ type Config struct {
 	// hostile body gets near it). Past it the turn is sent as not judged,
 	// with the rest of the stage's budget left to send it. Default 4s.
 	PrepareTimeout time.Duration
+	// ScanCacheBytes is the budget of the secret-scan cache
+	// (turn.SetScanCacheBytes). The cache is process-wide, so the command
+	// applies it, not New; default turn.DefaultScanCacheBytes (64 MiB).
+	ScanCacheBytes int
 }
 
 // Agent serves the gateway's turns and talks to the engine.
@@ -85,21 +90,65 @@ type Agent struct {
 	workers sync.WaitGroup
 	stop    sync.Once
 
+	// inline bounds the inline judgments (POST /v1/turns/request for an
+	// inline tenant) running at once, MaxInFlight: each prepares on the
+	// handler's goroutine, which no queue bounds.
+	inline chan struct{}
+
 	mu       sync.Mutex
 	policies map[string]cachedPolicy
 	now      func() time.Time
-	// versionWarned is when (unix ns) the wire-version mismatch was last
-	// logged: it fails every call until one side is upgraded, so it is
-	// logged once a minute, not once per call.
-	versionWarned atomic.Int64
+	// warned is when (unix ns) a failed engine call of each kind
+	// (engineErrKind) was last logged: a down engine fails every call, so
+	// each kind is logged once a minute, not once per call.
+	warnMu sync.Mutex
+	warned map[string]int64
+	// stats are the counts /healthz reports.
+	stats stats
 	// prepareRequest prepares an inline request (a test replaces it).
 	prepareRequest func(context.Context, []byte) turn.PreparedTurn
+}
+
+// stats are the agent's counts since it started, served on /healthz:
+// stages the engine accepted judged, not-judged turns it accepted (a
+// deadline, a panic, the queue-full marker, a batch past its cap), stages
+// dropped because the engine could not be reached or failed, and turns
+// shed because the queue was full.
+type stats struct {
+	judged            atomic.Int64
+	notJudgedSent     atomic.Int64
+	droppedEngineDown atomic.Int64
+	droppedQueueFull  atomic.Int64
+}
+
+// Health is the JSON of GET /healthz.
+type Health struct {
+	Status            string `json:"status"`
+	Judged            int64  `json:"judged"`
+	DroppedEngineDown int64  `json:"dropped_engine_down"`
+	DroppedQueueFull  int64  `json:"dropped_queue_full"`
+	NotJudgedSent     int64  `json:"not_judged_sent"`
+}
+
+// Health is the agent's counts as /healthz serves them.
+func (a *Agent) Health() Health {
+	return Health{Status: "ok", Judged: a.stats.judged.Load(), DroppedEngineDown: a.stats.droppedEngineDown.Load(),
+		DroppedQueueFull: a.stats.droppedQueueFull.Load(), NotJudgedSent: a.stats.notJudgedSent.Load()}
+}
+
+// sent counts a turn the engine accepted.
+func (a *Agent) sent(pt turn.PreparedTurn) {
+	if pt.NotJudged != "" {
+		a.stats.notJudgedSent.Add(1)
+	} else {
+		a.stats.judged.Add(1)
+	}
 }
 
 // job is one background unit: the stages of one call (of a batch, one per
 // request), judged in order by one worker.
 type job struct {
-	size   int64 // raw bytes held, counted in Agent.queued
+	size   int64 // bytes held (turnBytes), counted in Agent.queued
 	stages []stage
 }
 
@@ -152,7 +201,9 @@ func New(cfg Config) *Agent {
 		cfg:      cfg,
 		client:   &http.Client{Transport: t},
 		queue:    make(chan job, cfg.QueueSize),
+		inline:   make(chan struct{}, cfg.MaxInFlight),
 		policies: map[string]cachedPolicy{},
+		warned:   map[string]int64{},
 		now:      time.Now,
 
 		prepareRequest: turn.PrepareRequestContext,
@@ -167,14 +218,14 @@ func New(cfg Config) *Agent {
 	return a
 }
 
-// Handler serves the gateway's turns and /healthz.
+// Handler serves the gateway's turns and /healthz (Health, as JSON).
 func (a *Agent) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+wire.PathTurns, a.turns)
 	mux.HandleFunc("POST "+wire.PathTurnRequest, a.turnRequest)
 	mux.HandleFunc("POST "+wire.PathTurnResponse, a.turnResponse)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		answer(w, http.StatusOK, []byte("ok\n"))
+		answerJSON(w, a.Health())
 	})
 	return mux
 }
@@ -242,7 +293,7 @@ func (a *Agent) turns(w http.ResponseWriter, r *http.Request) {
 			}))
 		}
 	}
-	queued := a.background(len(t.Request)+len(t.Response), stages...)
+	queued := a.background(turnBytes(t), stages...)
 	answer(w, http.StatusAccepted, nil)
 	if !queued {
 		a.notJudged(m, turn.StageRequest)
@@ -290,6 +341,55 @@ func batchStages(t wire.Turn, m wire.Meta) []stage {
 	return stages
 }
 
+// turnBytes is what a queued gateway turn holds until its judgment is
+// done, counted against QueueBytes: the decoded raw request and response,
+// and the canonical forms its stages read (the conversation and answer,
+// or the batch items judged), which hold the text again. The JSON the
+// handler decoded them from is not held: it is garbage once the handler
+// returns.
+func turnBytes(t wire.Turn) int {
+	n := int64(len(t.Request) + len(t.Response))
+	if len(t.Items) > 0 {
+		for _, it := range t.Items[:min(len(t.Items), wire.MaxBatchItems)] {
+			n += int64(len(it.CustomID)) + conversationBytes(&it.Conversation)
+		}
+		return int(n)
+	}
+	c := t.Call()
+	n += conversationBytes(c.Conversation)
+	if c.Answer != nil {
+		n += int64(unsafe.Sizeof(*c.Answer)) + int64(len(c.Answer.StopReason)) + blocksBytes(c.Answer.Content)
+	}
+	return int(n)
+}
+
+// conversationBytes is the memory c holds, about: its strings and blocks.
+func conversationBytes(c *wire.Conversation) int64 {
+	if c == nil {
+		return 0
+	}
+	n := int64(unsafe.Sizeof(*c)) + int64(len(c.History)) + blocksBytes(c.System)
+	n += int64(cap(c.Messages)) * int64(unsafe.Sizeof(wire.Message{}))
+	for _, m := range c.Messages {
+		n += int64(len(m.Role)) + blocksBytes(m.Content)
+	}
+	for _, t := range c.Tools {
+		n += int64(unsafe.Sizeof(t)) + int64(len(t))
+	}
+	return n
+}
+
+// blocksBytes is the memory bs holds, about, nested blocks included.
+func blocksBytes(bs []wire.ContentBlock) int64 {
+	n := int64(cap(bs)) * int64(unsafe.Sizeof(wire.ContentBlock{}))
+	for _, b := range bs {
+		n += int64(len(b.Type) + len(b.Text) + len(b.ID) + len(b.Name) + len(b.Input) +
+			len(b.ToolUseID) + len(b.MediaType) + len(b.Raw))
+		n += blocksBytes(b.Content)
+	}
+	return n
+}
+
 func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
 	t, ok := decodeTurn(w, r)
 	if !ok {
@@ -301,7 +401,11 @@ func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
 	p := a.policy(r.Context(), t.TenantID)
 	v := wire.Verdict{WantResponse: p.WantResponse}
 	m := wire.MetaOf(t)
-	if p.Inline {
+	// An inline tenant's request is judged here, MaxInFlight at most at
+	// once; past that it goes to the background queue unjudged inline
+	// (fails open, as an engine failure does).
+	if p.Inline && a.acquireInline() {
+		defer func() { <-a.inline }()
 		ctx, cancel := context.WithTimeout(r.Context(), a.cfg.EngineTimeout)
 		defer cancel()
 		v.Block = a.judgeInline(ctx, m, t.Request)
@@ -341,6 +445,16 @@ func decodeTurn(w http.ResponseWriter, r *http.Request) (wire.TurnRequest, bool)
 	return t, true
 }
 
+// acquireInline takes an inline slot if one is free.
+func (a *Agent) acquireInline() bool {
+	select {
+	case a.inline <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
 // judgeInline judges a request before it is forwarded. Any engine failure
 // fails open: the call goes through unjudged rather than being refused.
 func (a *Agent) judgeInline(ctx context.Context, m wire.Meta, body []byte) *wire.Block {
@@ -352,8 +466,11 @@ func (a *Agent) judgeInline(ctx context.Context, m wire.Meta, body []byte) *wire
 	res, err := a.detect(ctx, wire.DetectRequest{Sync: true, Meta: m, Turn: pt})
 	returned := 1
 	if err != nil {
+		a.stats.droppedEngineDown.Add(1)
 		a.warn("agent: inline judgment failed; failing open", err, "request_id", m.RequestID, "tenant", m.TenantID)
 		returned = 0
+	} else {
+		a.sent(pt)
 	}
 	debugTurn(m, string(turn.StageRequest), returned, 1-returned, len(body), prepared)
 	if res == nil {
@@ -362,7 +479,7 @@ func (a *Agent) judgeInline(ctx context.Context, m wire.Meta, body []byte) *wire
 	return res.Blocking
 }
 
-// background queues the stages of one call, as one job of size raw bytes,
+// background queues the stages of one call, as one job of size bytes,
 // to be judged off the request path. When the queue is full (QueueSize
 // jobs, or QueueBytes of them) it reports false and the caller sends the
 // not-judged marker once it has answered. Preparing runs in the worker: it
@@ -371,6 +488,7 @@ func (a *Agent) background(size int, stages ...stage) bool {
 	n := int64(size)
 	if a.queued.Add(n) > int64(a.cfg.QueueBytes) {
 		a.queued.Add(-n)
+		a.stats.droppedQueueFull.Add(1)
 		return false
 	}
 	select {
@@ -378,6 +496,7 @@ func (a *Agent) background(size int, stages ...stage) bool {
 		return true
 	default:
 		a.queued.Add(-n)
+		a.stats.droppedQueueFull.Add(1)
 		return false
 	}
 }
@@ -410,10 +529,12 @@ func (a *Agent) judge(j job) {
 			m = st.meta()
 			stages = append(stages, string(pt.Stage))
 			if _, err := a.detect(ctx, wire.DetectRequest{Meta: m, Turn: pt}); err != nil {
+				a.stats.droppedEngineDown.Add(1)
 				a.warn("agent: background judgment failed", err, "request_id", m.RequestID, "tenant", m.TenantID, "stage", pt.Stage)
 				dropped++
 				return
 			}
+			a.sent(pt)
 			returned++
 		}()
 	}
@@ -468,9 +589,13 @@ func logPanic(msg string, v any, st turn.Stage, args ...any) {
 func (a *Agent) notJudged(m wire.Meta, st turn.Stage) {
 	ctx, cancel := context.WithTimeout(context.Background(), markerTimeout)
 	defer cancel()
-	if _, err := a.detect(ctx, wire.DetectRequest{Meta: m, Turn: turn.NotJudgedTurn(st, errJudgingBusy)}); err != nil {
+	pt := turn.NotJudgedTurn(st, errJudgingBusy)
+	if _, err := a.detect(ctx, wire.DetectRequest{Meta: m, Turn: pt}); err != nil {
+		a.stats.droppedEngineDown.Add(1)
 		a.warn("agent: not-judged marker not sent", err, "request_id", m.RequestID, "tenant", m.TenantID, "stage", st)
+		return
 	}
+	a.sent(pt)
 }
 
 // history is a conversation's history as the engine gets it: lower case
@@ -506,21 +631,60 @@ func (a *Agent) policy(ctx context.Context, tenantID string) wire.PolicyResponse
 	return p
 }
 
-// warn logs a failed call to the engine. The wire-version mismatch is
-// logged at most once a minute.
+// warn logs a failed call to the engine, at most once a minute for each
+// kind of failure (engineErrKind): a down or failing engine fails every
+// call, and one line per call would flood the log. The count of what was
+// dropped is on /healthz.
 func (a *Agent) warn(msg string, err error, args ...any) {
-	if errors.Is(err, errEngineVersion) {
-		now, last := a.now().UnixNano(), a.versionWarned.Load()
-		if last != 0 && now-last < int64(time.Minute) || !a.versionWarned.CompareAndSwap(last, now) {
-			return
-		}
+	kind, now := engineErrKind(err), a.now().UnixNano()
+	a.warnMu.Lock()
+	last, ok := a.warned[kind]
+	if ok && now-last < int64(time.Minute) {
+		a.warnMu.Unlock()
+		return
 	}
-	slog.Warn(msg, append(args, "error", err)...)
+	a.warned[kind] = now
+	a.warnMu.Unlock()
+	slog.Warn(msg, append(args, "error", err, "error_kind", kind, "note", "logged once a minute per error_kind")...)
+}
+
+// engineErrKind is the kind of a failed engine call: "version" (the
+// engine does not speak this wire version), "unreachable" (no answer:
+// refused, timed out, reset), "status <code>" (another non-200 answer),
+// "decode" (a 200 that is not the answer), else "other".
+func engineErrKind(err error) string {
+	var se *engineStatusError
+	switch {
+	case errors.Is(err, errEngineVersion):
+		return "version"
+	case errors.Is(err, errEngineUnreachable), errors.Is(err, context.DeadlineExceeded):
+		return "unreachable"
+	case errors.As(err, &se):
+		return fmt.Sprintf("status %d", se.code)
+	case errors.Is(err, errEngineDecode):
+		return "decode"
+	}
+	return "other"
 }
 
 // errEngineVersion is a 400 from an engine that does not speak this
 // agent's wire version.
 var errEngineVersion = errors.New("the engine does not accept wire version")
+
+// errEngineUnreachable is a call the engine did not answer; errEngineDecode
+// a 200 whose body is not the answer.
+var (
+	errEngineUnreachable = errors.New("engine unreachable")
+	errEngineDecode      = errors.New("decode")
+)
+
+// engineStatusError is a non-200 answer from the engine.
+type engineStatusError struct {
+	code int
+	msg  string
+}
+
+func (e *engineStatusError) Error() string { return e.msg }
 
 func (a *Agent) detect(ctx context.Context, req wire.DetectRequest) (*wire.Judgment, error) {
 	req.V = wire.Version
@@ -550,7 +714,7 @@ func (a *Agent) call(ctx context.Context, method, path string, in, out any) erro
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("agent: %s %s: %w", method, path, err)
+		return fmt.Errorf("agent: %s %s: %w: %w", method, path, errEngineUnreachable, err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body) // drain, so the connection is reused
@@ -563,10 +727,11 @@ func (a *Agent) call(ctx context.Context, method, path string, in, out any) erro
 			return fmt.Errorf("agent: %s %s: %w %d; upgrade the engine (calls fail open until then): %s",
 				method, path, errEngineVersion, wire.Version, bytes.TrimSpace(msg))
 		}
-		return fmt.Errorf("agent: %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
+		return &engineStatusError{code: resp.StatusCode,
+			msg: fmt.Sprintf("agent: %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("agent: %s %s: decode: %w", method, path, err)
+		return fmt.Errorf("agent: %s %s: %w: %w", method, path, errEngineDecode, err)
 	}
 	return nil
 }

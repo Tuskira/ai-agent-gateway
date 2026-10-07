@@ -126,7 +126,10 @@ to every stage, including those of `POST /v1/turns`. The agent also caches
 scans of strings of 1 KiB or more across calls (an agent client resends its
 history every call, so it is scanned once); only a scan that ran to the end
 is cached. The cache holds raw values, so it is on only in the agent
-(`turn.EnableScanCache`) and never in an engine importing `turn`.
+(`turn.EnableScanCache`) and never in an engine importing `turn`. It keeps
+copies of the values found, never the scanned text, and is bounded by
+`AGENT_SCAN_CACHE_BYTES` (64 MiB by default) as well as by 8192 entries;
+when either is full it drops entries until both are at half.
 
 The scanner ignores gitleaks' inline allow comment (`gitleaks:allow`): in a
 repository it marks a known false positive, but in a call it is only text
@@ -155,12 +158,19 @@ the sender wrote, and honouring it would keep the secret on its line.
   block whole, and both are removed.
 - **A huge body is not judged.** When the scan does not finish within
   `PrepareTimeout` the stage is sent as `not_judged`, with no text.
-- **Deeply nested or very long content is not judged.** Content blocks
-  nested more than 8 levels deep (a `tool_result` inside a `tool_result`
-  is one level), or more than 65536 content blocks in one body or
-  conversation, send the stage as `not_judged` with the reason, with no
-  text. No agent client nests results that deep; the caps bound the work of
-  reading a hostile body, and reading also stops at `PrepareTimeout`.
+- **Deeply nested or very long content is judged on what fits.** Content
+  blocks nested more than 8 levels deep (a message's own content is level
+  0; a `tool_result` inside a `tool_result` is one level more) are not read
+  as blocks: what is past level 8 is added to `harness_text` (to
+  `response_text` for a reply) as its JSON, under `[content nested deeper
+  than 8 levels, as JSON:]`. Past 65536 content blocks in one body or
+  conversation, the rest is left out, oldest message first (the new turn
+  is read first), and the stage's text ends with `[content truncated: N
+  blocks beyond the cap]`. What is left out is still searched for secrets
+  (every string of the raw body is), so a value found there is removed
+  from what is sent. Both caps apply the same way to the raw body and the
+  canonical conversation. Only an unreadable body or the `PrepareTimeout`
+  deadline sends a stage as `not_judged`.
 - **The engine should not rely on it.** A turn is whatever the sender
   produced. An engine that stores or forwards turns should re-apply the same
   caps and re-run the same scan on what it receives; the `turn` package
@@ -209,9 +219,13 @@ nothing to hold a call for, and the response stage follows whenever there is
 a response. The engine's answer is only recorded, and any block it contains
 is a recorded outcome, not something that reaches a client.
 
-The queue holds up to `AGENT_QUEUE_SIZE` turns and `AGENT_QUEUE_BYTES` of raw
-turn bytes (request plus response), worked by up to `AGENT_MAX_IN_FLIGHT`
-workers. A turn's bytes count against `AGENT_QUEUE_BYTES` until its
+The queue holds up to `AGENT_QUEUE_SIZE` turns and `AGENT_QUEUE_BYTES` of
+turn bytes, worked by up to `AGENT_MAX_IN_FLIGHT` workers. A turn's bytes
+are what it holds in memory: the decoded request and response, plus the
+canonical `conversation` and `answer` (or the batch `items` judged) when
+it is read from them, which hold the text again (about twice the raw
+bytes for a typical turn). The JSON the turn arrived in is not counted:
+it is released once the handler has decoded it. A turn's bytes count against `AGENT_QUEUE_BYTES` until its
 judgment is done, not only while it waits: a worker holds the raw turn
 while it prepares and sends it. A batch is one turn there, whatever its number of items: its raw
 bytes count once and it takes one slot. A turn that does not fit is not judged: the agent still answers
@@ -232,9 +246,13 @@ forwarded (`inline: true`) and the background queue.
 Nothing the agent or engine does can affect a call: the gateway has already
 finished it before the turn is posted.
 
-- **Engine down, slow, non-`200`, or an unreadable answer:** logged as a
-  warning, the stage is dropped.
-- **Queue full:** `202`, and one `not_judged` marker as above.
+- **Engine down, slow, non-`200`, or an unreadable answer:** the stage is
+  dropped and counted in `/healthz` (`dropped_engine_down`). It is logged
+  as a warning at most once a minute for each kind of failure
+  (`error_kind`: `unreachable`, `status <code>`, `decode`, `version`), not
+  once per call.
+- **Queue full:** `202`, and one `not_judged` marker as above; counted in
+  `/healthz` (`dropped_queue_full`).
 - **A bug while preparing a turn (a panic):** recovered, in a worker and on
   the inline path. It is logged at `error` level with its stack (the panic
   value only when the Go runtime raised it, since another may quote the
@@ -322,13 +340,25 @@ is not positive, fails startup.
 | `AGENT_LISTEN` | `127.0.0.1:8090` | Address the agent serves the gateway on. |
 | `AGENT_MAX_IN_FLIGHT` | `256` | Background judgments running at once (also the engine connection pool size). |
 | `AGENT_QUEUE_SIZE` | `1024` | Background turns waiting for a worker. |
-| `AGENT_QUEUE_BYTES` | `268435456` (256 MiB) | Raw request plus response bytes held by queued turns. |
+| `AGENT_QUEUE_BYTES` | `268435456` (256 MiB) | Bytes held by queued turns: the decoded request and response plus the canonical conversation and answer they are read from. |
+| `AGENT_SCAN_CACHE_BYTES` | `67108864` (64 MiB) | Memory the secret-scan cache may use for the values it keeps (see [What leaves the host](#what-leaves-the-host)). |
 | `AGENT_ENGINE_TIMEOUT` | `8s` | Budget for one inline judgment (a Go duration such as `8s`). With the 1 second policy lookup it fits a gateway's 10 second wait for a verdict with a second to spare. Inline contract only. |
 | `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract only. |
 | `AGENT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (any case). At `debug` the agent logs one line per judged turn: `tenant`, `request_id`, `stages` (e.g. `request,response`), `returned` (judgments the engine answered), `dropped` (judgments that failed), `bytes` (the turn's raw request plus response) and `prepare_ms`. The line carries no text of the turn. |
 
-The agent logs to stderr through `log/slog`, as text. `GET /healthz` answers `200 ok`
-and checks nothing else (not the engine).
+The agent logs to stderr through `log/slog`, as text. `GET /healthz` answers `200`
+with the agent's counts since it started, as JSON, and checks nothing else
+(not the engine):
+
+```json
+{"status":"ok","judged":120,"dropped_engine_down":0,"dropped_queue_full":0,"not_judged_sent":2}
+```
+
+`judged` is stages the engine accepted; `not_judged_sent` is `not_judged`
+turns it accepted (a deadline, a panic, the queue-full marker, a batch past
+its cap); `dropped_engine_down` is stages (and markers) dropped because the
+engine could not be reached or answered other than `200`;
+`dropped_queue_full` is turns shed because the queue was full.
 
 ## The gateway to agent side
 
@@ -378,7 +408,8 @@ the host is as described [above](#what-leaves-the-host): the request stage,
 and the response stage when there is a response, each redacted. The
 `status_code` and the raw bodies stay on the host.
 
-`GET /healthz` answers `200 ok`.
+`GET /healthz` answers `200` with the agent's counts as JSON (see
+[Configuration](#configuration)).
 
 ### Inline contract (not used by the gateway's tee)
 
@@ -396,7 +427,9 @@ agent, but treat them as the legacy inline contract; they are not covered by
 the gateway fixtures. On `/v1/turns/request` an `inline` tenant's call waits
 for the engine (up to `AGENT_ENGINE_TIMEOUT`, and the engine failing lets
 the call through), and a `blocking` rule in the answer is returned as
-`block`.
+`block`. At most `AGENT_MAX_IN_FLIGHT` inline judgments run at once; past
+that, a request is answered at once with no `block` and judged in the
+background queue.
 
 A body larger than 64 MiB is refused with `400` on every route. The agent's
 copy of the fixtures, `detection/wire/testdata/gateway/`, must stay

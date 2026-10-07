@@ -21,3 +21,22 @@ func TestLogLevel(t *testing.T) {
 		t.Error("verbose: no error")
 	}
 }
+
+// AGENT_SCAN_CACHE_BYTES sets the scan cache's budget; unset is the
+// default, a value that is not a positive integer fails startup.
+func TestScanCacheBytes(t *testing.T) {
+	t.Setenv("DETECTION_ENGINE_URL", "https://engine.example.com")
+	t.Setenv("DETECTION_AGENT_TOKEN", "x")
+	for v, want := range map[string]int{"": 0, "1048576": 1 << 20} {
+		t.Setenv("AGENT_SCAN_CACHE_BYTES", v)
+		if cfg, _, _, err := config(); err != nil || cfg.ScanCacheBytes != want {
+			t.Errorf("%q: %d, %v; want %d", v, cfg.ScanCacheBytes, err, want)
+		}
+	}
+	for _, v := range []string{"0", "-1", "64MiB"} {
+		t.Setenv("AGENT_SCAN_CACHE_BYTES", v)
+		if _, _, _, err := config(); err == nil {
+			t.Errorf("%q: no error", v)
+		}
+	}
+}

@@ -36,9 +36,13 @@ func extractConversation(r *reader, c *conv.Conversation) (s State, ok bool) {
 	if c == nil || c.Version > conv.ConversationVersion || len(c.Messages) == 0 {
 		return s, false
 	}
-	msgs := c.Messages
-	for _, m := range msgs {
-		if !r.checkBlocks(m.Content, 0) {
+	// Each message's content within the reader's bounds, the last message
+	// first: past maxBlocks, it is the oldest history that is left out,
+	// never the new turn. msgs is a copy: c is not changed.
+	msgs := make([]conv.Message, len(c.Messages))
+	for i := len(msgs) - 1; i >= 0; i-- {
+		msgs[i] = c.Messages[i]
+		if msgs[i].Content = r.limit(c.Messages[i].Content, 0); !r.ok() {
 			return s, true
 		}
 	}
@@ -66,7 +70,7 @@ func extractConversation(r *reader, c *conv.Conversation) (s State, ok bool) {
 	}
 	var userText, harness []string
 	for _, m := range msgs[start:end] {
-		if !r.ok(0) {
+		if !r.ok() {
 			break
 		}
 		if m.Role == "system" || m.Role == "developer" {
@@ -92,7 +96,7 @@ func extractConversation(r *reader, c *conv.Conversation) (s State, ok bool) {
 			}
 		}
 	}
-	s.HarnessText = strings.Join(harness, "\n\n")
+	s.HarnessText = strings.Join(append(harness, r.notes()...), "\n\n")
 	s.UserText = strings.Join(userText, "\n\n")
 
 	if start > 0 && msgs[start-1].Role == "assistant" {
@@ -105,7 +109,7 @@ func extractConversation(r *reader, c *conv.Conversation) (s State, ok bool) {
 	if strings.ToLower(c.History) != conv.HistoryFull { // history is case-insensitive
 		return s, true
 	}
-	for i := start - 1; s.UserGoal == "" && i >= 0 && r.ok(0); i-- {
+	for i := start - 1; s.UserGoal == "" && i >= 0 && r.ok(); i-- {
 		if msgs[i].Role != "user" {
 			continue
 		}
@@ -124,17 +128,25 @@ func extractConversation(r *reader, c *conv.Conversation) (s State, ok bool) {
 // r's bounds.
 func extractAnswer(r *reader, a *conv.Answer) State {
 	var s State
-	if a == nil || !r.checkBlocks(a.Content, 0) {
+	if a == nil {
+		return s
+	}
+	content := r.limit(a.Content, 0)
+	if !r.ok() {
 		return s
 	}
 	var text []string
-	for _, b := range a.Content {
+	for _, b := range content {
 		if b.Type == conv.ContentText && b.Text != "" {
 			text = append(text, b.Text)
 		}
 	}
-	s.ResponseText = strings.TrimSpace(strings.Join(text, "\n"))
-	s.ResponseToolCalls = blockCalls(a.Content)
+	// The answer's own nested content is not read as text; what was cut
+	// from it is still noted.
+	var parts []string
+	r.flattenCanonical(content, &parts)
+	s.ResponseText = strings.TrimSpace(strings.Join(append([]string{strings.Join(text, "\n")}, r.notes()...), "\n\n"))
+	s.ResponseToolCalls = blockCalls(content)
 	return s
 }
 

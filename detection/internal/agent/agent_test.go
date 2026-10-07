@@ -709,11 +709,11 @@ func TestVersionWarningRateLimited(t *testing.T) {
 	if n := logs.count("upgrade the engine"); n != 2 {
 		t.Errorf("%d version warnings after a minute, want 2", n)
 	}
-	// Other failures are not rate limited.
+	// Each kind of failure has its own minute: another kind is logged.
 	a.warn("agent: test failure", errors.New("boom"))
 	a.warn("agent: test failure", errors.New("boom"))
-	if n := logs.count("test failure"); n != 2 {
-		t.Errorf("%d other warnings, want 2", n)
+	if n := logs.count("test failure"); n != 1 {
+		t.Errorf("%d other warnings, want 1", n)
 	}
 }
 
@@ -1066,4 +1066,142 @@ func TestTurnsHistoryLowerCased(t *testing.T) {
 	if got := f.next(t); got.req.Meta.History != wire.HistoryPrompt {
 		t.Errorf("batch item meta = %s", got.raw)
 	}
+}
+
+// A queued turn counts what it holds against QueueBytes: the decoded raw
+// bodies and the canonical conversation and answer, which hold the text
+// again. A turn that fits by its raw bytes alone does not fit with them.
+func TestTurnsQueueBytesCountCanonical(t *testing.T) {
+	text := strings.Repeat("summarise the quarterly report. ", 1<<15) // 1 MiB
+	tr := fullTurn(text, true)
+	tr.Dialect, tr.Op = "anthropic", wire.OpGenerate
+	tr.Conversation = &wire.Conversation{Version: wire.ConversationVersion, History: wire.HistoryFull,
+		Messages: []wire.Message{{Role: "user", Content: []wire.ContentBlock{{Type: wire.ContentText, Text: text}}}}}
+	tr.Answer = &wire.Answer{Content: []wire.ContentBlock{{Type: wire.ContentText, Text: "Here is the summary."}}}
+	raw := len(tr.Request) + len(tr.Response)
+	got := turnBytes(tr)
+	t.Logf("raw bytes %d, counted %d (%.2fx)", raw, got, float64(got)/float64(raw))
+	if got < raw+len(text) {
+		t.Fatalf("turnBytes = %d; want at least the raw %d plus the conversation's %d", got, raw, len(text))
+	}
+	// normalize_error: the conversation is not read, so not held.
+	tr2 := tr
+	tr2.NormalizeError = "cut"
+	if n := turnBytes(tr2); n != raw {
+		t.Errorf("with normalize_error: turnBytes = %d; want the raw %d", n, raw)
+	}
+
+	f := newFakeEngine(t)
+	_, url := startAgent(t, f, Config{MaxInFlight: 1, QueueSize: 10, QueueBytes: raw})
+	if code := postTurn(t, url, tr); code != http.StatusAccepted {
+		t.Fatalf("code %d", code)
+	}
+	if got := f.next(t); got.req.Turn.NotJudged != errJudgingBusy {
+		t.Fatalf("detect = %.200s; want the not-judged marker: the turn holds more than its raw bytes", got.raw)
+	}
+	f.none(t)
+}
+
+// Inline judgments run MaxInFlight at once at most: past that, a request
+// is answered at once with no block (fails open) and judged in the
+// background.
+func TestInlineBounded(t *testing.T) {
+	f := newFakeEngine(t)
+	f.policies["t1"] = wire.PolicyResponse{Inline: true}
+	f.hold = make(chan struct{})
+	a, url := startAgent(t, f, Config{MaxInFlight: 1, QueueSize: 4, EngineTimeout: 5 * time.Second})
+	first := make(chan wire.Verdict, 1)
+	go func() { _, v, _ := send(url, wire.PathTurnRequest, userTurn("t1", "first")); first <- v }()
+	if got := f.next(t); !got.req.Sync {
+		t.Fatalf("first: %+v; want an inline judgment", got.req)
+	}
+	start := time.Now()
+	code, v := post(t, url, wire.PathTurnRequest, userTurn("t1", "second"))
+	if d := time.Since(start); code != http.StatusOK || v.Block != nil || d > time.Second {
+		t.Fatalf("second: code %d, verdict %+v in %v; want an answer at once", code, v, d)
+	}
+	if got := f.next(t); got.req.Sync || got.req.Turn.State.UserText != "second" {
+		t.Errorf("second: %+v; want it judged in the background", got.req)
+	}
+	f.release()
+	<-first
+	waitQueued(t, a, 0)
+	if len(a.inline) != 0 {
+		t.Errorf("%d inline slots held after the judgments", len(a.inline))
+	}
+}
+
+// getHealth is the agent's /healthz.
+func getHealth(t *testing.T, url string) Health {
+	t.Helper()
+	resp, err := http.Get(url + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var h Health
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil || resp.StatusCode != http.StatusOK || h.Status != "ok" {
+		t.Fatalf("healthz: %d %+v %v", resp.StatusCode, h, err)
+	}
+	return h
+}
+
+// waitHealth waits until /healthz reports want.
+func waitHealth(t *testing.T, url string, want Health) {
+	t.Helper()
+	want.Status = "ok"
+	var h Health
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if h = getHealth(t, url); h == want {
+			return
+		}
+	}
+	t.Fatalf("healthz = %+v; want %+v", h, want)
+}
+
+// With the engine down, every turn's stage is dropped: logged once a
+// minute (per kind of failure), not once per call, and counted on
+// /healthz.
+func TestEngineDownWarnedOnceAndCounted(t *testing.T) {
+	logs := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	down := httptest.NewServer(http.NotFoundHandler())
+	down.Close() // nothing listens there now
+	a := New(Config{EngineURL: down.URL, Token: "x"})
+	srv := httptest.NewServer(a.Handler())
+	t.Cleanup(func() { srv.Close(); a.Wait() })
+	for range 5 {
+		postTurn(t, srv.URL, fullTurn("hello", false))
+	}
+	waitHealth(t, srv.URL, Health{DroppedEngineDown: 5})
+	if n := logs.count("background judgment failed"); n != 1 {
+		t.Errorf("%d warnings for 5 drops, want 1", n)
+	}
+	if n := logs.count("error_kind=unreachable"); n != 1 {
+		t.Errorf("%d unreachable warnings, want 1", n)
+	}
+}
+
+// /healthz counts judged stages, not-judged turns the engine accepted and
+// turns shed by a full queue.
+func TestHealthCounts(t *testing.T) {
+	f := newFakeEngine(t)
+	f.hold = make(chan struct{})
+	_, url := startAgent(t, f, Config{MaxInFlight: 1, QueueSize: 1})
+	waitHealth(t, url, Health{})
+	postTurn(t, url, fullTurn("first", true)) // held in the worker
+	f.next(t)
+	postTurn(t, url, fullTurn("queued", false))
+	postTurn(t, url, fullTurn("shed", false)) // queue full: the marker
+	if got := f.next(t); got.req.Turn.NotJudged != errJudgingBusy {
+		t.Fatalf("detect = %s; want the marker", got.raw)
+	}
+	waitHealth(t, url, Health{DroppedQueueFull: 1, NotJudgedSent: 1})
+	f.release()
+	f.next(t) // first's response stage
+	f.next(t) // queued
+	waitHealth(t, url, Health{Judged: 3, DroppedQueueFull: 1, NotJudgedSent: 1})
 }

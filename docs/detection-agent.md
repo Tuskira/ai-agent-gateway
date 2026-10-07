@@ -219,9 +219,13 @@ nothing to hold a call for, and the response stage follows whenever there is
 a response. The engine's answer is only recorded, and any block it contains
 is a recorded outcome, not something that reaches a client.
 
-The queue holds up to `AGENT_QUEUE_SIZE` turns and `AGENT_QUEUE_BYTES` of raw
-turn bytes (request plus response), worked by up to `AGENT_MAX_IN_FLIGHT`
-workers. A turn's bytes count against `AGENT_QUEUE_BYTES` until its
+The queue holds up to `AGENT_QUEUE_SIZE` turns and `AGENT_QUEUE_BYTES` of
+turn bytes, worked by up to `AGENT_MAX_IN_FLIGHT` workers. A turn's bytes
+are what it holds in memory: the decoded request and response, plus the
+canonical `conversation` and `answer` (or the batch `items` judged) when
+it is read from them, which hold the text again (about twice the raw
+bytes for a typical turn). The JSON the turn arrived in is not counted:
+it is released once the handler has decoded it. A turn's bytes count against `AGENT_QUEUE_BYTES` until its
 judgment is done, not only while it waits: a worker holds the raw turn
 while it prepares and sends it. A batch is one turn there, whatever its number of items: its raw
 bytes count once and it takes one slot. A turn that does not fit is not judged: the agent still answers
@@ -332,7 +336,7 @@ is not positive, fails startup.
 | `AGENT_LISTEN` | `127.0.0.1:8090` | Address the agent serves the gateway on. |
 | `AGENT_MAX_IN_FLIGHT` | `256` | Background judgments running at once (also the engine connection pool size). |
 | `AGENT_QUEUE_SIZE` | `1024` | Background turns waiting for a worker. |
-| `AGENT_QUEUE_BYTES` | `268435456` (256 MiB) | Raw request plus response bytes held by queued turns. |
+| `AGENT_QUEUE_BYTES` | `268435456` (256 MiB) | Bytes held by queued turns: the decoded request and response plus the canonical conversation and answer they are read from. |
 | `AGENT_SCAN_CACHE_BYTES` | `67108864` (64 MiB) | Memory the secret-scan cache may use for the values it keeps (see [What leaves the host](#what-leaves-the-host)). |
 | `AGENT_ENGINE_TIMEOUT` | `8s` | Budget for one inline judgment (a Go duration such as `8s`). With the 1 second policy lookup it fits a gateway's 10 second wait for a verdict with a second to spare. Inline contract only. |
 | `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract only. |
@@ -407,7 +411,9 @@ agent, but treat them as the legacy inline contract; they are not covered by
 the gateway fixtures. On `/v1/turns/request` an `inline` tenant's call waits
 for the engine (up to `AGENT_ENGINE_TIMEOUT`, and the engine failing lets
 the call through), and a `blocking` rule in the answer is returned as
-`block`.
+`block`. At most `AGENT_MAX_IN_FLIGHT` inline judgments run at once; past
+that, a request is answered at once with no `block` and judged in the
+background queue.
 
 A body larger than 64 MiB is refused with `400` on every route. The agent's
 copy of the fixtures, `detection/wire/testdata/gateway/`, must stay

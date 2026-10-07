@@ -149,6 +149,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for secrets. The depth is defined once for the raw and canonical paths;
   a streamed `tool_use` start with nested `content` (8 levels) was dropped
   whole, hiding the call, and is now read.
+- **Detection agent: `AGENT_QUEUE_BYTES` counts what a queued turn
+  holds.** Only the raw request and response were counted, while the
+  queued turn also holds the canonical conversation and answer (about 2x
+  the raw bytes for a turn of text). Inline judgments on the legacy
+  `/v1/turns/request` are now bounded to `AGENT_MAX_IN_FLIGHT` at once;
+  past that a request fails open and is judged in the background.
 - **Detection agent robustness.** A panic while preparing a turn is
   recovered in the background workers and on the inline path: logged at
   `error` with its stack, the stage sent as `not_judged`, the process kept

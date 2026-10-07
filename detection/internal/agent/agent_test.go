@@ -1067,3 +1067,66 @@ func TestTurnsHistoryLowerCased(t *testing.T) {
 		t.Errorf("batch item meta = %s", got.raw)
 	}
 }
+
+// A queued turn counts what it holds against QueueBytes: the decoded raw
+// bodies and the canonical conversation and answer, which hold the text
+// again. A turn that fits by its raw bytes alone does not fit with them.
+func TestTurnsQueueBytesCountCanonical(t *testing.T) {
+	text := strings.Repeat("summarise the quarterly report. ", 1<<15) // 1 MiB
+	tr := fullTurn(text, true)
+	tr.Dialect, tr.Op = "anthropic", wire.OpGenerate
+	tr.Conversation = &wire.Conversation{Version: wire.ConversationVersion, History: wire.HistoryFull,
+		Messages: []wire.Message{{Role: "user", Content: []wire.ContentBlock{{Type: wire.ContentText, Text: text}}}}}
+	tr.Answer = &wire.Answer{Content: []wire.ContentBlock{{Type: wire.ContentText, Text: "Here is the summary."}}}
+	raw := len(tr.Request) + len(tr.Response)
+	got := turnBytes(tr)
+	t.Logf("raw bytes %d, counted %d (%.2fx)", raw, got, float64(got)/float64(raw))
+	if got < raw+len(text) {
+		t.Fatalf("turnBytes = %d; want at least the raw %d plus the conversation's %d", got, raw, len(text))
+	}
+	// normalize_error: the conversation is not read, so not held.
+	tr2 := tr
+	tr2.NormalizeError = "cut"
+	if n := turnBytes(tr2); n != raw {
+		t.Errorf("with normalize_error: turnBytes = %d; want the raw %d", n, raw)
+	}
+
+	f := newFakeEngine(t)
+	_, url := startAgent(t, f, Config{MaxInFlight: 1, QueueSize: 10, QueueBytes: raw})
+	if code := postTurn(t, url, tr); code != http.StatusAccepted {
+		t.Fatalf("code %d", code)
+	}
+	if got := f.next(t); got.req.Turn.NotJudged != errJudgingBusy {
+		t.Fatalf("detect = %.200s; want the not-judged marker: the turn holds more than its raw bytes", got.raw)
+	}
+	f.none(t)
+}
+
+// Inline judgments run MaxInFlight at once at most: past that, a request
+// is answered at once with no block (fails open) and judged in the
+// background.
+func TestInlineBounded(t *testing.T) {
+	f := newFakeEngine(t)
+	f.policies["t1"] = wire.PolicyResponse{Inline: true}
+	f.hold = make(chan struct{})
+	a, url := startAgent(t, f, Config{MaxInFlight: 1, QueueSize: 4, EngineTimeout: 5 * time.Second})
+	first := make(chan wire.Verdict, 1)
+	go func() { _, v, _ := send(url, wire.PathTurnRequest, userTurn("t1", "first")); first <- v }()
+	if got := f.next(t); !got.req.Sync {
+		t.Fatalf("first: %+v; want an inline judgment", got.req)
+	}
+	start := time.Now()
+	code, v := post(t, url, wire.PathTurnRequest, userTurn("t1", "second"))
+	if d := time.Since(start); code != http.StatusOK || v.Block != nil || d > time.Second {
+		t.Fatalf("second: code %d, verdict %+v in %v; want an answer at once", code, v, d)
+	}
+	if got := f.next(t); got.req.Sync || got.req.Turn.State.UserText != "second" {
+		t.Errorf("second: %+v; want it judged in the background", got.req)
+	}
+	f.release()
+	<-first
+	waitQueued(t, a, 0)
+	if len(a.inline) != 0 {
+		t.Errorf("%d inline slots held after the judgments", len(a.inline))
+	}
+}

@@ -26,6 +26,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/detection/turn"
 	"github.com/Tuskira/tusk-ai-secured-gateway/detection/wire"
@@ -88,6 +89,11 @@ type Agent struct {
 	queued  atomic.Int64
 	workers sync.WaitGroup
 	stop    sync.Once
+
+	// inline bounds the inline judgments (POST /v1/turns/request for an
+	// inline tenant) running at once, MaxInFlight: each prepares on the
+	// handler's goroutine, which no queue bounds.
+	inline chan struct{}
 
 	mu       sync.Mutex
 	policies map[string]cachedPolicy
@@ -156,6 +162,7 @@ func New(cfg Config) *Agent {
 		cfg:      cfg,
 		client:   &http.Client{Transport: t},
 		queue:    make(chan job, cfg.QueueSize),
+		inline:   make(chan struct{}, cfg.MaxInFlight),
 		policies: map[string]cachedPolicy{},
 		now:      time.Now,
 
@@ -246,7 +253,7 @@ func (a *Agent) turns(w http.ResponseWriter, r *http.Request) {
 			}))
 		}
 	}
-	queued := a.background(len(t.Request)+len(t.Response), stages...)
+	queued := a.background(turnBytes(t), stages...)
 	answer(w, http.StatusAccepted, nil)
 	if !queued {
 		a.notJudged(m, turn.StageRequest)
@@ -294,6 +301,55 @@ func batchStages(t wire.Turn, m wire.Meta) []stage {
 	return stages
 }
 
+// turnBytes is what a queued gateway turn holds until its judgment is
+// done, counted against QueueBytes: the decoded raw request and response,
+// and the canonical forms its stages read (the conversation and answer,
+// or the batch items judged), which hold the text again. The JSON the
+// handler decoded them from is not held: it is garbage once the handler
+// returns.
+func turnBytes(t wire.Turn) int {
+	n := int64(len(t.Request) + len(t.Response))
+	if len(t.Items) > 0 {
+		for _, it := range t.Items[:min(len(t.Items), wire.MaxBatchItems)] {
+			n += int64(len(it.CustomID)) + conversationBytes(&it.Conversation)
+		}
+		return int(n)
+	}
+	c := t.Call()
+	n += conversationBytes(c.Conversation)
+	if c.Answer != nil {
+		n += int64(unsafe.Sizeof(*c.Answer)) + int64(len(c.Answer.StopReason)) + blocksBytes(c.Answer.Content)
+	}
+	return int(n)
+}
+
+// conversationBytes is the memory c holds, about: its strings and blocks.
+func conversationBytes(c *wire.Conversation) int64 {
+	if c == nil {
+		return 0
+	}
+	n := int64(unsafe.Sizeof(*c)) + int64(len(c.History)) + blocksBytes(c.System)
+	n += int64(cap(c.Messages)) * int64(unsafe.Sizeof(wire.Message{}))
+	for _, m := range c.Messages {
+		n += int64(len(m.Role)) + blocksBytes(m.Content)
+	}
+	for _, t := range c.Tools {
+		n += int64(unsafe.Sizeof(t)) + int64(len(t))
+	}
+	return n
+}
+
+// blocksBytes is the memory bs holds, about, nested blocks included.
+func blocksBytes(bs []wire.ContentBlock) int64 {
+	n := int64(cap(bs)) * int64(unsafe.Sizeof(wire.ContentBlock{}))
+	for _, b := range bs {
+		n += int64(len(b.Type) + len(b.Text) + len(b.ID) + len(b.Name) + len(b.Input) +
+			len(b.ToolUseID) + len(b.MediaType) + len(b.Raw))
+		n += blocksBytes(b.Content)
+	}
+	return n
+}
+
 func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
 	t, ok := decodeTurn(w, r)
 	if !ok {
@@ -305,7 +361,11 @@ func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
 	p := a.policy(r.Context(), t.TenantID)
 	v := wire.Verdict{WantResponse: p.WantResponse}
 	m := wire.MetaOf(t)
-	if p.Inline {
+	// An inline tenant's request is judged here, MaxInFlight at most at
+	// once; past that it goes to the background queue unjudged inline
+	// (fails open, as an engine failure does).
+	if p.Inline && a.acquireInline() {
+		defer func() { <-a.inline }()
 		ctx, cancel := context.WithTimeout(r.Context(), a.cfg.EngineTimeout)
 		defer cancel()
 		v.Block = a.judgeInline(ctx, m, t.Request)
@@ -343,6 +403,16 @@ func decodeTurn(w http.ResponseWriter, r *http.Request) (wire.TurnRequest, bool)
 		return t, false
 	}
 	return t, true
+}
+
+// acquireInline takes an inline slot if one is free.
+func (a *Agent) acquireInline() bool {
+	select {
+	case a.inline <- struct{}{}:
+		return true
+	default:
+		return false
+	}
 }
 
 // judgeInline judges a request before it is forwarded. Any engine failure

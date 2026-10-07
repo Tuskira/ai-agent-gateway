@@ -158,12 +158,19 @@ the sender wrote, and honouring it would keep the secret on its line.
   block whole, and both are removed.
 - **A huge body is not judged.** When the scan does not finish within
   `PrepareTimeout` the stage is sent as `not_judged`, with no text.
-- **Deeply nested or very long content is not judged.** Content blocks
-  nested more than 8 levels deep (a `tool_result` inside a `tool_result`
-  is one level), or more than 65536 content blocks in one body or
-  conversation, send the stage as `not_judged` with the reason, with no
-  text. No agent client nests results that deep; the caps bound the work of
-  reading a hostile body, and reading also stops at `PrepareTimeout`.
+- **Deeply nested or very long content is judged on what fits.** Content
+  blocks nested more than 8 levels deep (a message's own content is level
+  0; a `tool_result` inside a `tool_result` is one level more) are not read
+  as blocks: what is past level 8 is added to `harness_text` (to
+  `response_text` for a reply) as its JSON, under `[content nested deeper
+  than 8 levels, as JSON:]`. Past 65536 content blocks in one body or
+  conversation, the rest is left out, oldest message first (the new turn
+  is read first), and the stage's text ends with `[content truncated: N
+  blocks beyond the cap]`. What is left out is still searched for secrets
+  (every string of the raw body is), so a value found there is removed
+  from what is sent. Both caps apply the same way to the raw body and the
+  canonical conversation. Only an unreadable body or the `PrepareTimeout`
+  deadline sends a stage as `not_judged`.
 - **The engine should not rely on it.** A turn is whatever the sender
   produced. An engine that stores or forwards turns should re-apply the same
   caps and re-run the same scan on what it receives; the `turn` package

@@ -101,14 +101,15 @@ type oaiFunction struct {
 	Arguments string `json:"arguments"`
 }
 
+// block is a content block of a raw body, as reader.content decodes it.
 type block struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text"`
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Input     json.RawMessage `json:"input"`
-	ToolUseID string          `json:"tool_use_id"`
-	Content   content         `json:"content"`
+	Type      string
+	Text      string
+	ID        string
+	Name      string
+	Input     json.RawMessage
+	ToolUseID string
+	Content   []block
 }
 
 // extractRequest extracts the new turn from a request body: the final
@@ -131,10 +132,12 @@ func extractRequest(r *reader, body []byte) (s State, ok bool) {
 	}
 	msgs := req.Messages
 
-	// Each message's content, decoded once (nested content included).
+	// Each message's content, decoded once (nested content included), the
+	// last message first: past maxBlocks, it is the oldest history that is
+	// left out, never the new turn.
 	cs := make([][]block, len(msgs))
-	for i, m := range msgs {
-		if cs[i] = r.content(m.Content); !r.ok(len(m.ToolCalls)) {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if cs[i] = r.content(msgs[i].Content); !r.ok() {
 			return s, true
 		}
 	}
@@ -173,7 +176,7 @@ func extractRequest(r *reader, body []byte) (s State, ok bool) {
 		start--
 	}
 	var userText, harness []string
-	for i := start; i < end && r.ok(0); i++ {
+	for i := start; i < end && r.ok(); i++ {
 		m := msgs[i]
 		if m.Role == "system" || m.Role == "developer" {
 			if t := strings.TrimSpace(r.textOf(cs[i])); t != "" {
@@ -203,7 +206,7 @@ func extractRequest(r *reader, body []byte) (s State, ok bool) {
 			}
 		}
 	}
-	s.HarnessText = strings.Join(harness, "\n\n")
+	s.HarnessText = strings.Join(append(harness, r.notes()...), "\n\n")
 	s.UserText = strings.Join(userText, "\n\n")
 
 	// The assistant message right before the turn made the calls whose
@@ -214,7 +217,7 @@ func extractRequest(r *reader, body []byte) (s State, ok bool) {
 
 	// The goal: the latest human-typed text anywhere in the conversation.
 	s.UserGoal = s.UserText
-	for i := start - 1; s.UserGoal == "" && i >= 0 && r.ok(0); i-- {
+	for i := start - 1; s.UserGoal == "" && i >= 0 && r.ok(); i-- {
 		if msgs[i].Role != "user" {
 			continue
 		}
@@ -243,10 +246,10 @@ func (s *State) addResult(r ToolResult) {
 func extractResponse(r *reader, body []byte) State {
 	var s State
 	text, calls := parseSSE(r, body)
-	if text == "" && len(calls) == 0 && r.ok(0) {
+	if text == "" && len(calls) == 0 && r.ok() {
 		text, calls = parseJSONResponse(r, body)
 	}
-	s.ResponseText = strings.TrimSpace(text)
+	s.ResponseText = strings.TrimSpace(strings.Join(append([]string{text}, r.notes()...), "\n\n"))
 	if len(calls) > maxToolItems {
 		calls = calls[:maxToolItems]
 	}
@@ -262,7 +265,7 @@ func parseSSE(r *reader, body []byte) (string, []ToolCall) {
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	for n := 0; sc.Scan(); n++ {
-		if n%256 == 0 && !r.ok(0) {
+		if n%256 == 0 && !r.ok() {
 			return "", nil
 		}
 		line := sc.Bytes()
@@ -271,10 +274,16 @@ func parseSSE(r *reader, body []byte) (string, []ToolCall) {
 		}
 		data := bytes.TrimSpace(line[5:])
 		var ev struct {
-			Type         string `json:"type"`
-			Index        int    `json:"index"`
-			ContentBlock block  `json:"content_block"`
-			Delta        struct {
+			Type  string `json:"type"`
+			Index int    `json:"index"`
+			// Only what a tool_use start carries: its content, if a
+			// sender adds one, is not read (nor bounded by depth here).
+			ContentBlock struct {
+				Type string `json:"type"`
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"content_block"`
+			Delta struct {
 				Type        string `json:"type"`
 				Text        string `json:"text"`
 				PartialJSON string `json:"partial_json"`

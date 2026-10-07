@@ -139,6 +139,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tool outputs of 1 MiB with one secret each kept 199 MiB live; now under
   1 MiB). Values are now copied, and the cache is bounded by
   `AGENT_SCAN_CACHE_BYTES` (default 64 MiB) as well as by 8192 entries.
+- **Detection agent: nested or padded content no longer skips detection.**
+  A body nested deeper than 8 levels or holding more than 65536 content
+  blocks was sent as `not_judged`, so padding a call skipped detection.
+  It is now judged on what fits: the levels past 8 go to `harness_text`
+  as JSON, the blocks past the cap are left out (oldest message first,
+  never the new turn) with `[content truncated: N blocks beyond the cap]`
+  in the stage's text, and every string of the raw body is still searched
+  for secrets. The depth is defined once for the raw and canonical paths;
+  a streamed `tool_use` start with nested `content` (8 levels) was dropped
+  whole, hiding the call, and is now read.
 - **Detection agent robustness.** A panic while preparing a turn is
   recovered in the background workers and on the inline path: logged at
   `error` with its stack, the stage sent as `not_judged`, the process kept

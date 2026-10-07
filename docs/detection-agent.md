@@ -107,15 +107,30 @@ overlapping values are removed as one span. The kinds found in strings that
 are sent travel with the turn as `secrets: [{kind, field, index}]` (where
 each kind was first seen), without the values.
 
-Preparing a turn is bounded: extraction and the scan are linear in the body.
-Past `PrepareTimeout` (4 seconds by default; a field of the Go `agent.Config`,
-not an environment variable) the stage is sent as `not_judged` (reason
-"...ran past its deadline"), with no text, never partly redacted, and the
-agent logs it. This applies to every stage, including those of
-`POST /v1/turns`. The agent also caches scans of strings of 1 KiB or more
-across calls (an agent client resends its history every call, so it is
-scanned once); the cache holds raw values, so it is on only in the agent
+Every byte of every string of the body is scanned, however long the string:
+a value stated in the middle of a long tool output from an earlier turn is
+found, and a bare copy of it in the new turn is removed. A long string is
+scanned in pieces of 256 KiB that overlap by 64 KiB, so a secret (with the
+context its rule needs, such as `api_key = "`) up to 64 KiB long is found
+whole wherever a piece's edge falls.
+
+That makes preparing a turn linear in the body but not free: on keyword-dense
+text it costs roughly 0.2 seconds per MiB of strings (a 10 MiB body about
+2.3 seconds on an Apple M5). So it is bounded by a deadline instead of by
+what is scanned: past `PrepareTimeout` (4 seconds by default; a field of the
+Go `agent.Config`, not an environment variable) the stage is sent as
+`not_judged` (reason "...ran past its deadline"), with no text, never partly
+redacted, and the agent logs it. The scan stops between two rules of one
+piece, so it ends at most about 0.1 seconds after the deadline. This applies
+to every stage, including those of `POST /v1/turns`. The agent also caches
+scans of strings of 1 KiB or more across calls (an agent client resends its
+history every call, so it is scanned once); only a scan that ran to the end
+is cached. The cache holds raw values, so it is on only in the agent
 (`turn.EnableScanCache`) and never in an engine importing `turn`.
+
+The scanner ignores gitleaks' inline allow comment (`gitleaks:allow`): in a
+repository it marks a known false positive, but in a call it is only text
+the sender wrote, and honouring it would keep the secret on its line.
 
 ### Limits you should know about
 
@@ -132,13 +147,20 @@ scanned once); the cache holds raw values, so it is on only in the agent
   `response_text` to 8000 bytes, a tool result to 6000, a tool input to 2000;
   at most 8 tool results or tool calls per list. A clipped string keeps its
   first two thirds and last third around `…[truncated]…`.
-- **The scan window is 64 KiB.** A very long field is not scanned whole: the
-  agent scans the part clipping keeps, plus 64 KiB on each side. So every
-  secret up to 64 KiB long that clipping would cut is found whole and
-  redacted. A private-key block has no such bound and is always found whole;
-  any other single "secret" longer than 64 KiB may be missed. The text outside
-  that window is cut and never sent. A secret lying entirely inside the
-  unscanned middle of a huge string is therefore not found.
+- **A very long secret may be found only in part.** A long string is
+  scanned in overlapping pieces, so a single "secret" longer than 64 KiB
+  (with its context) that a piece's edge cuts may be missed. A private-key
+  block is the exception: the piece holding its `BEGIN` line reports it as
+  `private-key-unterminated` and the piece holding its `END` line finds the
+  block whole, and both are removed.
+- **A huge body is not judged.** When the scan does not finish within
+  `PrepareTimeout` the stage is sent as `not_judged`, with no text.
+- **Deeply nested or very long content is not judged.** Content blocks
+  nested more than 8 levels deep (a `tool_result` inside a `tool_result`
+  is one level), or more than 65536 content blocks in one body or
+  conversation, send the stage as `not_judged` with the reason, with no
+  text. No agent client nests results that deep; the caps bound the work of
+  reading a hostile body, and reading also stops at `PrepareTimeout`.
 - **The engine should not rely on it.** A turn is whatever the sender
   produced. An engine that stores or forwards turns should re-apply the same
   caps and re-run the same scan on what it receives; the `turn` package
@@ -189,7 +211,9 @@ is a recorded outcome, not something that reaches a client.
 
 The queue holds up to `AGENT_QUEUE_SIZE` turns and `AGENT_QUEUE_BYTES` of raw
 turn bytes (request plus response), worked by up to `AGENT_MAX_IN_FLIGHT`
-workers. A batch is one turn there, whatever its number of items: its raw
+workers. A turn's bytes count against `AGENT_QUEUE_BYTES` until its
+judgment is done, not only while it waits: a worker holds the raw turn
+while it prepares and sends it. A batch is one turn there, whatever its number of items: its raw
 bytes count once and it takes one slot. A turn that does not fit is not judged: the agent still answers
 `202` and sends the engine one `not_judged` marker for the request stage (no
 state, a short reason) so the gap is visible there; no response stage
@@ -211,6 +235,11 @@ finished it before the turn is posted.
 - **Engine down, slow, non-`200`, or an unreadable answer:** logged as a
   warning, the stage is dropped.
 - **Queue full:** `202`, and one `not_judged` marker as above.
+- **A bug while preparing a turn (a panic):** recovered, in a worker and on
+  the inline path. It is logged at `error` level with its stack (the panic
+  value only when the Go runtime raised it, since another may quote the
+  turn), the stage is sent as `not_judged` ("the agent failed preparing the
+  turn"), and the agent keeps running.
 - **Agent down, slow, or answering other than `202`:** the gateway drops
   the turn and counts it in its `/health`; see
   [llm-plane.md](llm-plane.md#queue-limits-and-drops).
@@ -249,6 +278,38 @@ llm_proxy:
     agent_url: http://127.0.0.1:8090
 ```
 
+### Kubernetes sidecar
+
+`deploy/k8s/components/detection-agent` is an **example** kustomize
+Component that runs the agent as a second container in every `gateway-llm`
+pod. It:
+
+- adds the `detection-agent` container with `AGENT_LISTEN=127.0.0.1:8090`
+  (pod-local, since the agent's port has no authentication) and
+  `DETECTION_ENGINE_URL` / `DETECTION_AGENT_TOKEN` from the Secret
+  `detection-agent` (a template with placeholders, like
+  `base/secret.yaml`);
+- sets `GATEWAY_LLM_PROXY_DETECTION_AGENT_URL=http://127.0.0.1:8090` on the
+  gateway container, so its tee posts each completed call to the agent in
+  the same pod.
+
+`deploy/k8s/overlays/detection-agent` is the base plus this component; add
+`../../components/detection-agent` under `components:` of any other
+overlay to combine it with Redis or analytics. Before applying it, fill in
+the Secret and set the agent's image tag with an `images:` entry (the
+component's tag is a placeholder; the agent is versioned on its own, see
+above):
+
+```sh
+kubectl kustomize deploy/k8s/overlays/detection-agent   # inspect
+```
+
+The agent has no probes (kubelet cannot reach a loopback port, and a down
+agent never affects a call). It shares the pod's network, so the base
+NetworkPolicy applies to it: its rule for port 443 to public addresses
+covers an engine with a public `https` URL; an engine inside the cluster or
+on a private address needs an egress rule of its own.
+
 ### Configuration
 
 All configuration is environment variables. A value that does not parse, or
@@ -262,10 +323,11 @@ is not positive, fails startup.
 | `AGENT_MAX_IN_FLIGHT` | `256` | Background judgments running at once (also the engine connection pool size). |
 | `AGENT_QUEUE_SIZE` | `1024` | Background turns waiting for a worker. |
 | `AGENT_QUEUE_BYTES` | `268435456` (256 MiB) | Raw request plus response bytes held by queued turns. |
-| `AGENT_ENGINE_TIMEOUT` | `9s` | Budget for one inline judgment (a Go duration such as `9s`). Inline contract only. |
+| `AGENT_ENGINE_TIMEOUT` | `8s` | Budget for one inline judgment (a Go duration such as `8s`). With the 1 second policy lookup it fits a gateway's 10 second wait for a verdict with a second to spare. Inline contract only. |
 | `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract only. |
+| `AGENT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (any case). At `debug` the agent logs one line per judged turn: `tenant`, `request_id`, `stages` (e.g. `request,response`), `returned` (judgments the engine answered), `dropped` (judgments that failed), `bytes` (the turn's raw request plus response) and `prepare_ms`. The line carries no text of the turn. |
 
-The agent logs to stderr through `log/slog`. `GET /healthz` answers `200 ok`
+The agent logs to stderr through `log/slog`, as text. `GET /healthz` answers `200 ok`
 and checks nothing else (not the engine).
 
 ## The gateway to agent side
@@ -412,7 +474,7 @@ Asks the engine to judge one redacted stage. Example (a request-stage turn):
 |---|---|
 | `v` | Contract version, see above. |
 | `sync` | `true` when the agent is waiting for the answer to enforce it (inline contract only; always `false` for turns from the gateway's tee). Informational: record the turn either way. |
-| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `model`, `path`. For one request of a batch, `item` is its id within the batch (its `custom_id`, at most 128 bytes, any secret in it redacted): every item of a batch shares the batch call's `request_id`, so a record is keyed by `request_id` and `item`. For a turn from the gateway's tee, also `dialect` (the wire format the call was made in, e.g. `anthropic`, `gemini_batch`) and `op` (`generate` or `batch`), and `history` (`full`, `server_side` or `prompt`: how much of the conversation the judged request carries) when the stage was read from the gateway's canonical conversation; absent `history` means `full` or unknown (a stage read from the raw body). All four are optional strings, omitted when empty; an engine that does not know them ignores them, and `v` stays `1`. |
+| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `model`, `path`. For one request of a batch, `item` is its id within the batch (its `custom_id`, at most 128 bytes, any secret in it redacted): every item of a batch shares the batch call's `request_id`, so a record is keyed by `request_id` and `item`. For a turn from the gateway's tee, also `dialect` (the wire format the call was made in, e.g. `anthropic`, `gemini_batch`) and `op` (`generate` or `batch`), and `history` (`full`, `server_side` or `prompt`: how much of the conversation the judged request carries) when the stage was read from the gateway's canonical conversation; absent `history` means `full` or unknown (a stage read from the raw body). The agent reads `history` case-insensitively and sends it in lower case; a value it does not know is sent as it is (lower-cased) and is read as not `full` (the goal is the new turn's own text). All four are optional strings, omitted when empty; an engine that does not know them ignores them, and `v` stays `1`. |
 | `turn.stage` | `request` or `response`. |
 | `turn.state` | The redacted new turn: `user_text`, `user_goal`, `harness_text`, `tool_results` (`[{tool, content}]`), `prior_tool_calls` (`[{name, input}]`), `response_text`, `response_tool_calls` (`[{name, input}]`). Omitted when empty. A request-stage turn has no `response_*` fields; a response-stage turn carries the request's `user_goal` and `tool_results` for context. |
 | `turn.refs` | Per-event ids that are not part of what a judge model reads, so a decision can point at an event: `tool_results` (`[{call_id, call_input}]`), `prior_tool_calls` and `response_tool_calls` (lists of call ids), matched to `state` by index. |

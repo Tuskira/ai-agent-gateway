@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +35,11 @@ import (
 // full; the engine records the turn as an error, as the gateway did
 // before.
 const errJudgingBusy = "not judged: rule engine at max_in_flight"
+
+// errPrepareFailed is the detail of a stage whose preparation panicked: a
+// bug in the agent, logged at Error, never the panic's value (it may quote
+// the turn).
+const errPrepareFailed = "not judged: the agent failed preparing the turn"
 
 const (
 	// backgroundTimeout bounds one background judgment, as in the gateway.
@@ -49,17 +56,19 @@ const (
 
 // Config is the agent's configuration; zero values take the defaults.
 type Config struct {
-	EngineURL     string
-	Token         string
-	MaxInFlight   int           // background judgments at once; default 256
-	QueueSize     int           // background turns waiting for a judgment; default 1024
-	QueueBytes    int           // raw request+response bytes of the queued turns; default 256 MiB
-	EngineTimeout time.Duration // inline judgment budget; default 9s
+	EngineURL   string
+	Token       string
+	MaxInFlight int // background judgments at once; default 256
+	QueueSize   int // background turns waiting for a judgment; default 1024
+	QueueBytes  int // raw request+response bytes of the queued turns; default 256 MiB
+	// EngineTimeout is the inline judgment budget; default 8s, so the policy
+	// lookup (1s) and it fit a gateway's 10s wait with a second to spare.
+	EngineTimeout time.Duration
 	PolicyTTL     time.Duration // per-tenant policy cache; default 15s
 	// PrepareTimeout bounds preparing one turn (extraction and the secret
-	// scan: linear in the body, the scan bounded by windows; only a hostile
-	// body gets near it). Past it the turn is sent as not judged, with the
-	// rest of the stage's budget left to send it. Default 4s.
+	// scan of every byte of every string: linear in the body; only a huge or
+	// hostile body gets near it). Past it the turn is sent as not judged,
+	// with the rest of the stage's budget left to send it. Default 4s.
 	PrepareTimeout time.Duration
 }
 
@@ -83,6 +92,8 @@ type Agent struct {
 	// logged: it fails every call until one side is upgraded, so it is
 	// logged once a minute, not once per call.
 	versionWarned atomic.Int64
+	// prepareRequest prepares an inline request (a test replaces it).
+	prepareRequest func(context.Context, []byte) turn.PreparedTurn
 }
 
 // job is one background unit: the stages of one call (of a batch, one per
@@ -92,16 +103,18 @@ type job struct {
 	stages []stage
 }
 
-// stage is one judgment: prepare builds the turn to judge within ctx's
-// deadline (false: nothing to judge), sent under the Meta meta returns.
+// stage is one judgment of stage st: prepare builds the turn to judge
+// within ctx's deadline (false: nothing to judge), sent under the Meta
+// meta returns.
 type stage struct {
+	st      turn.Stage
 	prepare func(ctx context.Context) (turn.PreparedTurn, bool)
 	meta    func() wire.Meta
 }
 
-// stageOf is a stage sent under m.
-func stageOf(m wire.Meta, p func(context.Context) (turn.PreparedTurn, bool)) stage {
-	return stage{prepare: p, meta: func() wire.Meta { return m }}
+// stageOf is a stage st sent under m.
+func stageOf(m wire.Meta, st turn.Stage, p func(context.Context) (turn.PreparedTurn, bool)) stage {
+	return stage{st: st, prepare: p, meta: func() wire.Meta { return m }}
 }
 
 type cachedPolicy struct {
@@ -121,7 +134,7 @@ func New(cfg Config) *Agent {
 		cfg.QueueBytes = 256 << 20
 	}
 	if cfg.EngineTimeout <= 0 {
-		cfg.EngineTimeout = 9 * time.Second
+		cfg.EngineTimeout = 8 * time.Second
 	}
 	if cfg.PolicyTTL <= 0 {
 		cfg.PolicyTTL = 15 * time.Second
@@ -141,11 +154,12 @@ func New(cfg Config) *Agent {
 		queue:    make(chan job, cfg.QueueSize),
 		policies: map[string]cachedPolicy{},
 		now:      time.Now,
+
+		prepareRequest: turn.PrepareRequestContext,
 	}
 	for range cfg.MaxInFlight {
 		a.workers.Go(func() {
 			for j := range a.queue {
-				a.queued.Add(-j.size)
 				a.judge(j)
 			}
 		})
@@ -217,13 +231,13 @@ func (a *Agent) turns(w http.ResponseWriter, r *http.Request) {
 		// either way.
 		call := t.Call()
 		if call.Conversation != nil {
-			m.History = call.Conversation.History
+			m.History = history(call.Conversation.History)
 		}
-		stages = append(stages, stageOf(m, func(ctx context.Context) (turn.PreparedTurn, bool) {
+		stages = append(stages, stageOf(m, turn.StageRequest, func(ctx context.Context) (turn.PreparedTurn, bool) {
 			return turn.PrepareCallRequest(ctx, call), true
 		}))
 		if len(t.Response) > 0 && t.Op != wire.OpBatch { // a batch's response is the batch object
-			stages = append(stages, stageOf(m, func(ctx context.Context) (turn.PreparedTurn, bool) {
+			stages = append(stages, stageOf(m, turn.StageResponse, func(ctx context.Context) (turn.PreparedTurn, bool) {
 				return turn.PrepareCallResponse(ctx, call)
 			}))
 		}
@@ -248,6 +262,7 @@ func batchStages(t wire.Turn, m wire.Meta) []stage {
 	for _, it := range items {
 		var id string // set by prepare, read by meta after it
 		stages = append(stages, stage{
+			st: turn.StageRequest,
 			prepare: func(ctx context.Context) (turn.PreparedTurn, bool) {
 				pt := b.PrepareItem(ctx, &it.Conversation)
 				id = b.ItemID(it.CustomID)
@@ -255,7 +270,7 @@ func batchStages(t wire.Turn, m wire.Meta) []stage {
 			},
 			meta: func() wire.Meta {
 				im := m
-				im.Item, im.History = id, it.Conversation.History
+				im.Item, im.History = id, history(it.Conversation.History)
 				return im
 			},
 		})
@@ -268,7 +283,7 @@ func batchStages(t wire.Turn, m wire.Meta) []stage {
 		reason = "not judged: " + t.NormalizeError
 	}
 	if reason != "" {
-		stages = append(stages, stageOf(m, func(context.Context) (turn.PreparedTurn, bool) {
+		stages = append(stages, stageOf(m, turn.StageRequest, func(context.Context) (turn.PreparedTurn, bool) {
 			return turn.NotJudgedTurn(turn.StageRequest, reason), true
 		}))
 	}
@@ -281,8 +296,8 @@ func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The policy lookup (a cache miss) gets its own short budget so the whole
-	// EngineTimeout is left for the judgment: together they stay inside the
-	// gateway's agent_timeout (policyTimeout + EngineTimeout = 10s).
+	// EngineTimeout is left for the judgment: together (1s + 8s by default)
+	// they stay inside a gateway's 10s wait, with a second to spare.
 	p := a.policy(r.Context(), t.TenantID)
 	v := wire.Verdict{WantResponse: p.WantResponse}
 	m := wire.MetaOf(t)
@@ -293,8 +308,8 @@ func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
 		answerJSON(w, v)
 		return
 	}
-	queued := a.background(len(t.Request), stageOf(m, func(ctx context.Context) (turn.PreparedTurn, bool) {
-		return turn.PrepareRequestContext(ctx, t.Request), true
+	queued := a.background(len(t.Request), stageOf(m, turn.StageRequest, func(ctx context.Context) (turn.PreparedTurn, bool) {
+		return a.prepareRequest(ctx, t.Request), true
 	}))
 	answerJSON(w, v)
 	if !queued {
@@ -308,7 +323,7 @@ func (a *Agent) turnResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := wire.MetaOf(t)
-	queued := a.background(len(t.Request)+len(t.Response), stageOf(m, func(ctx context.Context) (turn.PreparedTurn, bool) {
+	queued := a.background(len(t.Request)+len(t.Response), stageOf(m, turn.StageResponse, func(ctx context.Context) (turn.PreparedTurn, bool) {
 		return turn.PrepareResponseContext(ctx, t.Request, t.Response)
 	}))
 	answer(w, http.StatusAccepted, nil)
@@ -329,14 +344,18 @@ func decodeTurn(w http.ResponseWriter, r *http.Request) (wire.TurnRequest, bool)
 // judgeInline judges a request before it is forwarded. Any engine failure
 // fails open: the call goes through unjudged rather than being refused.
 func (a *Agent) judgeInline(ctx context.Context, m wire.Meta, body []byte) *wire.Block {
-	pt, _ := a.prepare(ctx, m, func(ctx context.Context) (turn.PreparedTurn, bool) {
-		return turn.PrepareRequestContext(ctx, body), true
-	})
+	start := time.Now()
+	pt, _ := a.prepare(ctx, m, stageOf(m, turn.StageRequest, func(ctx context.Context) (turn.PreparedTurn, bool) {
+		return a.prepareRequest(ctx, body), true
+	}))
+	prepared := time.Since(start)
 	res, err := a.detect(ctx, wire.DetectRequest{Sync: true, Meta: m, Turn: pt})
+	returned := 1
 	if err != nil {
 		a.warn("agent: inline judgment failed; failing open", err, "request_id", m.RequestID, "tenant", m.TenantID)
-		return nil
+		returned = 0
 	}
+	debugTurn(m, string(turn.StageRequest), returned, 1-returned, len(body), prepared)
 	if res == nil {
 		return nil
 	}
@@ -363,37 +382,87 @@ func (a *Agent) background(size int, stages ...stage) bool {
 	}
 }
 
-// judge sends the job's stages one after the other; a stage that fails does
-// not stop the next.
+// judge sends the job's stages one after the other; a stage that fails (or
+// panics) does not stop the next. The job's bytes count against QueueBytes
+// until it is done: the worker holds the raw turn until then.
 func (a *Agent) judge(j job) {
+	defer a.queued.Add(-j.size)
+	var stages []string
+	returned, dropped := 0, 0
+	var prepared time.Duration
+	var m wire.Meta
 	for _, st := range j.stages {
 		func() {
+			defer func() {
+				if v := recover(); v != nil { // past prepare's own recovery: drop the stage, keep the worker
+					logPanic("agent: judging a turn panicked; the stage is dropped", v, st.st)
+					dropped++
+				}
+			}()
 			ctx, cancel := context.WithTimeout(context.Background(), backgroundTimeout)
 			defer cancel()
-			pt, ok := a.prepare(ctx, st.meta(), st.prepare)
+			start := time.Now()
+			pt, ok := a.prepare(ctx, st.meta(), st)
+			prepared += time.Since(start)
 			if !ok {
 				return
 			}
-			m := st.meta()
+			m = st.meta()
+			stages = append(stages, string(pt.Stage))
 			if _, err := a.detect(ctx, wire.DetectRequest{Meta: m, Turn: pt}); err != nil {
 				a.warn("agent: background judgment failed", err, "request_id", m.RequestID, "tenant", m.TenantID, "stage", pt.Stage)
+				dropped++
+				return
 			}
+			returned++
 		}()
 	}
+	debugTurn(m, strings.Join(stages, ","), returned, dropped, int(j.size), prepared)
 }
 
-// prepare runs p within PrepareTimeout of ctx. A turn the deadline cut
-// short comes back as not judged (turn.DeadlineReason), never half
-// redacted; it is sent like that and logged here.
-func (a *Agent) prepare(ctx context.Context, m wire.Meta, p func(context.Context) (turn.PreparedTurn, bool)) (turn.PreparedTurn, bool) {
+// debugTurn is the debug line of one judged turn: no text of it, only its
+// ids, stages, how many judgments the engine returned and how many were
+// dropped, its raw bytes and the time spent preparing it.
+func debugTurn(m wire.Meta, stages string, returned, dropped, bytes int, prepared time.Duration) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	slog.Debug("agent: turn judged", "tenant", m.TenantID, "request_id", m.RequestID, "stages", stages,
+		"returned", returned, "dropped", dropped, "bytes", bytes, "prepare_ms", prepared.Milliseconds())
+}
+
+// prepare runs st's prepare within PrepareTimeout of ctx. A turn the
+// deadline cut short comes back as not judged (turn.DeadlineReason), never
+// half redacted; it is sent like that and logged here. A panic (a bug) is
+// recovered, logged at Error, and the stage is sent as not judged
+// (errPrepareFailed), so neither a worker nor the process dies with it.
+func (a *Agent) prepare(ctx context.Context, m wire.Meta, st stage) (pt turn.PreparedTurn, ok bool) {
 	pctx, cancel := context.WithTimeout(ctx, a.cfg.PrepareTimeout)
 	defer cancel()
-	pt, ok := p(pctx)
+	defer func() {
+		if v := recover(); v != nil {
+			logPanic("agent: preparing a turn panicked; sending it as not judged", v, st.st,
+				"request_id", m.RequestID, "tenant", m.TenantID)
+			pt, ok = turn.NotJudgedTurn(st.st, errPrepareFailed), true
+		}
+	}()
+	pt, ok = st.prepare(pctx)
 	if ok && pt.NotJudged == turn.DeadlineReason {
 		slog.Warn("agent: preparing a turn ran past its deadline; sending it as not judged",
 			"request_id", m.RequestID, "tenant", m.TenantID, "stage", pt.Stage)
 	}
 	return pt, ok
+}
+
+// logPanic logs a recovered panic at Error with its stack. The value is
+// logged only when the runtime raised it (an index out of range, a nil
+// dereference): a panic the code raised may quote the turn.
+func logPanic(msg string, v any, st turn.Stage, args ...any) {
+	what := fmt.Sprintf("%T", v)
+	if re, ok := v.(runtime.Error); ok {
+		what = re.Error()
+	}
+	slog.Error(msg, append(args, "stage", st, "panic", what, "stack", string(debug.Stack()))...)
 }
 
 func (a *Agent) notJudged(m wire.Meta, st turn.Stage) {
@@ -403,6 +472,11 @@ func (a *Agent) notJudged(m wire.Meta, st turn.Stage) {
 		a.warn("agent: not-judged marker not sent", err, "request_id", m.RequestID, "tenant", m.TenantID, "stage", st)
 	}
 }
+
+// history is a conversation's history as the engine gets it: lower case
+// ("Full" is full). A value this agent does not know is passed on as it
+// is, lower-cased.
+func history(h string) string { return strings.ToLower(h) }
 
 // policy is the tenant's routing, cached for PolicyTTL. On an engine error it
 // keeps the last value (or, never fetched, judges in the background and asks

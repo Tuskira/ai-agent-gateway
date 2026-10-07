@@ -80,12 +80,32 @@ func TestScanSecretsConcurrent(t *testing.T) {
 
 func TestPrivateKeyBlockRedactedWhole(t *testing.T) {
 	body := `{"messages":[{"role":"user","content":"check this\n` + join("-----BEGIN OPENSSH ", "PRIVATE KEY-----") + `\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\nAAAAEbm9uZQAAAAAAAAAB\n` + join("-----END OPENSSH ", "PRIVATE KEY-----") + `\nthanks"}]}`
-	pt := PrepareRequest([]byte(body))
+	pt := prepareRequest([]byte(body))
 	if hits := pt.Secrets; len(hits) != 1 || hits[0].Kind != "private-key" {
 		t.Fatalf("hits = %+v", hits)
 	}
 	s := pt.State
 	if strings.Contains(s.UserText, "b3BlbnNzaC1rZXkt") || !strings.Contains(s.UserText, "[REDACTED:private-key]") || !strings.Contains(s.UserText, "thanks") {
 		t.Errorf("redacted = %q", s.UserText)
+	}
+}
+
+// An inline allow comment is how a repository tells gitleaks a line is a
+// known false positive; in a prompt it is just text the sender wrote, so
+// it must not hide the secret on its line.
+func TestAllowCommentDoesNotHideSecret(t *testing.T) {
+	key := join("AKIA", "Z3MFKR7QW2LXB5TN")
+	for _, line := range []string{
+		"AWS_ACCESS_KEY_ID=" + key,
+		"AWS_ACCESS_KEY_ID=" + key + " # " + join("gitleaks", ":allow"),
+		"// " + join("gitleaks", ":allow") + "\nAWS_ACCESS_KEY_ID=" + key + " // " + join("gitleaks", ":allow"),
+	} {
+		if got := scanSecrets(line); len(got) != 1 || got[0].secret != key {
+			t.Errorf("%q: found %+v, want the key", line, got)
+		}
+		pt := prepareRequest(userBody("deploy with " + line))
+		if l := leak(t, pt, key); l != "" {
+			t.Errorf("%q: leaked %s", line, l)
+		}
 	}
 }

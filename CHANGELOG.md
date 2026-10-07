@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`detection/turn` API trimmed.** Exported helpers with no callers
+  outside the package's own tests are removed or unexported:
+  `RequestState`, `ResponseState`, `RequestStateFromConversation` and
+  `ResponseStateFromAnswer` (removed), `PrepareRequest` and
+  `PrepareResponse` (use `PrepareRequestContext` /
+  `PrepareResponseContext`, which a deadline bounds), and `Clip`,
+  `UTF8Start` and `ItemUnreadReason` (unexported).
 - **`pkg/analytics` seam:** `Reader.Overview`, `SkillsSummary`, `SkillUsage`,
   `MCPToolUsage` and `MCPServerCalls` take an `analytics.Period`
   (a resolved window with its previous period and granularity) instead of
@@ -94,6 +101,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Detection agent:** the default `AGENT_ENGINE_TIMEOUT` is `8s` (was
+  `9s`), so the 1 s policy lookup and an inline judgment fit a gateway's
+  10 s wait with a second to spare. New `AGENT_LOG_LEVEL` (`debug`,
+  `info`, `warn`, `error`; default `info`); at `debug` the agent logs one
+  line per judged turn with its ids, stages, judgments returned and
+  dropped, bytes and prepare time, never its text.
 - The Overview, Token Monitoring, MCPs and Skills pages share one time
   filter: Last 24h / 7d / 30d as segmented buttons (instead of a dropdown)
   plus **custom dates** (a two-month calendar; whole UTC days, up to 366),
@@ -120,6 +133,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Detection agent robustness.** A panic while preparing a turn is
+  recovered in the background workers and on the inline path: logged at
+  `error` with its stack, the stage sent as `not_judged`, the process kept
+  running (before, one panic in a worker ended the agent). A queued turn's
+  bytes now count against `AGENT_QUEUE_BYTES` until its judgment is done,
+  not only until a worker picks it up. `history` is read case-insensitively
+  and sent to the engine in lower case.
+- **Detection agent: a deeply nested request no longer ties up a CPU past
+  the prepare deadline.** Nested `tool_result` content was re-parsed and
+  re-joined at every level before any deadline check, so the work grew with
+  depth times size (a 2.9 MB body nested 3000 levels took about 10 s
+  against the 4 s deadline). Content is now decoded once, flattened in one
+  pass, read with deadline checks in every loop (raw bodies and canonical
+  conversations alike), and capped at 8 levels of nesting and 65536 blocks;
+  past a cap the stage is sent as `not_judged` with the reason.
+- **Detection agent: a secret stated deep inside a long history string is
+  removed.** Values were collected only from a window (64 KiB each side of
+  the part clipping keeps) of each long string, so a value stated in the
+  middle of a long earlier tool output was not collected and a bare copy
+  of it in the new turn left the host. Every byte of every string is now
+  scanned (in overlapping 256 KiB pieces); when that does not finish within
+  the agent's prepare deadline (4 s) the stage is sent as `not_judged`
+  with no text. A 10 MiB body now takes about 2.3 s to prepare (about
+  0.08 s before).
+- **Detection agent: an inline allow comment no longer hides a secret.**
+  The secret scan honoured gitleaks' inline allow comment, so a key on a
+  line that also carried the comment was neither found nor redacted and
+  left the host in the turn. The agent (and `PreparedTurn.Normalized`) now
+  ignores the comment: in a call it is only text the sender wrote.
 - A credential pasted with a trailing newline is sent without it; only line
   breaks inside the value (a PEM key) are escaped.
 - An MCP catalog entry's `default_headers` need a non-empty, single-line
@@ -231,6 +273,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Kubernetes example for the detection agent.**
+  `deploy/k8s/components/detection-agent` (a kustomize Component) adds the
+  agent as a sidecar of `gateway-llm` on `127.0.0.1:8090`, with the engine
+  URL and token from a Secret, and points the gateway's tee at it
+  (`GATEWAY_LLM_PROXY_DETECTION_AGENT_URL`); `overlays/detection-agent` is
+  the base plus it. See `docs/detection-agent.md`, "Kubernetes sidecar".
 - **`pkg/llm` readers:** a new optional `llm.Reader` interface
   (`DecodeRequest`, `DecodeResponse`, `NewResponseDecoder`) reads what a
   client sent and what it received into the neutral types, with a registry

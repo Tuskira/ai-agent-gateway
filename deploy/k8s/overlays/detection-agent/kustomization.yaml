@@ -1,0 +1,16 @@
+# EXAMPLE: base + the detection agent as a sidecar of gateway-llm:
+# `kubectl kustomize deploy/k8s/overlays/detection-agent` to inspect.
+#
+# Everything agent-related lives in ../../components/detection-agent (a
+# kustomize Component), so it drops into any other overlay too: list
+# `../../components/detection-agent` under components: next to redis or
+# analytics. Fill in its Secret and the image tag first; see
+# docs/detection-agent.md, "Kubernetes sidecar".
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/detection-agent

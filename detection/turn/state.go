@@ -108,23 +108,17 @@ type block struct {
 	Name      string          `json:"name"`
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
-	Content   json.RawMessage `json:"content"`
+	Content   content         `json:"content"`
 }
 
-// RequestState extracts the new turn from a request body: the final
+// extractRequest extracts the new turn from a request body: the final
 // message's user text and tool results, the tool calls that produced them,
 // and the latest thing the user actually typed (the goal that authorizes
-// actions), each clipped to its cap. ok is false when the body is not a
-// chat request.
-func RequestState(body []byte) (State, bool) {
-	s, ok := extractRequest(body)
-	s.clip()
-	return s, ok
-}
-
-// extractRequest is RequestState unclipped: the secret scan must see a
-// secret whole before clipping can cut it (see scrub).
-func extractRequest(body []byte) (s State, ok bool) {
+// actions). ok is false when the body is not a chat request. Nothing is
+// clipped: the secret scan must see a secret whole before clipping can cut
+// it (see scrub). It reads within r's bounds: once r has a reason, s is
+// not to be sent.
+func extractRequest(r *reader, body []byte) (s State, ok bool) {
 	var req struct {
 		Messages []message `json:"messages"`
 	}
@@ -137,10 +131,18 @@ func extractRequest(body []byte) (s State, ok bool) {
 	}
 	msgs := req.Messages
 
+	// Each message's content, decoded once (nested content included).
+	cs := make([][]block, len(msgs))
+	for i, m := range msgs {
+		if cs[i] = r.content(m.Content); !r.ok(len(m.ToolCalls)) {
+			return s, true
+		}
+	}
+
 	// Tool names by call id, so each result can say which tool produced it.
 	names, inputs := map[string]string{}, map[string]string{}
-	for _, m := range msgs {
-		for _, b := range blocks(m.Content) {
+	for i, m := range msgs {
+		for _, b := range cs[i] {
 			if b.Type == "tool_use" {
 				names[b.ID], inputs[b.ID] = b.Name, string(b.Input)
 			}
@@ -171,23 +173,24 @@ func extractRequest(body []byte) (s State, ok bool) {
 		start--
 	}
 	var userText, harness []string
-	for _, m := range msgs[start:end] {
+	for i := start; i < end && r.ok(0); i++ {
+		m := msgs[i]
 		if m.Role == "system" || m.Role == "developer" {
-			if t := strings.TrimSpace(textOf(m.Content)); t != "" {
+			if t := strings.TrimSpace(r.textOf(cs[i])); t != "" {
 				harness = append(harness, t)
 			}
 			continue
 		}
 		if m.Role == "tool" {
-			s.addResult(ToolResult{Tool: firstNonEmpty(names[m.ToolCallID], m.Name), Content: textOf(m.Content),
+			s.addResult(ToolResult{Tool: firstNonEmpty(names[m.ToolCallID], m.Name), Content: r.textOf(cs[i]),
 				CallID: m.ToolCallID, CallInput: inputs[m.ToolCallID]})
 			continue
 		}
 		if m.Role == "function" { // legacy: no call id, the function's name
-			s.addResult(ToolResult{Tool: m.Name, Content: textOf(m.Content)})
+			s.addResult(ToolResult{Tool: m.Name, Content: r.textOf(cs[i])})
 			continue
 		}
-		for _, b := range blocks(m.Content) {
+		for _, b := range cs[i] {
 			switch b.Type {
 			case "text":
 				if t := typed(b.Text); t != "" {
@@ -195,7 +198,7 @@ func extractRequest(body []byte) (s State, ok bool) {
 				}
 				harness = append(harness, harnessRe.FindAllString(b.Text, -1)...)
 			case "tool_result":
-				s.addResult(ToolResult{Tool: names[b.ToolUseID], Content: textOf(b.Content),
+				s.addResult(ToolResult{Tool: names[b.ToolUseID], Content: r.textOf(b.Content),
 					CallID: b.ToolUseID, CallInput: inputs[b.ToolUseID]})
 			}
 		}
@@ -206,17 +209,17 @@ func extractRequest(body []byte) (s State, ok bool) {
 	// The assistant message right before the turn made the calls whose
 	// results are in it.
 	if start > 0 && msgs[start-1].Role == "assistant" {
-		s.PriorToolCalls = toolCalls(msgs[start-1])
+		s.PriorToolCalls = toolCalls(msgs[start-1], cs[start-1])
 	}
 
 	// The goal: the latest human-typed text anywhere in the conversation.
 	s.UserGoal = s.UserText
-	for i := start - 1; s.UserGoal == "" && i >= 0; i-- {
+	for i := start - 1; s.UserGoal == "" && i >= 0 && r.ok(0); i-- {
 		if msgs[i].Role != "user" {
 			continue
 		}
 		var goal []string
-		for _, b := range blocks(msgs[i].Content) {
+		for _, b := range cs[i] {
 			if t := typed(b.Text); b.Type == "text" && t != "" {
 				goal = append(goal, t)
 			}
@@ -234,21 +237,14 @@ func (s *State) addResult(r ToolResult) {
 	s.ToolResults = append(s.ToolResults, r)
 }
 
-// ResponseState extracts the assistant's text and proposed tool calls from
-// a response body: an Anthropic or OpenAI SSE stream, or a plain JSON body,
-// each clipped to its cap.
-func ResponseState(body []byte) State {
-	s := extractResponse(body)
-	s.clip()
-	return s
-}
-
-// extractResponse is ResponseState unclipped.
-func extractResponse(body []byte) State {
+// extractResponse extracts the assistant's text and proposed tool calls
+// from a response body: an Anthropic or OpenAI SSE stream, or a plain JSON
+// body, unclipped, read within r's bounds.
+func extractResponse(r *reader, body []byte) State {
 	var s State
-	text, calls := parseSSE(body)
-	if text == "" && len(calls) == 0 {
-		text, calls = parseJSONResponse(body)
+	text, calls := parseSSE(r, body)
+	if text == "" && len(calls) == 0 && r.ok(0) {
+		text, calls = parseJSONResponse(r, body)
 	}
 	s.ResponseText = strings.TrimSpace(text)
 	if len(calls) > maxToolItems {
@@ -258,14 +254,17 @@ func extractResponse(body []byte) State {
 	return s
 }
 
-func parseSSE(body []byte) (string, []ToolCall) {
+func parseSSE(r *reader, body []byte) (string, []ToolCall) {
 	var text strings.Builder
 	var calls []ToolCall
 	var inputs []*strings.Builder
 	byIndex := map[int]int{} // content block / tool call index → calls index
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
-	for sc.Scan() {
+	for n := 0; sc.Scan(); n++ {
+		if n%256 == 0 && !r.ok(0) {
+			return "", nil
+		}
 		line := sc.Bytes()
 		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
@@ -336,7 +335,7 @@ func parseSSE(body []byte) (string, []ToolCall) {
 	return text.String(), calls
 }
 
-func parseJSONResponse(body []byte) (string, []ToolCall) {
+func parseJSONResponse(rd *reader, body []byte) (string, []ToolCall) {
 	var r struct {
 		Content json.RawMessage `json:"content"` // Anthropic
 		Choices []struct {
@@ -346,46 +345,18 @@ func parseJSONResponse(body []byte) (string, []ToolCall) {
 	if json.Unmarshal(body, &r) != nil {
 		return "", nil
 	}
-	if len(r.Choices) > 0 {
-		m := r.Choices[0].Message
-		return textOf(m.Content), toolCalls(m)
-	}
 	m := message{Role: "assistant", Content: r.Content}
-	return textOf(r.Content), toolCalls(m)
+	if len(r.Choices) > 0 {
+		m = r.Choices[0].Message
+	}
+	bs := rd.content(m.Content)
+	return rd.textOf(bs), toolCalls(m, bs)
 }
 
-// blocks normalizes content to blocks: a bare string is one text block.
-func blocks(raw json.RawMessage) []block {
-	if len(raw) == 0 {
-		return nil
-	}
-	var str string
-	if jsonv2.Unmarshal(raw, &str) == nil {
-		return []block{{Type: "text", Text: str}}
-	}
-	var bs []block
-	_ = jsonv2.Unmarshal(raw, &bs)
-	return bs
-}
-
-// textOf concatenates the text of content (string, or text blocks, one level
-// of nested tool_result content included).
-func textOf(raw json.RawMessage) string {
-	var parts []string
-	for _, b := range blocks(raw) {
-		switch {
-		case b.Type == "text" && b.Text != "":
-			parts = append(parts, b.Text)
-		case b.Type == "tool_result":
-			parts = append(parts, textOf(b.Content))
-		}
-	}
-	return strings.Join(parts, "\n")
-}
-
-func toolCalls(m message) []ToolCall {
+// toolCalls is the tool calls of m, whose content decoded is bs.
+func toolCalls(m message, bs []block) []ToolCall {
 	var out []ToolCall
-	for _, b := range blocks(m.Content) {
+	for _, b := range bs {
 		if b.Type == "tool_use" {
 			out = append(out, ToolCall{Name: b.Name, Input: string(b.Input), ID: b.ID})
 		}
@@ -402,9 +373,9 @@ func toolCalls(m message) []ToolCall {
 	return out
 }
 
-// Clip bounds s to n bytes on a rune boundary, keeping the head and tail
+// clipString bounds s to n bytes on a rune boundary, keeping the head and tail
 // (instructions hide at either end of a long document).
-func Clip(s string, n int) string {
+func clipString(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
@@ -412,23 +383,23 @@ func Clip(s string, n int) string {
 	return s[:head] + clipMark + s[t:]
 }
 
-// clipMark replaces what Clip cuts out.
+// clipMark replaces what clipString cuts out.
 const clipMark = "\n…[truncated]…\n"
 
-// clipBounds is where Clip cuts s (longer than n): s[:head] and s[tail:]
+// clipBounds is where clipString cuts s (longer than n): s[:head] and s[tail:]
 // are kept.
 func clipBounds(s string, n int) (head, tail int) {
 	head, tail = n*2/3, len(s)-n/3
-	for head > 0 && !UTF8Start(s[head]) {
+	for head > 0 && !utf8Start(s[head]) {
 		head--
 	}
-	for tail < len(s) && !UTF8Start(s[tail]) {
+	for tail < len(s) && !utf8Start(s[tail]) {
 		tail++
 	}
 	return head, tail
 }
 
-func UTF8Start(b byte) bool { return b&0xC0 != 0x80 }
+func utf8Start(b byte) bool { return b&0xC0 != 0x80 }
 
 func firstNonEmpty(a, b string) string {
 	if a != "" {
@@ -437,19 +408,19 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
-// clip bounds every field to its cap, as RequestState / ResponseState
-// return them (no secret scan: see scrub for what leaves the host).
+// clip bounds every field to its cap (no secret scan: see scrub for what
+// leaves the host).
 func (s *State) clip() {
-	s.UserText, s.UserGoal, s.ResponseText = Clip(s.UserText, capText), Clip(s.UserGoal, capText), Clip(s.ResponseText, capText)
-	s.HarnessText = Clip(s.HarnessText, capText)
+	s.UserText, s.UserGoal, s.ResponseText = clipString(s.UserText, capText), clipString(s.UserGoal, capText), clipString(s.ResponseText, capText)
+	s.HarnessText = clipString(s.HarnessText, capText)
 	for i := range s.ToolResults {
 		r := &s.ToolResults[i]
-		r.Content, r.CallInput = Clip(r.Content, capToolResult), Clip(r.CallInput, capToolInput)
+		r.Content, r.CallInput = clipString(r.Content, capToolResult), clipString(r.CallInput, capToolInput)
 	}
 	for i := range s.PriorToolCalls {
-		s.PriorToolCalls[i].Input = Clip(s.PriorToolCalls[i].Input, capToolInput)
+		s.PriorToolCalls[i].Input = clipString(s.PriorToolCalls[i].Input, capToolInput)
 	}
 	for i := range s.ResponseToolCalls {
-		s.ResponseToolCalls[i].Input = Clip(s.ResponseToolCalls[i].Input, capToolInput)
+		s.ResponseToolCalls[i].Input = clipString(s.ResponseToolCalls[i].Input, capToolInput)
 	}
 }

@@ -308,22 +308,39 @@ func TestQueueFullSendsNotJudged(t *testing.T) {
 }
 
 // The queue is bounded by bytes too: a turn past QueueBytes is shed like a
-// full queue, and a turn a worker has taken no longer counts.
+// full queue. A turn's bytes count until its judgment is done, not only
+// while it waits: the worker holds the raw turn while it prepares and
+// sends it, so a free worker does not make room.
 func TestQueueBytesSheds(t *testing.T) {
 	f := newFakeEngine(t)
 	f.hold = make(chan struct{})
 	tr := userTurn("t1", "same size")
-	_, url := startAgent(t, f, Config{MaxInFlight: 1, QueueSize: 10, QueueBytes: len(tr.Request)})
+	a, url := startAgent(t, f, Config{MaxInFlight: 2, QueueSize: 10, QueueBytes: len(tr.Request)})
 
 	post(t, url, wire.PathTurnRequest, tr)
 	if got := f.next(t); got.req.Turn.NotJudged != "" {
 		t.Fatalf("first call not judged: %+v", got.req)
 	}
-	post(t, url, wire.PathTurnRequest, tr) // fits: the worker freed the first turn's bytes
-	f.none(t)
-	post(t, url, wire.PathTurnRequest, tr) // over the byte budget
+	post(t, url, wire.PathTurnRequest, tr) // over the byte budget while the first is judged
 	if got := f.next(t); got.req.Turn.NotJudged != errJudgingBusy {
-		t.Fatalf("detect = %+v; want the not-judged marker past QueueBytes", got.req)
+		t.Fatalf("detect = %s; want the not-judged marker past QueueBytes", got.raw)
+	}
+	f.release()
+	waitQueued(t, a, 0)
+	post(t, url, wire.PathTurnRequest, tr) // fits: the first judgment is done
+	if got := f.next(t); got.req.Turn.NotJudged != "" {
+		t.Fatalf("detect = %s; want a judged turn once the first is done", got.raw)
+	}
+}
+
+// waitQueued waits until the queued turns hold n bytes.
+func waitQueued(t *testing.T, a *Agent, n int64) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); a.queued.Load() != n; {
+		if time.Now().After(deadline) {
+			t.Fatalf("queued bytes = %d; want %d", a.queued.Load(), n)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -423,7 +440,7 @@ func TestWireVersion(t *testing.T) {
 		t.Errorf("code %d, verdict %+v; want a fail-open answer", code, v)
 	}
 	f.next(t)
-	_, err := a.detect(context.Background(), wire.DetectRequest{Meta: wire.Meta{TenantID: "t1", RequestID: "r"}, Turn: turn.PrepareRequest([]byte(`{}`))})
+	_, err := a.detect(context.Background(), wire.DetectRequest{Meta: wire.Meta{TenantID: "t1", RequestID: "r"}, Turn: turn.PrepareRequestContext(context.Background(), []byte(`{}`))})
 	if err == nil || !strings.Contains(err.Error(), "upgrade the engine") || !strings.Contains(err.Error(), "wire version 1") {
 		t.Errorf("err = %v, want a clear version error", err)
 	}
@@ -606,23 +623,25 @@ func TestTurnsQueueFullSendsNotJudged(t *testing.T) {
 	f.none(t) // one marker only
 }
 
-// The byte budget counts request and response together.
+// The byte budget counts request and response together, until the turn's
+// judgment is done.
 func TestTurnsQueueBytesCountResponse(t *testing.T) {
 	f := newFakeEngine(t)
 	f.hold = make(chan struct{})
 	tr := fullTurn("same size", true)
-	_, url := startAgent(t, f, Config{MaxInFlight: 1, QueueSize: 10, QueueBytes: len(tr.Request) + len(tr.Response)})
+	a, url := startAgent(t, f, Config{MaxInFlight: 2, QueueSize: 10, QueueBytes: len(tr.Request) + len(tr.Response)})
 
 	postTurn(t, url, tr)
 	if got := f.next(t); got.req.Turn.NotJudged != "" {
 		t.Fatalf("first turn not judged: %+v", got.req)
 	}
-	postTurn(t, url, tr) // fits: the worker freed the first turn's bytes
-	f.none(t)
-	postTurn(t, url, tr) // over the budget
+	postTurn(t, url, tr) // over the budget: the first is still being judged
 	if got := f.next(t); got.req.Turn.NotJudged != errJudgingBusy {
-		t.Fatalf("detect = %+v; want the not-judged marker", got.req)
+		t.Fatalf("detect = %s; want the not-judged marker", got.raw)
 	}
+	f.release()
+	f.next(t) // the first turn's response stage
+	waitQueued(t, a, 0)
 }
 
 // A turn whose preparation runs past PrepareTimeout is sent as not judged,
@@ -939,4 +958,112 @@ func TestTurnsMetaDialectOpHistory(t *testing.T) {
 		}
 	}
 	f.none(t)
+}
+
+// A panic while preparing a turn is recovered, in a background worker and
+// on the inline path: it is logged at Error, the engine gets a not-judged
+// marker, and the agent goes on judging.
+func TestPreparePanicRecovered(t *testing.T) {
+	logs := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	f := newFakeEngine(t)
+	f.policies["inline"] = wire.PolicyResponse{Inline: true}
+	a, url := startAgent(t, f, Config{})
+	secret := join("AKIA", "Z3MFKR7QW2LXB5TN")
+	boom := func(context.Context) (turn.PreparedTurn, bool) { panic("prepare failed on " + secret) }
+
+	m := wire.Meta{TenantID: "t1", RequestID: "bg"}
+	if !a.background(10, stageOf(m, turn.StageResponse, boom)) {
+		t.Fatal("not queued")
+	}
+	got := f.next(t)
+	if got.req.Turn.NotJudged != errPrepareFailed || got.req.Turn.Stage != turn.StageResponse || got.req.Meta.RequestID != "bg" {
+		t.Errorf("background: engine received %s", got.raw)
+	}
+	waitQueued(t, a, 0)
+
+	a.prepareRequest = func(context.Context, []byte) turn.PreparedTurn { panic("prepare failed on " + secret) }
+	if code, v := post(t, url, wire.PathTurnRequest, userTurn("inline", "hello")); code != http.StatusOK || v.Block != nil {
+		t.Errorf("inline: %d %+v; want 200, no block", code, v)
+	}
+	if got := f.next(t); got.req.Turn.NotJudged != errPrepareFailed || got.req.Turn.Stage != turn.StageRequest {
+		t.Errorf("inline: engine received %s", got.raw)
+	}
+	if n := logs.count("level=ERROR"); n != 2 {
+		t.Errorf("%d error lines, want 2:\n%s", n, logs.b.String())
+	}
+	if logs.count(secret) != 0 {
+		t.Errorf("the panic value was logged: %s", logs.b.String())
+	}
+
+	// Still judging.
+	a.prepareRequest = turn.PrepareRequestContext
+	post(t, url, wire.PathTurnRequest, userTurn("t1", "after"))
+	if got := f.next(t); got.req.Turn.NotJudged != "" || got.req.Turn.State.UserText != "after" {
+		t.Errorf("after the panics: engine received %s", got.raw)
+	}
+}
+
+// The default engine budget leaves the policy lookup and a margin inside a
+// gateway's 10 s wait for an inline verdict.
+func TestDefaultEngineTimeout(t *testing.T) {
+	a := New(Config{EngineURL: "http://127.0.0.1:1", Token: "x"})
+	t.Cleanup(a.Wait)
+	if a.cfg.EngineTimeout != 8*time.Second || policyTimeout+a.cfg.EngineTimeout > 9*time.Second {
+		t.Errorf("engine timeout %v + policy %v", a.cfg.EngineTimeout, policyTimeout)
+	}
+}
+
+// At debug level each judged turn logs one line: tenant, request id,
+// stages, how many judgments the engine returned and how many were
+// dropped, the turn's bytes and the time spent preparing.
+func TestDebugLinePerTurn(t *testing.T) {
+	logs := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	f := newFakeEngine(t)
+	a, url := startAgent(t, f, Config{})
+	tr := fullTurn("summarise this", true)
+	postTurn(t, url, tr)
+	f.next(t)
+	f.next(t)
+	waitQueued(t, a, 0)
+	for deadline := time.Now().Add(5 * time.Second); logs.count("agent: turn judged") == 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	line := logs.b.String()
+	for _, want := range []string{"level=DEBUG", "agent: turn judged", "tenant=t1", "request_id=req-1",
+		"stages=request,response", "returned=2", "dropped=0", fmt.Sprintf("bytes=%d", len(tr.Request)+len(tr.Response)), "prepare_ms="} {
+		if !strings.Contains(line, want) {
+			t.Errorf("debug line lacks %q: %s", want, line)
+		}
+	}
+	if strings.Contains(line, "summarise") {
+		t.Errorf("debug line carries turn text: %s", line)
+	}
+}
+
+// history is case-insensitive: the engine gets it in lower case, for a
+// single turn and for a batch item.
+func TestTurnsHistoryLowerCased(t *testing.T) {
+	f := newFakeEngine(t)
+	_, url := startAgent(t, f, Config{})
+	tr := fullTurn("summarise this", false)
+	tr.Conversation = &wire.Conversation{Version: wire.ConversationVersion, History: "Server_Side",
+		Messages: []wire.Message{{Role: "user", Content: []wire.ContentBlock{{Type: wire.ContentText, Text: "summarise this"}}}}}
+	postTurn(t, url, tr)
+	if got := f.next(t); got.req.Meta.History != wire.HistoryServerSide {
+		t.Errorf("single turn meta = %s", got.raw)
+	}
+	b := batchTurn("a")
+	b.Items[0].Conversation.History = "PROMPT"
+	postTurn(t, url, b)
+	if got := f.next(t); got.req.Meta.History != wire.HistoryPrompt {
+		t.Errorf("batch item meta = %s", got.raw)
+	}
 }

@@ -21,12 +21,12 @@ func TestBatchPrepareItem(t *testing.T) {
 	if first.NotJudged != "" || !strings.HasPrefix(first.State.UserText, "ship it with [REDACTED:") {
 		t.Errorf("first item: %+v", first)
 	}
-	if pt := b.PrepareItem(context.Background(), conversation(conv.HistoryFull)); pt.NotJudged != ItemUnreadReason {
+	if pt := b.PrepareItem(context.Background(), conversation(conv.HistoryFull)); pt.NotJudged != itemUnreadReason {
 		t.Errorf("empty conversation: %+v", pt)
 	}
 	newer := conversation(conv.HistoryFull, msg("user", text("hi")))
 	newer.Version = conv.ConversationVersion + 1
-	if pt := b.PrepareItem(context.Background(), newer); pt.NotJudged != ItemUnreadReason {
+	if pt := b.PrepareItem(context.Background(), newer); pt.NotJudged != itemUnreadReason {
 		t.Errorf("newer conversation: %+v", pt)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

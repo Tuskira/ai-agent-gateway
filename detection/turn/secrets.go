@@ -52,6 +52,10 @@ func secretDetector() *detect.Detector {
 			panic("turn: secrets.toml: " + err.Error())
 		}
 		secretsDet = detect.NewDetector(cfg)
+		// An inline allow comment marks a known false positive in a
+		// repository; in a call it is text the sender wrote, and honouring
+		// it would let anyone keep a secret on its line from being removed.
+		secretsDet.IgnoreGitleaksAllow = true
 	})
 	return secretsDet
 }
@@ -63,14 +67,88 @@ type secretMatch struct {
 	secret string
 }
 
-// scanSecrets finds the secrets in text.
+// scanSecrets finds the secrets in text. Only for text whose size is
+// bounded (a capped field, a hit list, an id): a string of the body goes
+// through scanText, which a deadline stops.
 func scanSecrets(text string) []secretMatch {
+	ms, _ := scanSecretsContext(context.Background(), text)
+	return ms
+}
+
+// Long text is scanned in pieces of scanChunk bytes, each overlapping the
+// next by scanOverlap. One rule's regex over a piece cannot be stopped, so
+// the piece bounds how far past a deadline a scan runs (a keyword-dense
+// piece costs about 0.1 s for the slowest rule); the overlap finds whole
+// every secret (with the context its rule needs) up to scanOverlap long
+// that a piece's edge cuts.
+const (
+	scanChunk   = 256 << 10
+	scanOverlap = 64 << 10
+)
+
+// scanSecretsContext finds the secrets in all of text, every byte of it,
+// piece by piece (scanChunk). A match that runs into a piece's cut edge
+// (one that is not an end of text) may be a secret the cut truncated: it
+// is dropped, and the overlapping piece finds it whole. It stops between
+// two rules once ctx is done and returns ctx's error: what it found by then
+// is not every secret, so the caller must send nothing.
+func scanSecretsContext(ctx context.Context, text string) ([]secretMatch, error) {
+	if len(text) <= scanChunk+scanOverlap {
+		return scanPiece(ctx, text)
+	}
+	var out []secretMatch
+	for lo := 0; ; lo += scanChunk {
+		a, b := runeStart(text, lo, -1), runeStart(text, min(len(text), lo+scanChunk+scanOverlap), 1)
+		ms, err := scanPiece(ctx, text[a:b])
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range ms {
+			if l, h := touches(text[a:b], m, a > 0, b < len(text)); !l && !h {
+				out = append(out, m)
+			}
+		}
+		if b == len(text) {
+			break
+		}
+	}
+	slices.SortFunc(out, func(a, b secretMatch) int {
+		return cmp.Or(strings.Compare(a.kind, b.kind), strings.Compare(a.secret, b.secret))
+	})
+	return slices.Compact(out), nil
+}
+
+// touches reports whether m, found in w, runs into w's start or end where
+// that is a cut (lo, hi). An unterminated private key block runs to the end
+// of what is scanned by design: it is kept (the piece that holds its END
+// finds the block whole, and both values are removed).
+func touches(w string, m secretMatch, lo, hi bool) (bool, bool) {
+	if m.kind == "private-key-unterminated" {
+		return false, false
+	}
+	return lo && strings.HasPrefix(w, m.secret), hi && strings.HasSuffix(w, m.secret)
+}
+
+// runeStart moves i to the nearest rune start in direction dir (1 or -1).
+func runeStart(text string, i, dir int) int {
+	for i > 0 && i < len(text) && !utf8Start(text[i]) {
+		i += dir
+	}
+	return i
+}
+
+// scanPiece is the gitleaks scan of text, stopped between two rules once
+// ctx is done.
+func scanPiece(ctx context.Context, text string) ([]secretMatch, error) {
 	if strings.TrimSpace(text) == "" {
-		return nil
+		return nil, ctx.Err()
 	}
 	var out []secretMatch
 	seen := map[secretMatch]bool{}
-	for _, f := range secretDetector().DetectString(text) {
+	// DetectContext is the only way to stop a scan between rules; in
+	// gitleaks v8 it takes the deprecated detect.Fragment.
+	frag := detect.Fragment{Raw: text} //nolint:staticcheck // SA1019: no other type until v9
+	for _, f := range secretDetector().DetectContext(ctx, frag) {
 		s := f.Secret
 		if s == "" {
 			s = f.Match
@@ -95,7 +173,10 @@ func scanSecrets(text string) []secretMatch {
 	slices.SortFunc(out, func(a, b secretMatch) int {
 		return cmp.Or(strings.Compare(a.kind, b.kind), strings.Compare(a.secret, b.secret))
 	})
-	return out
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // redactSecrets replaces every secret in text with [REDACTED:<rule id>].
@@ -172,23 +253,6 @@ func byLength(ms []secretMatch) []secretMatch {
 }
 
 // ── what leaves the host ────────────────────────────────────────────────────
-
-// scanOverlap is how far past each kept end of a field longer than its cap
-// the secret scan reaches. Scanning a whole 10 MiB field costs about 2 s
-// (every keyword rule runs its regex over all of it); scanning what is kept
-// plus this much on each side finds, whole, every secret up to 64 KiB long
-// that the cut would split. Private key blocks have no length bound, so
-// scanWindows also widens a window to a block it opens or closes, up to
-// maxKeyBlock.
-const scanOverlap = 64 << 10
-
-// maxKeyBlock bounds how far a window is widened to take a key block whole.
-// A real private key block is a few KB (RSA 16384 is under 13 KB); a wider
-// BEGIN … END span is not a key to take whole, and widening to it made one
-// 20 MiB tool output a whole-text scan (seconds). What a window cuts of
-// such a span is still found: private-key-unterminated matches a BEGIN
-// line with no END after it.
-const maxKeyBlock = 64 << 10
 
 // minSharedSecret is the shortest value found in one string that is also
 // removed from every other string. A shorter one (a 4-character password
@@ -280,9 +344,12 @@ func (s *State) texts(st Stage) []textRef {
 // what lets the engine re-apply it (PreparedTurn.Normalized) to a turn an
 // honest agent sent without changing what is judged.
 //
-// It stops with ctx's error once ctx is done (checked before each scan,
-// each bounded by its window), leaving s half scrubbed: the caller must
-// then send nothing of it.
+// Every byte of every string is scanned, however long: a value stated in
+// the middle of a long history string is removed from a bare copy of it
+// elsewhere. That is linear in the body but not cheap (about 0.2 s per MiB
+// of keyword-dense text), so it is bounded by ctx instead: it stops with
+// ctx's error once ctx is done (checked between two rules of each scan),
+// leaving s half scrubbed, and the caller must then send nothing of it.
 //
 // cache scans through scanCache, which keeps the raw values found: only the
 // agent's Prepare* may pass it, never the engine's Normalized.
@@ -299,14 +366,11 @@ func (s *State) scrubWith(ctx context.Context, st Stage, extra []string, pre []s
 	// Each distinct string is scanned once: user_goal is often user_text,
 	// and every string of the turn is in the body again.
 	memo := map[string][]secretMatch{}
-	scan := func(text string, n int) []secretMatch {
+	var scanErr error
+	scan := func(text string) []secretMatch {
 		ms, ok := memo[text]
-		if !ok && ctx.Err() == nil {
-			if cache {
-				ms = cachedScan(text, n)
-			} else {
-				ms = scanWindows(text, n)
-			}
+		if !ok && scanErr == nil {
+			ms, scanErr = scanText(ctx, text, cache)
 			memo[text] = ms
 		}
 		return ms
@@ -322,7 +386,7 @@ func (s *State) scrubWith(ctx context.Context, st Stage, extra []string, pre []s
 				raw[i] = c
 			}
 		}
-		found[i] = scan(raw[i], r.n)
+		found[i] = scan(raw[i])
 	}
 	var shared []secretMatch
 	addShared := func(ms []secretMatch) {
@@ -336,7 +400,10 @@ func (s *State) scrubWith(ctx context.Context, st Stage, extra []string, pre []s
 		addShared(ms)
 	}
 	for _, x := range extra {
-		addShared(scan(validUTF8(x), capText))
+		addShared(scan(validUTF8(x)))
+	}
+	if scanErr != nil {
+		return nil, scanErr // a string not scanned to its end: its values are not all known
 	}
 	addShared(pre)
 	shared = withEncodings(shared)
@@ -384,7 +451,7 @@ func (s *State) scrubWith(ctx context.Context, st Stage, extra []string, pre []s
 	return hits, nil
 }
 
-// fits reports whether a string of length l is within cap n. Clip's own
+// fits reports whether a string of length l is within cap n. clipString's own
 // output is n plus its marker, so that is within the cap too.
 func fits(l, n int) bool { return l <= n+len(clipMark) }
 
@@ -438,11 +505,12 @@ func splitAt(text, v string, i int) (int, bool) {
 	return 0, false
 }
 
-// scanCache keeps the windowed scan of long strings across calls: an agent
-// resends its whole history on every call, so the same tool outputs and
-// messages come back turn after turn, and scanning them is the costly part
-// of preparing a turn. Keyed by the text's SHA-256 and the cap, bounded by
-// entries; when full, half is dropped.
+// scanCache keeps the scan of long strings across calls: an agent resends
+// its whole history on every call, so the same tool outputs and messages
+// come back turn after turn, and scanning them (every byte of each) is the
+// costly part of preparing a turn. Keyed by the text's SHA-256, bounded by
+// entries; when full, half is dropped. Only a scan that ran to the end is
+// kept: one a deadline stopped is not every secret of its text.
 //
 // It holds raw secret values (the matches), so it is opt-in: off unless the
 // agent, which runs on the customer's host, calls EnableScanCache. The
@@ -450,43 +518,46 @@ func splitAt(text, v string, i int) (int, bool) {
 // so values from a forged or un-redacted turn are not retained.
 var scanCacheOn atomic.Bool
 
-// EnableScanCache turns on the scan cache for PrepareRequest and
-// PrepareResponse in this process. Call it once at start-up, in the agent
+// EnableScanCache turns on the scan cache for the Prepare* functions
+// in this process. Call it once at start-up, in the agent
 // only: it keeps raw secret values in memory (see scanCache).
 func EnableScanCache() { scanCacheOn.Store(true) }
 
 var scanCache = struct {
 	sync.Mutex
-	m map[scanKey][]secretMatch
-}{m: map[scanKey][]secretMatch{}}
-
-type scanKey struct {
-	sum [sha256.Size]byte
-	n   int
-}
+	m map[[sha256.Size]byte][]secretMatch
+}{m: map[[sha256.Size]byte][]secretMatch{}}
 
 const (
 	cacheMinText = 1 << 10 // shorter: hashing costs about what scanning does
 	cacheEntries = 8192
 )
 
-// cachedScan is scanWindows through scanCache. The slice it returns is
-// shared: append to it only through a copy.
-func cachedScan(text string, n int) []secretMatch {
-	if len(text) < cacheMinText {
-		return scanWindows(text, n)
+// scanText is the scan of one string of a body, every byte of it, through
+// scanCache when cache is set. Past ctx it returns ctx's error. The slice
+// it returns may be shared: append to it only through a copy.
+func scanText(ctx context.Context, text string, cache bool) ([]secretMatch, error) {
+	if !cache || len(text) < cacheMinText {
+		return scanSecretsContext(ctx, text)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	h := sha256.New()
 	_, _ = io.WriteString(h, text)
-	k := scanKey{n: n}
-	h.Sum(k.sum[:0])
+	var k [sha256.Size]byte
+	h.Sum(k[:0])
 	scanCache.Lock()
 	ms, ok := scanCache.m[k]
 	scanCache.Unlock()
 	if ok {
-		return ms
+		return ms, nil
 	}
-	ms = slices.Clip(scanWindows(text, n))
+	ms, err := scanSecretsContext(ctx, text)
+	if err != nil {
+		return nil, err
+	}
+	ms = slices.Clip(ms)
 	scanCache.Lock()
 	if len(scanCache.m) >= cacheEntries {
 		i := 0
@@ -498,111 +569,8 @@ func cachedScan(text string, n int) []secretMatch {
 	}
 	scanCache.m[k] = ms
 	scanCache.Unlock()
-	return ms
-}
-
-// scanWindows finds the secrets in text that clipping it to n would keep
-// any part of: all of text when it is short enough, else its kept head and
-// tail, each widened by scanOverlap and to a private key block it cuts into.
-func scanWindows(text string, n int) []secretMatch {
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
-	if len(text) <= n+2*scanOverlap+len(clipMark) {
-		return scanSecrets(text)
-	}
-	head, tail := clipBounds(text, n)
-	end, start := keyBlockEnd(text, head+scanOverlap), keyBlockStart(text, tail-scanOverlap)
-	if end >= start {
-		return scanSecrets(text)
-	}
-	end, start = runeStart(text, end, 1), runeStart(text, start, -1)
-	ms := append(scanWindow(text, 0, end), scanWindow(text, start, len(text))...)
-	slices.SortFunc(ms, func(a, b secretMatch) int {
-		return cmp.Or(strings.Compare(a.kind, b.kind), strings.Compare(a.secret, b.secret))
-	})
-	return slices.Compact(ms)
-}
-
-// scanWindow finds the secrets in text[lo:hi]. A match that runs into a
-// cut edge of the window (one that is not an end of text) may be a secret
-// the cut truncated: its prefix or suffix, which would leave the rest when
-// removed elsewhere. It is dropped, and the text across that edge (the
-// edge plus and minus scanOverlap) is scanned instead, keeping what that
-// scan finds clear of its own edges: every secret up to scanOverlap long
-// that crosses the edge, whole.
-func scanWindow(text string, lo, hi int) []secretMatch {
-	var out []secretMatch
-	cutLo, cutHi := false, false
-	for _, m := range scanSecrets(text[lo:hi]) {
-		l, h := touches(text[lo:hi], m, lo > 0, hi < len(text))
-		cutLo, cutHi = cutLo || l, cutHi || h
-		if !l && !h {
-			out = append(out, m)
-		}
-	}
-	for _, at := range []int{lo, hi} {
-		if (at == lo && !cutLo) || (at == hi && !cutHi) {
-			continue
-		}
-		a, b := runeStart(text, max(0, at-scanOverlap), -1), runeStart(text, min(len(text), at+scanOverlap), 1)
-		for _, m := range scanSecrets(text[a:b]) {
-			if l, h := touches(text[a:b], m, a > 0, b < len(text)); !l && !h {
-				out = append(out, m)
-			}
-		}
-	}
-	return out
-}
-
-// touches reports whether m, found in w, runs into w's start or end where
-// that is a cut (lo, hi). An unterminated private key block runs to the end
-// of what is scanned by design: it is kept.
-func touches(w string, m secretMatch, lo, hi bool) (bool, bool) {
-	if m.kind == "private-key-unterminated" {
-		return false, false
-	}
-	return lo && strings.HasPrefix(w, m.secret), hi && strings.HasSuffix(w, m.secret)
+	return ms, nil
 }
 
 // validUTF8 is s with each run of invalid UTF-8 replaced by U+FFFD.
 func validUTF8(s string) string { return strings.ToValidUTF8(s, string(utf8.RuneError)) }
-
-// runeStart moves i to the nearest rune start in direction dir (1 or -1).
-func runeStart(text string, i, dir int) int {
-	for i > 0 && i < len(text) && !UTF8Start(text[i]) {
-		i += dir
-	}
-	return i
-}
-
-// keyBlockEnd moves a window's end past the END line of a key block that
-// opens before it and closes after it, within maxKeyBlock.
-func keyBlockEnd(text string, end int) int {
-	lo := max(0, end-maxKeyBlock)
-	b := strings.LastIndex(text[lo:end], "-----BEGIN")
-	if b < 0 || strings.Contains(text[lo+b:end], "-----END") {
-		return end
-	}
-	hi := min(len(text), lo+b+maxKeyBlock)
-	e := strings.Index(text[end:max(end, hi)], "-----END")
-	if e < 0 {
-		return end // not closed within maxKeyBlock: private-key-unterminated matches it
-	}
-	end += e + len("-----END")
-	if k := strings.Index(text[end:min(len(text), end+128)], "-----"); k >= 0 {
-		end += k + len("-----")
-	}
-	return end
-}
-
-// keyBlockStart moves a window's start back to the BEGIN line of a key
-// block that is still open where the window starts, within maxKeyBlock.
-func keyBlockStart(text string, start int) int {
-	lo := max(0, start-maxKeyBlock)
-	b := strings.LastIndex(text[lo:start], "-----BEGIN")
-	if b < 0 || strings.Contains(text[lo+b:start], "-----END") {
-		return start
-	}
-	return lo + b
-}

@@ -31,10 +31,11 @@ func main() {
 }
 
 func run() error {
-	cfg, listen, err := config()
+	cfg, listen, level, err := config()
 	if err != nil {
 		return err
 	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	turn.EnableScanCache() // the agent resends history every call; the engine never caches
 	a := agent.New(cfg)
 	srv := &http.Server{
@@ -73,12 +74,19 @@ func run() error {
 	return nil
 }
 
-func config() (agent.Config, string, error) {
-	cfg := agent.Config{EngineURL: os.Getenv("DETECTION_ENGINE_URL"), Token: os.Getenv("DETECTION_AGENT_TOKEN")}
+func config() (cfg agent.Config, listen string, level slog.Level, err error) {
+	cfg = agent.Config{EngineURL: os.Getenv("DETECTION_ENGINE_URL"), Token: os.Getenv("DETECTION_AGENT_TOKEN")}
 	if cfg.EngineURL == "" || cfg.Token == "" {
-		return cfg, "", errors.New("DETECTION_ENGINE_URL and DETECTION_AGENT_TOKEN are required")
+		return cfg, "", level, errors.New("DETECTION_ENGINE_URL and DETECTION_AGENT_TOKEN are required")
 	}
-	var err error
+	// AGENT_LOG_LEVEL: debug, info (the default), warn or error. debug adds
+	// one line per judged turn (ids, stages, counts, bytes, prepare time;
+	// never its text).
+	if v := os.Getenv("AGENT_LOG_LEVEL"); v != "" {
+		if err := level.UnmarshalText([]byte(v)); err != nil {
+			return cfg, "", level, fmt.Errorf("AGENT_LOG_LEVEL: want debug, info, warn or error, got %q", v)
+		}
+	}
 	for name, n := range map[string]*int{
 		"AGENT_MAX_IN_FLIGHT": &cfg.MaxInFlight,
 		"AGENT_QUEUE_SIZE":    &cfg.QueueSize,
@@ -86,7 +94,7 @@ func config() (agent.Config, string, error) {
 	} {
 		if v := os.Getenv(name); v != "" {
 			if *n, err = strconv.Atoi(v); err != nil || *n <= 0 {
-				return cfg, "", fmt.Errorf("%s: want a positive integer, got %q", name, v)
+				return cfg, "", level, fmt.Errorf("%s: want a positive integer, got %q", name, v)
 			}
 		}
 	}
@@ -96,13 +104,13 @@ func config() (agent.Config, string, error) {
 	} {
 		if v := os.Getenv(name); v != "" {
 			if *d, err = time.ParseDuration(v); err != nil || *d <= 0 {
-				return cfg, "", fmt.Errorf("%s: want a positive duration, got %q", name, v)
+				return cfg, "", level, fmt.Errorf("%s: want a positive duration, got %q", name, v)
 			}
 		}
 	}
-	listen := os.Getenv("AGENT_LISTEN")
+	listen = os.Getenv("AGENT_LISTEN")
 	if listen == "" {
 		listen = "127.0.0.1:8090"
 	}
-	return cfg, listen, nil
+	return cfg, listen, level, nil
 }

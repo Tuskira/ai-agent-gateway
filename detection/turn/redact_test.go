@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -140,16 +141,16 @@ func (f cutField) field(text string, pre, post int) string {
 func (f cutField) prepare(field string) PreparedTurn {
 	req, resp := f.build(field)
 	if resp == nil {
-		return PrepareRequest(req)
+		return prepareRequest(req)
 	}
-	pt, _ := PrepareResponse(req, resp)
+	pt, _ := prepareResponse(req, resp)
 	return pt
 }
 
 // No part of a secret the scanner finds in the unclipped text leaves the
 // host, wherever clipping cuts it: across the head cut and the tail cut of
 // every clipped field, in both stages, for a field just over its cap and
-// for one long enough that only its ends are scanned.
+// for a long one (40 KB past its cap).
 func TestNoSecretSurvivesClipping(t *testing.T) {
 	for _, f := range cutFields() {
 		for _, sc := range cutSecrets() {
@@ -161,9 +162,8 @@ func TestNoSecretSurvivesClipping(t *testing.T) {
 			if f.json {
 				text = esc(text)
 			}
-			// Fields just over the cap (scanned whole) and long enough that
-			// only their ends are scanned.
-			for _, n := range []int{3 * f.cap, f.cap + 2*scanOverlap + 20000} {
+			// Fields just over the cap and long ones.
+			for _, n := range []int{3 * f.cap, f.cap + 40000} {
 				k, l := f.cap*2/3, f.cap/3 // kept head, kept tail
 				w := len(text) + 2
 				var fields []string
@@ -205,14 +205,14 @@ func TestSecretRemovedFromEveryString(t *testing.T) {
 	 {"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"aws_secret_access_key = ` + v + `\nregion = us-east-1"}]}]}`
 	resp := `{"content":[{"type":"text","text":"I found ` + v + ` in the file."},
 	 {"type":"tool_use","id":"tu_r","name":"Bash","input":{"cmd":"rotate --old ` + v + ` && aws_secret_access_key = ` + v + `"}}]}`
-	pr := PrepareRequest([]byte(req))
+	pr := prepareRequest([]byte(req))
 	if l := leak(t, pr, v); l != "" {
 		t.Errorf("request: leaked %s", l)
 	}
 	if len(pr.Secrets) != 1 || pr.Secrets[0] != (SecretHit{Kind: "generic-api-key", Field: "tool_results", Index: 0}) {
 		t.Errorf("request hits = %+v", pr.Secrets)
 	}
-	pp, ok := PrepareResponse([]byte(req), []byte(resp))
+	pp, ok := prepareResponse([]byte(req), []byte(resp))
 	if !ok {
 		t.Fatal("response not prepared")
 	}
@@ -224,7 +224,7 @@ func TestSecretRemovedFromEveryString(t *testing.T) {
 	}
 
 	// Deterministic: the same body prepares to the same bytes.
-	a, _ := json.Marshal(PrepareRequest([]byte(req)))
+	a, _ := json.Marshal(prepareRequest([]byte(req)))
 	b, _ := json.Marshal(pr)
 	if string(a) != string(b) {
 		t.Errorf("not deterministic:\n%s\n%s", a, b)
@@ -235,7 +235,7 @@ func TestSecretRemovedFromEveryString(t *testing.T) {
 	short := `{"messages":[{"role":"user","content":"postgres://app:abcd1@db:5432/x"},
 	 {"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{}}]},
 	 {"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"step abcd1 done"}]}]}`
-	ps := PrepareRequest([]byte(short))
+	ps := prepareRequest([]byte(short))
 	if r := ps.State.ToolResults; len(r) != 1 || r[0].Content != "step abcd1 done" {
 		t.Errorf("short value blanked elsewhere: %+v", r)
 	}
@@ -276,7 +276,7 @@ func TestSecretFoundAnywhereInBodyRemoved(t *testing.T) {
 		"trailing prefill": `{"messages":[{"role":"user","content":"deploy now"},` + trailing + `,
 		 {"role":"assistant","content":"Sure, with ` + ctx + `"}]}`,
 	} {
-		pt := PrepareRequest([]byte(body))
+		pt := prepareRequest([]byte(body))
 		if pt.Unreadable {
 			t.Fatalf("%s: unreadable", name)
 		}
@@ -291,7 +291,7 @@ func TestSecretFoundAnywhereInBodyRemoved(t *testing.T) {
 		}
 	}
 	// The prefill is still not judged: it is not the user's turn.
-	pt := PrepareRequest([]byte(`{"messages":[{"role":"user","content":"deploy now"},{"role":"assistant","content":"Sure, with ` + ctx + `"}]}`))
+	pt := prepareRequest([]byte(`{"messages":[{"role":"user","content":"deploy now"},{"role":"assistant","content":"Sure, with ` + ctx + `"}]}`))
 	if st := stateJSON(t, pt); st["user_text"] != "deploy now" || len(st) != 2 {
 		t.Errorf("prefill judged: %v", st)
 	}
@@ -304,7 +304,7 @@ func TestSecretFromRequestRemovedFromReply(t *testing.T) {
 	req := `{"messages":[{"role":"system","content":"env: DB_PASSWORD=\"` + v + `\""},{"role":"user","content":"connect to the db"}]}`
 	resp := `{"type":"message","role":"assistant","content":[{"type":"text","text":"Connecting with ` + v + ` now."},
 	 {"type":"tool_use","id":"tu_r","name":"Bash","input":{"cmd":"psql --password ` + v + `"}}]}`
-	pt, ok := PrepareResponse([]byte(req), []byte(resp))
+	pt, ok := prepareResponse([]byte(req), []byte(resp))
 	if !ok {
 		t.Fatal("response not prepared")
 	}
@@ -324,7 +324,7 @@ func TestOverlappingSecretsRedactedWhole(t *testing.T) {
 	both := join("Zx9Qw7Er5Ty3", "Ui1OpMn8Bv6Cx4Za2")
 	body, _ := json.Marshal(map[string]any{"messages": []map[string]any{{"role": "user",
 		"content": `my api_key = "` + s1 + `" and token = "` + s2 + `"` + "\nconcat: " + both + " end"}}})
-	pt := PrepareRequest(body)
+	pt := prepareRequest(body)
 	for _, v := range []string{s1, s2} {
 		if l := leak(t, pt, v); l != "" {
 			t.Errorf("leaked %s", l)
@@ -369,7 +369,7 @@ func TestEscapedSecretInToolInputRedacted(t *testing.T) {
 		{`found inside the input's JSON`, quote, toolTurn(`{"url":"postgres://app:`+strings.ReplaceAll(quote, `"`, bs+`"`)+`@db:5432/x"}`,
 			"the password is "+quote)},
 	} {
-		pt := PrepareRequest(c.body)
+		pt := prepareRequest(c.body)
 		if pt.Unreadable || len(pt.State.PriorToolCalls) != 1 {
 			t.Fatalf("%s: not read: %+v", c.name, pt)
 		}
@@ -384,27 +384,59 @@ func TestEscapedSecretInToolInputRedacted(t *testing.T) {
 	}
 }
 
-// A long field is scanned at its kept ends plus scanOverlap. A secret the
-// window's edge cuts was found as its prefix, and removing that prefix from
-// another string left the rest: the cut match is dropped and the text
-// across the edge scanned instead, so the secret is found whole.
-func TestSecretAtScanWindowEdgeFoundWhole(t *testing.T) {
+// A value stated anywhere in a long history string is collected, not only
+// near the ends clipping keeps: the middle of a 300 KB tool output from an
+// earlier turn is scanned too, so a bare copy in the new turn is removed.
+func TestSecretInMiddleOfLongHistoryRemoved(t *testing.T) {
 	sec := join("Qm7Lp2Vx", "9Rt4Kw8Zn3Hy6Jd")
-	head, _ := clipBounds(strings.Repeat("a", 300000), capText)
-	pre := `api_key = "`
-	// The window's end falls this far into the secret: far enough that the
-	// scan matches the part before it (a shorter part is not found at all:
-	// what no window reaches is the windowed scan's limit).
-	for _, into := range []int{12, 16, len(sec) - 1} {
-		start := head + scanOverlap - into - len(pre)
-		a := filler(start) + pre + sec + `" ` + filler(200000)
-		if got := scanWindows(a, capText); len(got) != 1 || got[0].secret != sec {
-			t.Errorf("into %d: window finds %v", into, got)
+	if ms := scanSecrets("value is " + sec); len(ms) != 0 {
+		t.Fatalf("bare value found on its own: %v", ms)
+	}
+	for _, size := range []int{140 << 10, 700 << 10} {
+		history := filler(size/2) + `api_key = "` + sec + `" ` + filler(size/2)
+		body, _ := json.Marshal(map[string]any{"messages": []map[string]any{
+			{"role": "user", "content": "read the config"},
+			{"role": "assistant", "content": []map[string]any{{"type": "tool_use", "id": "t1", "name": "Read", "input": map[string]any{"path": "/etc/app"}}}},
+			{"role": "user", "content": []map[string]any{{"type": "tool_result", "tool_use_id": "t1", "content": history}}},
+			{"role": "assistant", "content": "read"},
+			{"role": "user", "content": "now use value " + sec + " to log in"},
+		}})
+		for _, cache := range []bool{false, true} {
+			withScanCache(t, cache)
+			pt := prepareRequest(body)
+			if pt.NotJudged != "" {
+				t.Fatalf("%d bytes: not judged: %s", size, pt.NotJudged)
+			}
+			if l := leak(t, pt, sec); l != "" {
+				t.Errorf("%d bytes, cache %v: leaked %s", size, cache, l)
+			}
 		}
-		st := State{UserText: a, ToolResults: []ToolResult{{Tool: "Bash", Content: "value is " + sec}}}
-		pt := prepareState(&st, StageRequest)
-		if l := leak(t, pt, sec); l != "" {
-			t.Errorf("into %d: leaked %s", into, l)
+	}
+}
+
+// A long string is scanned in overlapping pieces. A secret a piece's edge
+// cuts is found as its prefix or suffix there, and removing that part
+// from another string would leave the rest: the cut match is dropped and
+// the overlapping piece finds the secret whole.
+func TestSecretAtScanPieceEdgeFoundWhole(t *testing.T) {
+	sec := join("Qm7Lp2Vx", "9Rt4Kw8Zn3Hy6Jd")
+	pre := `api_key = "`
+	for _, edge := range []int{scanChunk, scanChunk + scanOverlap, 2 * scanChunk} {
+		for _, into := range []int{1, len(sec) - 1} {
+			start := edge - into - len(pre)
+			a := filler(start) + pre + sec + `" ` + filler(scanOverlap+1000)
+			got, err := scanSecretsContext(context.Background(), a)
+			if err != nil || len(got) != 1 || got[0].secret != sec {
+				t.Errorf("edge %d, into %d: scan finds %v, %v", edge, into, got, err)
+			}
+			if edge != scanChunk+scanOverlap {
+				continue // the scan finds it whole; one edge is enough end to end
+			}
+			st := State{UserText: a, ToolResults: []ToolResult{{Tool: "Bash", Content: "value is " + sec}}}
+			pt := prepareState(&st, StageRequest)
+			if l := leak(t, pt, sec); l != "" {
+				t.Errorf("edge %d, into %d: leaked %s", edge, into, l)
+			}
 		}
 	}
 }

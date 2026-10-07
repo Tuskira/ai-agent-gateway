@@ -17,27 +17,31 @@ import (
 var slowdown time.Duration = 1
 
 // A tool output shaped like one huge private key block (BEGIN, 20 MiB,
-// END) is scanned at its windows only, not whole: a key block is widened to
-// at most maxKeyBlock. The block's head is still found and cut out (a BEGIN
-// line no END follows in the window: private-key-unterminated).
+// END) is scanned whole, every byte, so on most hosts it does not finish
+// within a deadline of 1 s: the turn is then sent as not judged, and the
+// scan stops soon after the deadline (between two rules of one piece).
+// When it does finish, the block is removed whole.
 func TestHugeKeyBlockPreparedInBoundedTime(t *testing.T) {
 	secretDetector()
 	resetScanCache()
 	body := keyBlockBody(20 << 20)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	start := time.Now()
-	pt := PrepareRequest(body)
-	if d := time.Since(start); d > slowdown*time.Second {
+	pt := PrepareRequestContext(ctx, body)
+	if d := time.Since(start); d > time.Second+slowdown*500*time.Millisecond {
 		t.Errorf("20 MiB key block prepared in %v", d)
 	}
-	if len(pt.Secrets) == 0 || pt.Secrets[0] != (SecretHit{Kind: "private-key-unterminated", Field: "tool_results"}) {
+	if pt.NotJudged == DeadlineReason {
+		t.Logf("not judged within the deadline (%v)", time.Since(start))
+		return
+	}
+	if len(pt.Secrets) == 0 || pt.Secrets[0].Kind != "private-key" || pt.Secrets[0].Field != "tool_results" {
 		t.Errorf("hits = %+v", pt.Secrets)
 	}
 	r := pt.State.ToolResults
 	if len(r) != 1 || strings.Contains(r[0].Content, "-----BEGIN") || len(r[0].Content) > capToolResult+len(clipMark) {
 		t.Errorf("tool result = %.200q", r)
-	}
-	if got := keyBlockEnd(strings.Repeat("x", 100)+"-----BEGIN"+strings.Repeat("y", 2*maxKeyBlock)+"-----END Z-----", 200); got != 200 {
-		t.Errorf("keyBlockEnd widened %d bytes past maxKeyBlock", got-200)
 	}
 }
 
@@ -63,8 +67,8 @@ func TestPrepareDeadlineSendsNotJudged(t *testing.T) {
 		t.Errorf("response: %+v", pt)
 	}
 	// A deadline that falls while it runs: not judged, or the whole turn.
-	big := keyBlockBody(4 << 20)
-	whole := PrepareRequest(big)
+	big := keyBlockBody(1 << 20)
+	whole := prepareRequest(big)
 	for _, d := range []time.Duration{time.Microsecond, time.Millisecond, 10 * time.Millisecond, 50 * time.Millisecond} {
 		resetScanCache()
 		ctx, cancel := context.WithTimeout(context.Background(), d)

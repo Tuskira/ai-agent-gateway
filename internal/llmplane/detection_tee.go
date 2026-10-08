@@ -430,6 +430,21 @@ func (d *DetectionTee) Status() map[string]any {
 	}
 }
 
+// Sent is how many turns were posted to the detection agent and accepted,
+// since process start.
+func (d *DetectionTee) Sent() uint64 { return d.sent.Load() }
+
+// Dropped is how many turns were discarded (queue full, byte budget,
+// shutdown) since process start.
+func (d *DetectionTee) Dropped() uint64 { return d.dropped.Load() }
+
+// Failed is how many turns the agent refused or could not be reached for
+// (error or non-202) since process start.
+func (d *DetectionTee) Failed() uint64 { return d.failed.Load() }
+
+// QueueDepth is how many turns are waiting to be posted right now.
+func (d *DetectionTee) QueueDepth() int { return len(d.queue) }
+
 // rateLog lets one log line through per minute.
 type rateLog struct{ last atomic.Int64 }
 

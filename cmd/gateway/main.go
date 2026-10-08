@@ -223,6 +223,12 @@ func run() error {
 	if err := st.Ping(pingCtx); err != nil {
 		return fmt.Errorf("ping database: %w", err)
 	}
+	// Pool gauges, for a store that can report them (postgres).
+	if ds, ok := st.(metrics.DBStatser); ok {
+		if err := metrics.RegisterDBStats(gwMetrics, ds); err != nil {
+			return err
+		}
+	}
 
 	lockoutCtx, cancelLockout := context.WithTimeout(context.Background(), dbConnectTimeout)
 	warnAdminlessTenants(lockoutCtx, st, cfg.Auth.ConsoleAPIKeyLogin, logger)
@@ -322,6 +328,11 @@ func run() error {
 	defer mcpRateLimiter.Close()
 	llmRateLimiter := newPlaneLimiter("llm", 0)
 	defer llmRateLimiter.Close()
+	if err := metrics.RegisterAuthLimiters(gwMetrics, map[string]metrics.AuthLimiter{
+		"api": rateLimiter, "mcp": mcpRateLimiter, "llm": llmRateLimiter,
+	}); err != nil {
+		return err
+	}
 
 	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, logger)
 	// The MCP and LLM planes refuse an IP locked out for failed auth with a
@@ -357,6 +368,9 @@ func run() error {
 		return fmt.Errorf("build sinks: %w", err)
 	}
 	defer sinks.Sink.Close()
+	if err := metrics.RegisterSinkDrops(gwMetrics, sinks.Dropped); err != nil {
+		return err
+	}
 
 	// The body store (llm_proxy.capture.body_store) is built regardless of
 	// which planes run: the LLM plane offloads bodies into it, and the API
@@ -435,15 +449,20 @@ func run() error {
 	var profileOps ops.ProfileOps
 
 	if cfg.MCP.Enabled || cfg.API.Enabled {
+		toolCacheLookup, err := metrics.ToolCacheLookupHook(gwMetrics)
+		if err != nil {
+			return err
+		}
 		mcpPlane, err := dataplane.New(dataplane.Deps{
-			Config:        cfg,
-			Store:         st,
-			Headers:       secDeps.Registry,
-			Authenticator: mcpAuthenticator,
-			Authorizer:    authorizer,
-			Sink:          sinks.Sink,
-			Logger:        logger,
-			ClientIP:      clientIPs.IP,
+			Config:            cfg,
+			Store:             st,
+			Headers:           secDeps.Registry,
+			Authenticator:     mcpAuthenticator,
+			Authorizer:        authorizer,
+			Sink:              sinks.Sink,
+			Logger:            logger,
+			ClientIP:          clientIPs.IP,
+			OnToolCacheLookup: toolCacheLookup,
 		})
 		if err != nil {
 			return fmt.Errorf("build mcp plane: %w", err)
@@ -457,6 +476,9 @@ func run() error {
 		profileOps = mcpPlane.ProfileOps
 
 		if cfg.MCP.Enabled {
+			if err := metrics.RegisterSessions(gwMetrics, mcpPlane.SessionCount, mcpPlane.SessionsCreated); err != nil {
+				return err
+			}
 			routines = append(routines, httpplane.New(
 				"mcp", cfg.MCP.Address, gwMetrics.Instrument("mcp", metrics.MCPRoute)(mcpPlane.Handler),
 				cfg.MCP.ReadTimeout, cfg.MCP.WriteTimeout, defaultIdleTimeout, logger,
@@ -552,6 +574,9 @@ func run() error {
 		defer batchSink.Close()
 
 		recorder = capture.NewRecorder(batchSink, sinks.Sink, bodyStore, cfg.LLMProxy.Capture.BodyStore.InlineMaxBytes)
+		if err := metrics.RegisterBodyStore(gwMetrics, recorder); err != nil {
+			return err
+		}
 
 		// The auth middleware runs AHEAD of the plane (it puts the Principal on
 		// the context that the plane's llm.access check, capture and the
@@ -567,6 +592,9 @@ func run() error {
 		limiter, err = llmplane.NewLimiter(llmplane.LimiterConfig{Keys: st.APIKeys(), Spend: spend})
 		if err != nil {
 			return fmt.Errorf("build llm limiter: %w", err)
+		}
+		if err := metrics.RegisterLLMLimits(gwMetrics, limiter); err != nil {
+			return err
 		}
 		llmCfg := llmConfig(cfg.LLMProxy, pricingCard, authorizer)
 		llmCfg.ClientIP = clientIPs.IP
@@ -585,6 +613,9 @@ func run() error {
 				tee.Close(ctx)
 			}()
 			llmCfg.DetectionTee = tee
+			if err := metrics.RegisterDetectionTee(gwMetrics, tee); err != nil {
+				return err
+			}
 			logger.Info("llm detection tee enabled", "agent_url", d.AgentURL)
 		}
 		core, err := llmplane.Handler(llmCfg, recorder)
@@ -924,6 +955,9 @@ type sinksResult struct {
 	// same nil-means-unconfigured contract Analytics carries.
 	IngestSink sink.IngestSink
 	Status     func() map[string]any
+	// Dropped reads each enabled sink's drop counter ("stdout",
+	// "clickhouse"; the otel sink has none), for the metrics collector.
+	Dropped map[string]func() uint64
 }
 
 // buildSinks constructs every enabled sink.LogSink from cfg.Sinks,
@@ -937,6 +971,7 @@ type sinksResult struct {
 func buildSinks(cfg *config.Config, gwMetrics *metrics.Metrics, logger *slog.Logger) (*sinksResult, error) {
 	var sinks []sink.LogSink
 	statusFns := map[string]func() map[string]any{}
+	dropped := map[string]func() uint64{}
 
 	if cfg.Sinks.Stdout.Enabled {
 		s := stdoutsink.New(os.Stdout, stdoutsink.WithBodies(cfg.Sinks.Stdout.IncludeBodies))
@@ -944,6 +979,7 @@ func buildSinks(cfg *config.Config, gwMetrics *metrics.Metrics, logger *slog.Log
 			logger.Warn("sinks.stdout.include_bodies and store_bodies are both on: request/response bodies (prompts, completions, tool arguments) are printed to stdout and will reach any log shipper; turn include_bodies off unless this is a throwaway dev run")
 		}
 		sinks = append(sinks, s)
+		dropped["stdout"] = s.Dropped
 		statusFns["stdout"] = func() map[string]any {
 			return map[string]any{"enabled": true, "dropped": s.Dropped()}
 		}
@@ -994,6 +1030,7 @@ func buildSinks(cfg *config.Config, gwMetrics *metrics.Metrics, logger *slog.Log
 			ingestSink = is
 		}
 		if dc, ok := s.(interface{ Dropped() uint64 }); ok {
+			dropped["clickhouse"] = dc.Dropped
 			statusFns["clickhouse"] = func() map[string]any {
 				return map[string]any{"enabled": true, "dropped": dc.Dropped()}
 			}
@@ -1023,7 +1060,7 @@ func buildSinks(cfg *config.Config, gwMetrics *metrics.Metrics, logger *slog.Log
 		return out
 	}
 
-	return &sinksResult{Sink: sink.Multi(sinks...), Analytics: analyticsReader, IngestSink: ingestSink, Status: status}, nil
+	return &sinksResult{Sink: sink.Multi(sinks...), Analytics: analyticsReader, IngestSink: ingestSink, Status: status, Dropped: dropped}, nil
 }
 
 // resolveDevTenant resolves auth.dev_mode.tenant (a slug, or a tenant UUID)

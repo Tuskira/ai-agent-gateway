@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/clientip"
@@ -149,6 +150,10 @@ type RateLimiter struct {
 	burst int     // general cap bucket capacity
 
 	resolver *clientip.Resolver
+
+	// failures counts every ReportFailure call since process start, even
+	// when the limiter is disabled (Failures).
+	failures atomic.Uint64
 
 	mu    sync.Mutex
 	ips   map[string]*ipState
@@ -299,6 +304,7 @@ func (rl *RateLimiter) AllowGeneral(ip string) (allowed bool, retryAfter time.Du
 // have accumulated within Window, ip is locked out for Lockout and a WARN
 // is logged once for that lockout (not on every subsequent request).
 func (rl *RateLimiter) ReportFailure(ip string) {
+	rl.failures.Add(1)
 	if !rl.Enabled() {
 		return
 	}
@@ -399,6 +405,12 @@ func (rl *RateLimiter) ReportCredFailure(key string) {
 		}
 	}
 }
+
+// Failures is how many auth failures this plane has reported since
+// process start. It counts every ReportFailure call, including those made
+// while the limiter is disabled, so it measures credential failures and
+// not only the ones that count toward a lockout.
+func (rl *RateLimiter) Failures() uint64 { return rl.failures.Load() }
 
 // LockedIPCount returns how many IPs are currently under a failure lockout.
 // Used to fill GET /api/v1/health's "rate_limit":{"locked_ips":n}.

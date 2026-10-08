@@ -286,3 +286,28 @@ func TestRateLimiter_ClientIP_NoPortFallsBackToRawAddr(t *testing.T) {
 		t.Errorf("ClientIP() = %q, want %q", got, want)
 	}
 }
+
+// Failures counts every reported failure: those that lock out, those
+// that merely accumulate, and those reported while the limiter is
+// disabled (the metric is about credentials, not about enforcement).
+func TestRateLimiter_Failures(t *testing.T) {
+	rl := newTestRateLimiter(t, &manualClock{t: time.Now()}, nil)
+	if got := rl.Failures(); got != 0 {
+		t.Fatalf("Failures() on a fresh limiter = %d", got)
+	}
+	for i := 0; i < 5; i++ { // MaxFailures is 3: the last two land on a locked IP
+		rl.ReportFailure("10.0.0.1")
+	}
+	rl.ReportFailure("10.0.0.2")
+	rl.ReportSuccess("10.0.0.2") // a success resets the lockout counter, not the total
+	if got := rl.Failures(); got != 6 {
+		t.Errorf("Failures() = %d, want 6", got)
+	}
+
+	off := newTestRateLimiter(t, &manualClock{t: time.Now()}, func(c *RateLimiterConfig) { c.Enabled = false })
+	off.ReportFailure("10.0.0.1")
+	off.ReportFailure("10.0.0.1")
+	if got := off.Failures(); got != 2 {
+		t.Errorf("disabled limiter Failures() = %d, want 2", got)
+	}
+}

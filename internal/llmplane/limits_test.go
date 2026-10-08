@@ -1,8 +1,12 @@
 package llmplane
 
 import (
+	"context"
+	"net/http"
 	"testing"
 	"time"
+
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
 // Pure-logic tests for limits.go; the Postgres-backed enforcement tests
@@ -92,4 +96,42 @@ func TestRequestedMaxTokens(t *testing.T) {
 			t.Errorf("requestedMaxTokens(%q) reported a cap", body)
 		}
 	}
+}
+
+// The typed denial getters read the same counters Status() reports, and a
+// real RPM refusal moves RPMDenials only.
+func TestLimiterDenialGetters(t *testing.T) {
+	one := 1
+	l, err := NewLimiter(LimiterConfig{Keys: staticKeyLimits{&store.Limits{RPM: &one}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.BudgetDenials() != 0 || l.RPMDenials() != 0 {
+		t.Fatalf("fresh limiter: budget %d rpm %d", l.BudgetDenials(), l.RPMDenials())
+	}
+	ctx := context.Background()
+	if d := l.check(ctx, "t", "k", nil); d != nil {
+		t.Fatalf("first request denied: %+v", d)
+	}
+	if d := l.check(ctx, "t", "k", nil); d == nil || d.status != http.StatusTooManyRequests {
+		t.Fatalf("second request = %+v, want a 429 denial", d)
+	}
+	if l.RPMDenials() != 1 || l.BudgetDenials() != 0 {
+		t.Errorf("after one rpm denial: budget %d rpm %d", l.BudgetDenials(), l.RPMDenials())
+	}
+	st := l.Status()
+	if st["rpm_denials"] != l.RPMDenials() || st["budget_denials"] != l.BudgetDenials() {
+		t.Errorf("Status() %v disagrees with the getters", st)
+	}
+	l.budgetDenials.Add(2) // the budget path needs a Postgres spend reader: see limits_pg_test.go
+	if l.BudgetDenials() != 2 {
+		t.Errorf("BudgetDenials() = %d, want 2", l.BudgetDenials())
+	}
+}
+
+// staticKeyLimits answers every key lookup with one fixed set of limits.
+type staticKeyLimits struct{ limits *store.Limits }
+
+func (s staticKeyLimits) GetByID(_ context.Context, _, id string) (*store.APIKey, error) {
+	return &store.APIKey{ID: id, Limits: s.limits}, nil
 }

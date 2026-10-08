@@ -400,3 +400,20 @@ func TestSessionBackendMapIsSafeForConcurrentUse(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// Created counts sessions that were persisted, and only those.
+func TestManagerCreatedCountsPersistedSessions(t *testing.T) {
+	m, _, _ := newManager(t, time.Hour)
+	if got := m.Created(); got != 0 {
+		t.Fatalf("Created() before any session = %d", got)
+	}
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := m.Create(ctx, "t1", "key-1", "2025-06-18", mcp.Implementation{Name: "c"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := m.Created(); got != 3 {
+		t.Errorf("Created() = %d, want 3", got)
+	}
+}

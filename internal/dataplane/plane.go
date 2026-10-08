@@ -56,6 +56,10 @@ type Deps struct {
 	Logger *slog.Logger
 	// ClientIP derives the caller's address; see transport.Deps.ClientIP.
 	ClientIP func(*http.Request) string
+	// OnToolCacheLookup, when set, is told the outcome of every tools/list
+	// read of the tool cache ("hit", "stale" or "miss"; see
+	// orchestrator.Deps.OnToolCacheLookup). Nil observes nothing.
+	OnToolCacheLookup func(result string)
 }
 
 // Plane is a built MCP plane.
@@ -82,6 +86,7 @@ type Plane struct {
 	ProfileOps   ops.ProfileOps
 
 	client   *client.Client
+	sessions *session.Manager
 	orch     *orchestrator.Orchestrator
 	notifier orchestrator.Notifier
 	// sessionStore and sessionNotifier are the pkg/session driver's
@@ -101,6 +106,20 @@ type Plane struct {
 // when an operator adds or edits a connector and the agents connected
 // right now should not have to wait out a refresh interval to notice.
 func (p *Plane) NotifyToolsListChanged(tenantID string) { p.notifier.ToolsListChanged(tenantID) }
+
+// SessionCount is how many MCP sessions the plane's session store holds
+// right now, or -1 when the driver cannot say cheaply (redis). The memory
+// driver counts expired sessions until its sweep reclaims them.
+func (p *Plane) SessionCount() int {
+	if c, ok := p.sessionStore.(interface{ Len() int }); ok {
+		return c.Len()
+	}
+	return -1
+}
+
+// SessionsCreated is how many sessions this process has created since
+// start, whatever the session driver.
+func (p *Plane) SessionsCreated() uint64 { return p.sessions.Created() }
 
 // UpstreamStreams reports how many connector streams the plane holds
 // open for agent sessions, and how many goroutines serve them.
@@ -197,6 +216,7 @@ func New(deps Deps) (*Plane, error) {
 		MaxPendingServerRequestsPerSession: cfg.MCP.MaxPendingServerRequestsPerSession,
 		ServerRequestTimeout:               cfg.MCP.ServerRequestTimeout,
 		Sink:                               deps.Sink,
+		OnToolCacheLookup:                  deps.OnToolCacheLookup,
 	})
 	if err != nil {
 		closeSessions()
@@ -247,6 +267,7 @@ func New(deps Deps) (*Plane, error) {
 		CacheOps:        opsAdapter,
 		ProfileOps:      opsAdapter,
 		client:          backend,
+		sessions:        sessions,
 		orch:            orch,
 		notifier:        notifier,
 		sessionStore:    sessionStore,

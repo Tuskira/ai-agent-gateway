@@ -140,6 +140,26 @@ func TestDetectionTee_TurnPerCall(t *testing.T) {
 	}
 }
 
+// The typed getters read the counters Status() reports.
+func TestDetectionTee_TypedGetters(t *testing.T) {
+	agent := newAgentStub(t, nil)
+	tee := newTee(t, DetectionTeeConfig{AgentURL: agent.url})
+	gw := gateway(t, Config{UpstreamBaseURL: teeUpstream(t, http.StatusOK, teeResp), DetectionTee: tee}, &lastRec{})
+	if resp, _ := do(t, http.MethodPost, gw.URL+"/v1/messages", map[string]string{"x-api-key": "sk"}, teeReq); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	agent.wait(t, 1)
+	for i := 0; i < 200 && tee.Sent() == 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if tee.Sent() != 1 || tee.Dropped() != 0 || tee.Failed() != 0 || tee.QueueDepth() != 0 {
+		t.Errorf("sent %d dropped %d failed %d queued %d, want 1/0/0/0", tee.Sent(), tee.Dropped(), tee.Failed(), tee.QueueDepth())
+	}
+	if s := tee.Status(); s["sent"] != tee.Sent() || s["dropped"] != tee.Dropped() || s["failed"] != tee.Failed() || s["queued"] != tee.QueueDepth() {
+		t.Errorf("Status() %v disagrees with the getters", s)
+	}
+}
+
 // A non-2xx upstream answer posts the turn with no response field.
 func TestDetectionTee_NonOKHasNoResponse(t *testing.T) {
 	agent := newAgentStub(t, nil)
@@ -268,6 +288,9 @@ func TestDetectionTee_AgentDown(t *testing.T) {
 	if s := tee.Status(); s["failed"] != uint64(1) || s["sent"] != uint64(0) {
 		t.Errorf("status = %v; want 1 failed, 0 sent", s)
 	}
+	if tee.Failed() != 1 || tee.Sent() != 0 {
+		t.Errorf("getters: failed %d sent %d, want 1 / 0", tee.Failed(), tee.Sent())
+	}
 }
 
 // A full queue drops the turn and counts it; the call is not delayed.
@@ -291,6 +314,9 @@ func TestDetectionTee_QueueFullDrops(t *testing.T) {
 	call()           // queue full: dropped
 	if s := tee.Status(); s["dropped"] != uint64(1) || s["queued"] != 1 {
 		t.Errorf("status = %v; want 1 dropped, 1 queued", s)
+	}
+	if tee.Dropped() != 1 || tee.QueueDepth() != 1 {
+		t.Errorf("getters: dropped %d queued %d, want 1 / 1", tee.Dropped(), tee.QueueDepth())
 	}
 }
 

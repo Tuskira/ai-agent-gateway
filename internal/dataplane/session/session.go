@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/mcp"
@@ -227,6 +228,9 @@ type Manager struct {
 	logger          *slog.Logger
 
 	anonymous *Anonymous
+
+	// created counts sessions Create has persisted since process start.
+	created atomic.Uint64
 }
 
 // NewManager returns a Manager over store, which must not be nil.
@@ -285,8 +289,12 @@ func (m *Manager) Create(ctx context.Context, tenantID, principal, protocolVersi
 	if err := m.store.Save(ctx, s.record()); err != nil {
 		return nil, fmt.Errorf("session: persist new session: %w", err)
 	}
+	m.created.Add(1)
 	return s, nil
 }
+
+// Created is how many sessions Create has persisted since process start.
+func (m *Manager) Created() uint64 { return m.created.Load() }
 
 // Resolve returns the session named by id, sliding its idle window
 // forward. It returns ErrNotFound when the id is unknown, when it has

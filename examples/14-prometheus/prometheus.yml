@@ -1,0 +1,17 @@
+# Prometheus configuration for examples/14-prometheus.
+#
+# 5s is for the demo: run.sh waits for the first scrape. In production
+# 15s-60s is plenty; the gateway's counters are cumulative, so a longer
+# interval loses no data, only resolution.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+scrape_configs:
+  - job_name: gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:9464"]

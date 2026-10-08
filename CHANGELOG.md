@@ -327,6 +327,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/observability.md`, "Metrics (Prometheus)", and CONTRIBUTING.md,
   "Adding a metrics exporter". The OpenTelemetry Go modules move from
   v1.46.0 to v1.47.0, which the Prometheus exporter requires.
+- **Prometheus metrics from access-log and LLM-call records.** With
+  `metrics.driver: prometheus` the gateway adds a metrics sink to the
+  `sink.Multi` that both the MCP plane and the LLM plane's capture
+  recorder write to, and exports `gateway_mcp_requests_total`,
+  `gateway_mcp_tool_calls_total`, `gateway_mcp_tool_call_duration_seconds`,
+  `gateway_mcp_errors_total`, `gateway_llm_calls_total`,
+  `gateway_llm_tokens_total`, `gateway_llm_cost_usd_total`,
+  `gateway_llm_call_duration_seconds` and `gateway_llm_fallbacks_total`.
+  Label values that a caller can influence are bounded: JSON-RPC methods
+  and error codes are whitelisted, tool and model names are capped at 500
+  distinct values per process, and key, session, request and user
+  identifiers are never labels. See `docs/observability.md`, "Metrics from
+  access-log and LLM-call records".
 - **Kubernetes example for the detection agent.**
   `deploy/k8s/components/detection-agent` (a kustomize Component) adds the
   agent as a sidecar of `gateway-llm` on `127.0.0.1:8090`, with the engine

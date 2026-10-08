@@ -233,8 +233,8 @@ func TestLimits_DailyBudget429(t *testing.T) {
 	if n := e.deniedRows(t, k.ID, 429, "budget_exceeded: daily budget exceeded"); n != 1 {
 		t.Fatalf("captured 429 rows = %d, want 1", n)
 	}
-	if got := lim.Status()["budget_denials"]; got != uint64(1) {
-		t.Fatalf("budget_denials = %v, want 1", got)
+	if got := lim.Status()["budget_denials"]; got != uint64(1) || lim.BudgetDenials() != 1 {
+		t.Fatalf("budget_denials = %v (getter %d), want 1", got, lim.BudgetDenials())
 	}
 }
 
@@ -526,8 +526,8 @@ func TestModelLimits_DailyBudget429(t *testing.T) {
 	if n := e.deniedModelRows(t, "team-sonnet", 429, "budget_exceeded: daily budget exceeded for model team-sonnet"); n != 1 {
 		t.Fatalf("captured 429 rows = %d, want 1", n)
 	}
-	if got := lim.Status()["budget_denials"]; got != uint64(1) {
-		t.Fatalf("budget_denials = %v, want 1", got)
+	if got := lim.Status()["budget_denials"]; got != uint64(1) || lim.BudgetDenials() != 1 {
+		t.Fatalf("budget_denials = %v (getter %d), want 1", got, lim.BudgetDenials())
 	}
 }
 

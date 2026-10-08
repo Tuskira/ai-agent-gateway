@@ -99,8 +99,8 @@ curl -s localhost:9464/metrics | grep gateway_build_info
 - What it serves: `gateway_build_info` (labels `version`,
   `go_version`), the [HTTP metrics](#http-metrics) below, the MCP and LLM
   series listed [below](#metrics-from-access-log-and-llm-call-records),
-  and the standard Go runtime (`go_*`) and process (`process_*`) series.
-  The health and pool instruments arrive in follow-up changes.
+  the [health and capacity series](#health-and-capacity-series), and the
+  standard Go runtime (`go_*`) and process (`process_*`) series.
 - **Driver seam.** Metrics go through `pkg/metrics`: the gateway records
   with the OpenTelemetry metric API, and the driver named by
   `metrics.driver` exports them. `prometheus` is a pull driver; a push
@@ -222,6 +222,33 @@ Label rules:
   count as `method="stream"` in `gateway_mcp_requests_total` but never
   reach a duration histogram. Health probes, 401s and session `DELETE`
   carry no method and are not recorded.
+
+### Health and capacity series
+
+These are read when Prometheus scrapes, from counters the gateway already
+keeps, so they add nothing to the request path. Counters are cumulative
+since process start and per process: use `rate()` or `increase()`, and
+sum across replicas. All names carry the namespace (`gateway_` by
+default), and counters end in `_total`.
+
+| Series | Type | Labels | Meaning |
+|---|---|---|---|
+| `auth_locked_ips` | gauge | `plane` (`api`, `mcp`, `llm`) | Client IPs locked out right now after repeated auth failures. Always `0` when `auth.rate_limit.enabled` is false. |
+| `auth_failures_total` | counter | `plane` | Requests that presented a credential the gateway rejected. Requests with no credential are not counted. Counted even when the rate limiter is disabled. |
+| `llm_limit_denials_total` | counter | `reason` (`budget`, `rpm`) | LLM requests refused by a per-key limit. Not split by tenant. LLM plane only. |
+| `llm_detection_turns_total` | counter | `result` (`sent`, `dropped`, `failed`) | Turns copied to the detection agent: accepted, discarded (queue full, byte budget, shutdown), or refused or unreachable. Present only when `llm_proxy.detection.agent_url` is set. |
+| `llm_detection_queue_depth` | gauge |  | Turns waiting to be posted to the detection agent. |
+| `sink_records_dropped_total` | counter | `sink` (`stdout`, `clickhouse`) | Records a sink dropped because its queue was full. The OTel sink keeps no count. |
+| `body_store_offloads_total` | counter |  | LLM calls whose bodies went to the body store. LLM plane only. |
+| `body_store_fallbacks_total` | counter |  | Offloads that failed, so the bodies were stored inline. Non-zero means the body store is unhealthy; no record is lost. |
+| `db_connections` | gauge | `state` (`open`, `idle`, `in_use`) | Database pool connections. Postgres store only. |
+| `db_wait_duration_seconds_total` | counter |  | Total time callers waited for a database connection. A rising rate means the pool is too small. |
+| `mcp_sessions_active` | gauge |  | MCP sessions in this process's session store. Absent with `sessions.store: redis`, which cannot count its sessions cheaply; use `mcp_sessions_created_total` there. Counts expired sessions until the cleanup sweep reclaims them. |
+| `mcp_sessions_created_total` | counter |  | MCP sessions created by this process. |
+| `mcp_tool_cache_lookups_total` | counter | `result` (`hit`, `stale`, `miss`) | `tools/list` reads of the tool cache: served fresh, served past its TTL (`tool_cache.serve_stale`), or answered by a live fan-out because nothing usable was cached or the read failed. Present only with `tool_cache.enabled`. |
+
+Series for a part of the gateway that is switched off (the LLM plane, the
+MCP plane, a sink) are not registered, so they do not appear at all.
 
 ## Analytics API
 

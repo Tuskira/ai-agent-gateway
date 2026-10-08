@@ -83,6 +83,10 @@ metrics:
   namespace: gateway # default: every gateway metric is gateway_*
 ```
 
+The same settings as environment variables are `GATEWAY_METRICS_DRIVER`,
+`GATEWAY_METRICS_ADDRESS`, `GATEWAY_METRICS_PATH` and
+`GATEWAY_METRICS_NAMESPACE`; see [configuration.md](configuration.md#metrics-operational-metrics).
+
 ```sh
 curl -s localhost:9464/metrics | grep gateway_build_info
 # gateway_build_info{go_version="go1.27.1",version="0.3.0"} 1
@@ -96,41 +100,107 @@ curl -s localhost:9464/metrics | grep gateway_build_info
 - The listener also answers `GET /health` (`{"status":"ok"}`), and it
   starts first and stops last, so it can be scraped while the planes
   drain.
-- What it serves: `gateway_build_info` (labels `version`,
-  `go_version`), the [HTTP metrics](#http-metrics) below, the MCP and LLM
-  series listed [below](#metrics-from-access-log-and-llm-call-records),
-  the [health and capacity series](#health-and-capacity-series), and the
-  standard Go runtime (`go_*`) and process (`process_*`) series.
 - **Driver seam.** Metrics go through `pkg/metrics`: the gateway records
   with the OpenTelemetry metric API, and the driver named by
   `metrics.driver` exports them. `prometheus` is a pull driver; a push
   driver (OTLP, StatsD, a vendor agent) registered by a custom binary
-  opens no listener. See CONTRIBUTING.md, "Adding a metrics exporter".
+  opens no listener. Out-of-tree drivers can be checked with the
+  `pkg/metrics/metricstest` conformance suite. See CONTRIBUTING.md,
+  "Adding a metrics exporter".
+- **ClickHouse stays the per-request source.** Metrics are aggregates. For
+  per-request detail (who called which tool, tokens and cost per call) use
+  the ClickHouse sink and the [analytics API](#analytics-api).
+
+### Try it, and where things live
+
+- **Run it locally.** [`examples/14-prometheus`](https://github.com/Tuskira/ai-agent-gateway/tree/main/examples/14-prometheus)
+  adds Prometheus (always) and Grafana (compose profile `grafana`) to the
+  compose stack, drives real MCP traffic and checks the series. Its
+  `run.sh` is part of `make examples-smoke`.
+- **Grafana dashboard.** One JSON file,
+  [`examples/14-prometheus/grafana/dashboards/gateway.json`](https://github.com/Tuskira/ai-agent-gateway/blob/main/examples/14-prometheus/grafana/dashboards/gateway.json).
+  Import it into your own Grafana (Dashboards, New, Import, upload the
+  file) and pick your Prometheus in the "Data source" drop-down. Panels:
+  request rate, 5xx rate and p95 latency per plane, LLM tokens per model,
+  LLM cost per tenant, tool calls per connector, detection tee results,
+  database connections, auth failures.
+- **Alert rules.** Four starter rules (LLM 5xx ratio, detection turns
+  dropped, database pool waiting, auth failure burst) in
+  [`examples/14-prometheus/rules.yml`](https://github.com/Tuskira/ai-agent-gateway/blob/main/examples/14-prometheus/rules.yml).
+  They are a starting point, not tuned thresholds.
 - **Kubernetes.** `deploy/k8s/components/metrics` enables the exporter on
   all three planes, adds the scrape annotations and the NetworkPolicy
   rule, and `components/metrics-podmonitor` adds an opt-in `PodMonitor`;
   see [deploy/README.md, "Metrics (Prometheus)"](https://github.com/Tuskira/ai-agent-gateway/blob/main/deploy/README.md#metrics-prometheus).
-- Metrics are aggregates. For per-request detail (who called which tool,
-  tokens and cost per call) use the ClickHouse sink and the analytics
-  API below. The admin console does not read these metrics.
 
-### HTTP metrics
+### Metric reference
 
-Every plane (MCP, API and LLM) is wrapped in the same middleware, so each
-records three series. With the default namespace:
+Names below carry the default `gateway` namespace (`metrics.namespace`).
+The exporter adds `_total` to counters and `_bucket`, `_sum` and `_count`
+to histograms. Counters are cumulative since process start and per
+process: use `rate()` or `increase()`, and sum across replicas. The Go
+runtime (`go_*`) and process (`process_*`) series are served too, under
+their standard names.
 
-| Series | Type | Labels |
-|---|---|---|
-| `gateway_http_requests_total` | counter | `plane`, `method`, `route`, `status` |
-| `gateway_http_request_duration_seconds` (`_bucket`, `_sum`, `_count`) | histogram | `plane`, `method`, `route` |
-| `gateway_http_requests_in_flight` | gauge | `plane` |
+| Series | Type | Labels | Meaning |
+|---|---|---|---|
+| `gateway_build_info` | gauge | `version`, `go_version` | Always `1`; the labels carry the build. |
+| `gateway_http_requests_total` | counter | `plane`, `method`, `route`, `status` | HTTP requests on the `mcp`, `api` and `llm` planes, counted when the handler returns. |
+| `gateway_http_request_duration_seconds` | histogram | `plane`, `method`, `route` | Request duration. |
+| `gateway_http_requests_in_flight` | gauge | `plane` | Requests being served now, streams included. |
+| `gateway_mcp_requests_total` | counter | `tenant`, `method`, `outcome` | Every access-log record with a JSON-RPC method. |
+| `gateway_mcp_tool_calls_total` | counter | `tenant`, `connector`, `tool`, `outcome` | A `tools/call` routed to a connector. |
+| `gateway_mcp_tool_call_duration_seconds` | histogram | `connector` | Duration of those calls. |
+| `gateway_mcp_errors_total` | counter | `tenant`, `method`, `error_code` | A response that carried a JSON-RPC error. |
+| `gateway_mcp_sessions_active` | gauge | | MCP sessions in this process's session store. Absent with `sessions.store: redis`, which cannot count its sessions cheaply. Counts expired sessions until the cleanup sweep reclaims them. |
+| `gateway_mcp_sessions_created_total` | counter | | MCP sessions created by this process. |
+| `gateway_mcp_tool_cache_lookups_total` | counter | `result` (`hit`, `stale`, `miss`) | `tools/list` reads of the tool cache: served fresh, served past its TTL (`tool_cache.serve_stale`), or answered by a live fan-out. Present only with `tool_cache.enabled`. |
+| `gateway_llm_calls_total` | counter | `tenant`, `provider`, `model`, `status`, `stream` | LLM calls that were routed to a provider. |
+| `gateway_llm_tokens_total` | counter | `tenant`, `provider`, `model`, `kind` | Tokens by kind: `input`, `output`, `cache_read`, `cache_creation` (only non-zero kinds). |
+| `gateway_llm_cost_usd_total` | counter | `tenant`, `provider`, `model` | Cost in US dollars of calls that were priced (`cost_usd` is not null). |
+| `gateway_llm_call_duration_seconds` | histogram | `provider`, `model` | LLM call duration; a streaming call's duration is the whole stream. |
+| `gateway_llm_fallbacks_total` | counter | `tenant`, `model` | A registered model was answered by a fallback target (index above 0). |
+| `gateway_llm_limit_denials_total` | counter | `reason` (`budget`, `rpm`) | LLM requests refused by a per-key limit. Not split by tenant. LLM plane only. |
+| `gateway_llm_detection_turns_total` | counter | `result` (`sent`, `dropped`, `failed`) | Turns copied to the detection agent: accepted, discarded (queue full, byte budget, shutdown), or refused or unreachable. Present only when `llm_proxy.detection.agent_url` is set. |
+| `gateway_llm_detection_queue_depth` | gauge | | Turns waiting to be posted to the detection agent. |
+| `gateway_auth_locked_ips` | gauge | `plane` (`api`, `mcp`, `llm`) | Client IPs locked out right now after repeated auth failures. Always `0` when `auth.rate_limit.enabled` is false. |
+| `gateway_auth_failures_total` | counter | `plane` | Requests that presented a credential the gateway rejected. Requests with no credential are not counted. Counted only while `auth.rate_limit.enabled` is true (the default), because the counter sits in the rate limiter's authenticator wrapper. |
+| `gateway_sink_records_dropped_total` | counter | `sink` (`stdout`, `clickhouse`) | Records a sink dropped because its queue was full. The OTel sink keeps no count. |
+| `gateway_body_store_offloads_total` | counter | | LLM calls whose bodies went to the body store. LLM plane only. |
+| `gateway_body_store_fallbacks_total` | counter | | Offloads that failed, so the bodies were stored inline. Non-zero means the body store is unhealthy; no record is lost. |
+| `gateway_db_connections` | gauge | `state` (`open`, `idle`, `in_use`) | Database pool connections. Postgres store only. |
+| `gateway_db_wait_duration_seconds_total` | counter | | Total time callers waited for a database connection. A rising rate means the pool is too small. |
 
-- `plane` is `mcp`, `api` or `llm`. `method` is the HTTP method, with
-  `OTHER` for anything that is not a standard method. `status` is the
-  HTTP status code the handler wrote (`200` when it wrote a body or
-  nothing; `101` for an upgraded connection). A JSON-RPC error on the MCP
-  plane is still HTTP `200`: this counts HTTP, not tool outcomes.
-- `route` is bounded and never a raw path:
+Series for a part of the gateway that is switched off (the LLM plane, the
+MCP plane, a sink) are not registered, so they do not appear at all.
+The `gateway_http_*` series come from a middleware on each plane, the
+`gateway_mcp_*` and `gateway_llm_*` request series from a metrics sink on
+the same `sink.Multi` as the storage sinks, and the health and capacity
+series are read when Prometheus scrapes, from counters the gateway already
+keeps, so they add nothing to the request path.
+
+Example queries:
+
+```promql
+sum by (plane, status) (rate(gateway_http_requests_total[5m]))
+histogram_quantile(0.95, sum by (le, plane) (rate(gateway_http_request_duration_seconds_bucket{route!="/mcp/stream"}[5m])))
+sum by (model) (rate(gateway_llm_tokens_total[5m]))
+sum by (connector) (rate(gateway_mcp_tool_calls_total[5m]))
+```
+
+### Cardinality guarantees
+
+A caller with a valid key controls parts of every request, so every label
+value is either from a fixed set or bounded:
+
+- **Never labels:** API key id, session id, request id, principal, user,
+  connector id (a UUID), and raw URL paths.
+- `tenant` is the tenant id (a bounded set). A record with no tenant is
+  labelled `unknown`.
+- `plane` is `mcp`, `api` or `llm`. HTTP `method` is the HTTP method, with
+  `OTHER` for anything that is not a standard method. `status` is the HTTP
+  status code the handler wrote.
+- HTTP `route` is bounded and never a raw path:
   - **mcp:** `/mcp`, `/mcp/stream`, `/health`, or `other`.
   - **api:** the matched route pattern, such as
     `/api/v1/connectors/{id}` (ids never reach the label). The console's
@@ -139,52 +209,9 @@ records three series. With the default namespace:
   - **llm:** the provider only (`anthropic`, `openai`, `gemini`,
     `bedrock`), `/health`, or `other`. The path carries model ids, so it
     is not used.
-- Requests are counted when the handler returns. A server-sent-event or
-  streamed LLM response therefore lands in the histogram at the end of
-  the stream, with the stream's whole lifetime as its duration; filter on
-  `route="/mcp/stream"` to separate those. While a stream is open it is
-  visible in `gateway_http_requests_in_flight`.
-- Requests rejected before routing (a failed API-key check, a rate limit)
-  are counted too, because the middleware is the outermost layer of each
-  plane.
-- Duration buckets, in seconds: 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
-  1, 2.5, 5, 10, 30, 60, 300.
-
-Example queries:
-
-```promql
-sum by (plane, status) (rate(gateway_http_requests_total[5m]))
-histogram_quantile(0.95, sum by (le, plane) (rate(gateway_http_request_duration_seconds_bucket{route!="/mcp/stream"}[5m])))
-```
-
-### Metrics from access-log and LLM-call records
-
-A metrics sink rides the same `sink.Multi` as the storage sinks (it is
-added when `metrics.driver` is not `none`), so it sees every MCP access-log
-record and every LLM call, including the LLM plane's best-effort copy.
-Names below carry the default `gateway` namespace; counters end in
-`_total`, and histograms export `_bucket`, `_sum` and `_count`.
-
-| Metric | Type | Labels | Recorded when |
-|---|---|---|---|
-| `gateway_mcp_requests_total` | counter | `tenant`, `method`, `outcome` | Every access-log record with a JSON-RPC method. |
-| `gateway_mcp_tool_calls_total` | counter | `tenant`, `connector`, `tool`, `outcome` | A `tools/call` that was routed to a connector. |
-| `gateway_mcp_tool_call_duration_seconds` | histogram | `connector` | Same records, `DurationMS` in seconds. |
-| `gateway_mcp_errors_total` | counter | `tenant`, `method`, `error_code` | The response carried a JSON-RPC error. |
-| `gateway_llm_calls_total` | counter | `tenant`, `provider`, `model`, `status`, `stream` | Every LLM call that was routed to a provider. |
-| `gateway_llm_tokens_total` | counter | `tenant`, `provider`, `model`, `kind` | Per non-zero token kind: `input`, `output`, `cache_read`, `cache_creation`. |
-| `gateway_llm_cost_usd_total` | counter | `tenant`, `provider`, `model` | The call was priced (`cost_usd` is not null). |
-| `gateway_llm_call_duration_seconds` | histogram | `provider`, `model` | Every LLM call; a streaming call's duration is the whole stream. |
-| `gateway_llm_fallbacks_total` | counter | `tenant`, `model` | A registered model was answered by a fallback target (index above 0). |
-
-Label rules:
-
-- `tenant` is the tenant id (a bounded set). A record with no tenant is
-  labelled `unknown`. Key id, session id, request id, principal, user and
-  connector id (a UUID) are never labels.
-- `method` is one of `initialize`, `ping`, `tools/list`, `tools/call`,
-  `prompts/list`, `prompts/get`, `resources/list`, `resources/read`,
-  `resources/templates/list`, `resources/subscribe`,
+- JSON-RPC `method` is one of `initialize`, `ping`, `tools/list`,
+  `tools/call`, `prompts/list`, `prompts/get`, `resources/list`,
+  `resources/read`, `resources/templates/list`, `resources/subscribe`,
   `resources/unsubscribe`, `skills/list`, `skills/get`,
   `completion/complete`, `logging/setLevel`, the known `notifications/*`
   names, `response` (the agent's answer to a relayed request),
@@ -192,10 +219,6 @@ Label rules:
   connector makes of the agent), `stream` (a `GET /mcp/stream` that ended),
   or `other`. The method on a request is chosen by the caller, so anything
   not listed, including an unrecognised notification, is `other`.
-- `outcome` is `rpc_error` when the response carried a JSON-RPC error
-  (these arrive with HTTP 200), else `http_4xx` or `http_5xx` by status,
-  else `ok`. A tool that ran and reported `isError` is `ok`: the record
-  does not carry that.
 - `error_code` is one of the codes the gateway produces (`-32700`,
   `-32600` to `-32603`, `-32800`, `-32000` to `-32006`, `-32029`), else
   `other`; a connector or agent can send any code.
@@ -210,49 +233,53 @@ Label rules:
   accepted the call (2xx), otherwise it is `unknown`, so a client cannot
   mint series with made-up names. At most 500 distinct values are kept per
   process, the rest are `other`. `provider` is the client's dialect
-  (`anthropic`, `bedrock`, `openai`, `gemini`); `status` is the HTTP status
-  as a string; `stream` is `true` or `false`.
-- Rows ingested from the interceptor (`source: interceptor`) are not
-  counted: they are not this gateway's traffic.
+  (`anthropic`, `bedrock`, `openai`, `gemini`); `status` on
+  `gateway_llm_calls_total` is the HTTP status as a string; `stream` is
+  `true` or `false`.
+- `outcome` is `rpc_error` when the response carried a JSON-RPC error
+  (these arrive with HTTP 200), else `http_4xx` or `http_5xx` by status,
+  else `ok`. A tool that ran and reported `isError` is `ok`: the record
+  does not carry that.
+
+### Reading the series correctly
+
+- `gateway_http_requests_total` counts HTTP, not tool outcomes: a
+  JSON-RPC error on the MCP plane is still HTTP `200`. Use
+  `gateway_mcp_requests_total{outcome="rpc_error"}` or
+  `gateway_mcp_errors_total` for those.
+- Requests are counted when the handler returns. A server-sent-event or
+  streamed LLM response therefore lands in the histogram at the end of
+  the stream, with the stream's whole lifetime as its duration; filter on
+  `route="/mcp/stream"` to separate those. While a stream is open it is
+  visible in `gateway_http_requests_in_flight`. Requests rejected before
+  routing (a failed API-key check, a rate limit) are counted too, because
+  the middleware is the outermost layer of each plane.
+- HTTP duration buckets, in seconds: 0.005, 0.01, 0.025, 0.05, 0.1, 0.25,
+  0.5, 1, 2.5, 5, 10, 30, 60, 300.
+- `gateway_llm_calls_total` and the LLM plane's HTTP request counters are
+  different series on purpose. The sink only sees calls that reached a
+  provider, so pre-route denials (401, `llm.access` denied, body too
+  large, the per-tenant concurrency limit) are in the HTTP counters only.
 - Token kinds are the provider's own: `input` includes cache reads for
   OpenAI and Gemini but not for Anthropic. Compare them within a provider,
   or add `cache_read` yourself for Anthropic.
-- `gateway_llm_calls_total` and the HTTP request counters of the plane
-  middleware are different series on purpose. This sink only sees calls
-  that reached a provider, so pre-route denials (401, `llm.access`
-  denied, body too large, the per-tenant concurrency limit) are in the
-  HTTP counters only.
+- Rows ingested from the interceptor (`source: interceptor`) are not
+  counted: they are not this gateway's traffic.
 - `GET /mcp/stream` records are written when the stream ends, so they
   count as `method="stream"` in `gateway_mcp_requests_total` but never
   reach a duration histogram. Health probes, 401s and session `DELETE`
-  carry no method and are not recorded.
+  carry no JSON-RPC method and are not in the `gateway_mcp_*` series; the
+  HTTP counters have them.
 
-### Health and capacity series
+### What the admin console does not show
 
-These are read when Prometheus scrapes, from counters the gateway already
-keeps, so they add nothing to the request path. Counters are cumulative
-since process start and per process: use `rate()` or `increase()`, and
-sum across replicas. All names carry the namespace (`gateway_` by
-default), and counters end in `_total`.
-
-| Series | Type | Labels | Meaning |
-|---|---|---|---|
-| `auth_locked_ips` | gauge | `plane` (`api`, `mcp`, `llm`) | Client IPs locked out right now after repeated auth failures. Always `0` when `auth.rate_limit.enabled` is false. |
-| `auth_failures_total` | counter | `plane` | Requests that presented a credential the gateway rejected. Requests with no credential are not counted. Counted even when the rate limiter is disabled. |
-| `llm_limit_denials_total` | counter | `reason` (`budget`, `rpm`) | LLM requests refused by a per-key limit. Not split by tenant. LLM plane only. |
-| `llm_detection_turns_total` | counter | `result` (`sent`, `dropped`, `failed`) | Turns copied to the detection agent: accepted, discarded (queue full, byte budget, shutdown), or refused or unreachable. Present only when `llm_proxy.detection.agent_url` is set. |
-| `llm_detection_queue_depth` | gauge |  | Turns waiting to be posted to the detection agent. |
-| `sink_records_dropped_total` | counter | `sink` (`stdout`, `clickhouse`) | Records a sink dropped because its queue was full. The OTel sink keeps no count. |
-| `body_store_offloads_total` | counter |  | LLM calls whose bodies went to the body store. LLM plane only. |
-| `body_store_fallbacks_total` | counter |  | Offloads that failed, so the bodies were stored inline. Non-zero means the body store is unhealthy; no record is lost. |
-| `db_connections` | gauge | `state` (`open`, `idle`, `in_use`) | Database pool connections. Postgres store only. |
-| `db_wait_duration_seconds_total` | counter |  | Total time callers waited for a database connection. A rising rate means the pool is too small. |
-| `mcp_sessions_active` | gauge |  | MCP sessions in this process's session store. Absent with `sessions.store: redis`, which cannot count its sessions cheaply; use `mcp_sessions_created_total` there. Counts expired sessions until the cleanup sweep reclaims them. |
-| `mcp_sessions_created_total` | counter |  | MCP sessions created by this process. |
-| `mcp_tool_cache_lookups_total` | counter | `result` (`hit`, `stale`, `miss`) | `tools/list` reads of the tool cache: served fresh, served past its TTL (`tool_cache.serve_stale`), or answered by a live fan-out because nothing usable was cached or the read failed. Present only with `tool_cache.enabled`. |
-
-Series for a part of the gateway that is switched off (the LLM plane, the
-MCP plane, a sink) are not registered, so they do not appear at all.
+The admin console does not read these metrics: its Overview, Access Logs,
+Models and Session Timeline pages are backed by the ClickHouse sink (see
+[Console pages](#console-pages)), and nothing in the console links to
+Prometheus or Grafana. Metrics and the console answer different
+questions: metrics are cheap aggregates for alerting and capacity, with
+deliberately few labels; ClickHouse holds one row per request, with
+principal, session and request ids that must never become metric labels.
 
 ## Analytics API
 

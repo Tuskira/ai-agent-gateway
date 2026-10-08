@@ -1,0 +1,53 @@
+# Starter alert rules for the gateway. They are examples to adapt, not a
+# tuned policy: thresholds and "for" durations are deliberately simple.
+# Metric names carry the default "gateway" namespace.
+groups:
+  - name: ai-gateway
+    rules:
+      - alert: GatewayLLMServerErrors
+        # Share of LLM-plane responses that are 5xx. The HTTP middleware
+        # sees every request, including ones that never reach a provider.
+        expr: |
+          sum(rate(gateway_http_requests_total{plane="llm",status=~"5.."}[5m]))
+            /
+          sum(rate(gateway_http_requests_total{plane="llm"}[5m]))
+            > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "More than 5% of LLM plane responses are 5xx"
+          description: "Check the provider status and the gateway's llm_calls by status and model."
+
+      - alert: GatewayDetectionTurnsDropped
+        # llm_detection_turns only exists when llm_proxy.detection.agent_url
+        # is set. "dropped" means the queue or byte budget was full.
+        expr: increase(gateway_llm_detection_turns_total{result="dropped"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The detection tee is dropping turns"
+          description: "Turns copied to the detection agent were discarded; the detection agent is slow or unreachable."
+
+      - alert: GatewayDatabasePoolWaiting
+        # Seconds spent waiting for a database connection, per second.
+        # Sustained growth means the pool is too small or queries are slow.
+        expr: rate(gateway_db_wait_duration_seconds_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Requests are waiting for a Postgres connection"
+          description: "Raise the pool size or look for slow queries; compare gateway_db_connections{state=\"in_use\"}."
+
+      - alert: GatewayAuthFailureBurst
+        # More than 20 rejected credentials in five minutes on one plane:
+        # a misconfigured client, or someone guessing keys.
+        expr: sum by (plane) (increase(gateway_auth_failures_total[5m])) > 20
+        for: 0m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Burst of failed authentications on the {{ $labels.plane }} plane"
+          description: "See gateway_auth_locked_ips for clients already locked out."

@@ -301,6 +301,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **HTTP metrics for all three planes.** With `metrics.driver:
+  prometheus` the MCP, API and LLM planes record
+  `gateway_http_requests_total{plane,method,route,status}`,
+  `gateway_http_request_duration_seconds{plane,method,route}` and
+  `gateway_http_requests_in_flight{plane}`. The `route` label is bounded:
+  `/mcp`, `/mcp/stream`, `/health` or `other` on the MCP plane, chi's
+  route pattern on the API (`/api/v1/connectors/{id}`, `/*` for the
+  console, `unmatched`), and the provider only on the LLM plane. The
+  response-writer wrapper keeps `http.Flusher`, so SSE and LLM streaming
+  are unaffected. New `api.Deps.Instrument` hook mounts the middleware
+  first inside the chi router (an outer wrapper cannot see the route
+  pattern). See `docs/observability.md`, "HTTP metrics".
 - **Prometheus metrics endpoint (foundation).** A new `metrics` config
   section (`driver`, `address`, `path`, `namespace`, `options`; env
   `GATEWAY_METRICS_*`) and a `pkg/metrics` exporter seam: the gateway

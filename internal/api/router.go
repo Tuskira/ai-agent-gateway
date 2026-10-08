@@ -51,6 +51,15 @@ type Deps struct {
 	// "locked_ips" counter is also reported by GET /api/v1/health.
 	RateLimiter *internalauth.RateLimiter
 
+	// Instrument, when non-nil, is mounted as the first middleware inside
+	// the chi router, ahead of securityHeaders and the rate limiter, so it
+	// observes every response this router serves (including 404s, 401s
+	// and the UI mount). It has to live inside the router: chi attaches
+	// its route context to a copy of the request, so a wrapper around
+	// NewRouter would read an empty route pattern. cmd/gateway sets it to
+	// the HTTP metrics middleware (internal/metrics.Metrics.Instrument).
+	Instrument func(http.Handler) http.Handler
+
 	// Console configures the console login/session routes (/auth/config,
 	// /auth/login, ...): cookie security, session lifetimes, the API-key
 	// fallback flag, the default tenant. The zero value works (default
@@ -202,6 +211,12 @@ type routeSpec struct {
 func NewRouter(deps Deps) http.Handler {
 	r := chi.NewRouter()
 	routes := buildRoutes(deps)
+
+	// First, so it also times the middleware below and counts what they
+	// reject. See Deps.Instrument for why it is inside the router.
+	if deps.Instrument != nil {
+		r.Use(deps.Instrument)
+	}
 
 	// Mounted first so it wraps every response this router serves,
 	// including the UI mount below and error responses (404s, rate-limit

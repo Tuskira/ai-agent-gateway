@@ -248,6 +248,19 @@ logging:
   # true selects human-readable text logs instead of JSON.
   development: false
 
+# Operational metrics (pkg/metrics). See docs/observability.md,
+# "Metrics (Prometheus)".
+metrics:
+  # none (default): no listener, every instrument a no-op.
+  # prometheus: serve the Prometheus text format at address + path.
+  driver: none
+  # Separate listener, UNAUTHENTICATED: restrict it to the monitoring
+  # network. Ignored when driver is none.
+  address: ":9464"
+  path: /metrics
+  # Prefix of every gateway metric name (gateway_build_info, ...).
+  namespace: gateway
+
 # Platform MCP catalog: curated MCP servers a tenant admin can "Add to
 # tenant" from the console (POST /api/v1/mcp-catalog/{slug}/add), which
 # creates an ordinary tenant connector. Entries are inert until added.

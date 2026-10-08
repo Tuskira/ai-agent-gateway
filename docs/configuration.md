@@ -265,6 +265,20 @@ best-effort async sink queue).
 | `ingest.max_records` | int | `1000` | `GATEWAY_INGEST_MAX_RECORDS` | Cap on `llm_calls` + `access_logs` entries combined, per request. Must be positive when enabled. |
 | `ingest.rate_per_minute` | int | `120` | `GATEWAY_INGEST_RATE_PER_MINUTE` | Requests per minute, per API key (not per IP — this route is exempt from the control plane's per-IP rate limiter; see [security-model.md, "Rate limiting and lockout"](security-model.md#rate-limiting-and-lockout)). Must be positive when enabled. |
 
+## metrics (operational metrics)
+
+The gateway's own counters and histograms, through the `pkg/metrics`
+exporter seam (see [observability.md, "Metrics (Prometheus)"](observability.md#metrics-prometheus)).
+Off by default.
+
+| Key | Type | Default | Env var | Meaning |
+|---|---|---|---|---|
+| `metrics.driver` | string | `none` | `GATEWAY_METRICS_DRIVER` | The `pkg/metrics` exporter. `none`: no listener, every instrument a no-op. `prometheus`: serves the Prometheus text format at `address` + `path`. Any other value names a driver a custom binary registered with `pkg/metrics.Register`; an unregistered name fails at startup listing the registered ones. Must not be empty. |
+| `metrics.address` | string | `:9464` | `GATEWAY_METRICS_ADDRESS` | Listener for the scrape endpoint, separate from the three planes. **Unauthenticated**: restrict it to the monitoring network. Required when `driver` is not `none`. A push driver opens no listener. |
+| `metrics.path` | string | `/metrics` | `GATEWAY_METRICS_PATH` | Path of the scrape endpoint on that listener (which also answers `GET /health`). Must start with `/` when `driver` is not `none`. |
+| `metrics.namespace` | string | `gateway` | `GATEWAY_METRICS_NAMESPACE` | Prefix of every exported gateway metric name (`gateway_build_info`). The Go runtime (`go_*`) and process (`process_*`) series keep their standard names. Must match `^[a-zA-Z_][a-zA-Z0-9_]*$` when `driver` is not `none`. |
+| `metrics.options` | map[string]string | `{}` | — (YAML only) | Passed verbatim to the driver as `pkg/metrics.Config.Options`, for a third-party driver. The built-in drivers ignore it. |
+
 ## logging
 
 | Key | Type | Default | Env var | Meaning |
@@ -283,6 +297,7 @@ derived name of one of these (e.g. `GATEWAY_AUTH_ROLES`) fails startup with
 
 - `auth.roles` (`map[string][]string`)
 - `sessions.options` (`map[string]string`)
+- `metrics.options` (`map[string]string`)
 - `sinks.otel.headers` (`map[string]string`)
 - `llm_proxy.models` (list of objects)
 - `mcp_catalog.seed` (list of objects)

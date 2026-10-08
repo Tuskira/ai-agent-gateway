@@ -56,6 +56,8 @@ type Metrics struct {
 	exp    pkgmetrics.Exporter
 	meter  metric.Meter
 	logger *slog.Logger
+
+	http httpState // HTTP instruments, created on first Instrument call
 }
 
 // New opens the exporter named by cfg.Driver (which must be registered

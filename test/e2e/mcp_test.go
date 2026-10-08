@@ -218,6 +218,14 @@ func newHeaderRegistry(t *testing.T, secretSvc *secrets.Service) *dpheaders.Regi
 // API, exactly as cmd/gateway does when both planes are enabled).
 func startPlane(t *testing.T, st store.Store, secretSvc *secrets.Service) (string, *dataplane.Plane) {
 	t.Helper()
+	return startPlaneWrapped(t, st, secretSvc, nil)
+}
+
+// startPlaneWrapped is startPlane with the served handler optionally wrapped
+// in middleware, the way cmd/gateway wraps it with the HTTP metrics
+// middleware before handing it to its listener.
+func startPlaneWrapped(t *testing.T, st store.Store, secretSvc *secrets.Service, wrap func(http.Handler) http.Handler) (string, *dataplane.Plane) {
+	t.Helper()
 
 	registry := newHeaderRegistry(t, secretSvc)
 
@@ -248,7 +256,11 @@ func startPlane(t *testing.T, st store.Store, secretSvc *secrets.Service) (strin
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	srv := &http.Server{Handler: plane.Handler, ReadTimeout: 30 * time.Second}
+	handler := plane.Handler
+	if wrap != nil {
+		handler = wrap(handler)
+	}
+	srv := &http.Server{Handler: handler, ReadTimeout: 30 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

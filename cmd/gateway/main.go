@@ -458,7 +458,7 @@ func run() error {
 
 		if cfg.MCP.Enabled {
 			routines = append(routines, httpplane.New(
-				"mcp", cfg.MCP.Address, mcpPlane.Handler,
+				"mcp", cfg.MCP.Address, gwMetrics.Instrument("mcp", metrics.MCPRoute)(mcpPlane.Handler),
 				cfg.MCP.ReadTimeout, cfg.MCP.WriteTimeout, defaultIdleTimeout, logger,
 			))
 			routines = append(routines, mcpPlane.Routines...)
@@ -476,6 +476,7 @@ func run() error {
 		// session cookie: the data planes take API keys only (a cookie is
 		// not port-scoped, and they have no CSRF check).
 		apiDeps := api.Deps{
+			Instrument:     gwMetrics.Instrument("api", metrics.APIRoute),
 			ServiceVersion: cfg.Service.Version,
 			Authenticator:  internalauth.RateLimitedAuthenticator(apiAuthenticator, rateLimiter),
 			Authorizer:     authorizer,
@@ -605,7 +606,7 @@ func run() error {
 
 		// Write timeout 0 (unlimited): LLM responses may stream for a long time.
 		routines = append(routines, httpplane.New(
-			"llm", cfg.LLMProxy.Address, llmMux,
+			"llm", cfg.LLMProxy.Address, gwMetrics.Instrument("llm", metrics.LLMRoute)(llmMux),
 			defaultReadTimeout, 0, defaultIdleTimeout, logger,
 		))
 		logger.Info("plane enabled", "plane", "llm", "addr", cfg.LLMProxy.Address)

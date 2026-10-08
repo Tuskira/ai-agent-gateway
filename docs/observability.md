@@ -96,11 +96,11 @@ curl -s localhost:9464/metrics | grep gateway_build_info
 - The listener also answers `GET /health` (`{"status":"ok"}`), and it
   starts first and stops last, so it can be scraped while the planes
   drain.
-- What it serves today: `gateway_build_info` (labels `version`,
-  `go_version`), the [HTTP metrics](#http-metrics) below, and the
-  standard Go runtime (`go_*`) and process (`process_*`) series. The MCP
-  tool, LLM, token, cost and health instruments arrive in follow-up
-  changes.
+- What it serves: `gateway_build_info` (labels `version`,
+  `go_version`), the [HTTP metrics](#http-metrics) below, the MCP and LLM
+  series listed [below](#metrics-from-access-log-and-llm-call-records),
+  and the standard Go runtime (`go_*`) and process (`process_*`) series.
+  The health and pool instruments arrive in follow-up changes.
 - **Driver seam.** Metrics go through `pkg/metrics`: the gateway records
   with the OpenTelemetry metric API, and the driver named by
   `metrics.driver` exports them. `prometheus` is a pull driver; a push
@@ -152,6 +152,76 @@ Example queries:
 sum by (plane, status) (rate(gateway_http_requests_total[5m]))
 histogram_quantile(0.95, sum by (le, plane) (rate(gateway_http_request_duration_seconds_bucket{route!="/mcp/stream"}[5m])))
 ```
+
+### Metrics from access-log and LLM-call records
+
+A metrics sink rides the same `sink.Multi` as the storage sinks (it is
+added when `metrics.driver` is not `none`), so it sees every MCP access-log
+record and every LLM call, including the LLM plane's best-effort copy.
+Names below carry the default `gateway` namespace; counters end in
+`_total`, and histograms export `_bucket`, `_sum` and `_count`.
+
+| Metric | Type | Labels | Recorded when |
+|---|---|---|---|
+| `gateway_mcp_requests_total` | counter | `tenant`, `method`, `outcome` | Every access-log record with a JSON-RPC method. |
+| `gateway_mcp_tool_calls_total` | counter | `tenant`, `connector`, `tool`, `outcome` | A `tools/call` that was routed to a connector. |
+| `gateway_mcp_tool_call_duration_seconds` | histogram | `connector` | Same records, `DurationMS` in seconds. |
+| `gateway_mcp_errors_total` | counter | `tenant`, `method`, `error_code` | The response carried a JSON-RPC error. |
+| `gateway_llm_calls_total` | counter | `tenant`, `provider`, `model`, `status`, `stream` | Every LLM call that was routed to a provider. |
+| `gateway_llm_tokens_total` | counter | `tenant`, `provider`, `model`, `kind` | Per non-zero token kind: `input`, `output`, `cache_read`, `cache_creation`. |
+| `gateway_llm_cost_usd_total` | counter | `tenant`, `provider`, `model` | The call was priced (`cost_usd` is not null). |
+| `gateway_llm_call_duration_seconds` | histogram | `provider`, `model` | Every LLM call; a streaming call's duration is the whole stream. |
+| `gateway_llm_fallbacks_total` | counter | `tenant`, `model` | A registered model was answered by a fallback target (index above 0). |
+
+Label rules:
+
+- `tenant` is the tenant id (a bounded set). A record with no tenant is
+  labelled `unknown`. Key id, session id, request id, principal, user and
+  connector id (a UUID) are never labels.
+- `method` is one of `initialize`, `ping`, `tools/list`, `tools/call`,
+  `prompts/list`, `prompts/get`, `resources/list`, `resources/read`,
+  `resources/templates/list`, `resources/subscribe`,
+  `resources/unsubscribe`, `skills/list`, `skills/get`,
+  `completion/complete`, `logging/setLevel`, the known `notifications/*`
+  names, `response` (the agent's answer to a relayed request),
+  `sampling/createMessage`, `elicitation/create`, `roots/list` (requests a
+  connector makes of the agent), `stream` (a `GET /mcp/stream` that ended),
+  or `other`. The method on a request is chosen by the caller, so anything
+  not listed, including an unrecognised notification, is `other`.
+- `outcome` is `rpc_error` when the response carried a JSON-RPC error
+  (these arrive with HTTP 200), else `http_4xx` or `http_5xx` by status,
+  else `ok`. A tool that ran and reported `isError` is `ok`: the record
+  does not carry that.
+- `error_code` is one of the codes the gateway produces (`-32700`,
+  `-32600` to `-32603`, `-32800`, `-32000` to `-32006`, `-32029`), else
+  `other`; a connector or agent can send any code.
+- `connector` is the slug before the first `__` of the qualified tool
+  name, `tool` the full qualified name. Both are only recorded when a
+  connector was resolved, because the name is client-supplied before
+  routing. Names without `__` (the gateway's native skills and commands)
+  are not tool calls here. At most 500 distinct `tool` values are kept per
+  process; the rest, and any name over 128 bytes, are `other`.
+- `model` is the name the client requested. A name from the model registry
+  is always used; an unregistered name is used only when the upstream
+  accepted the call (2xx), otherwise it is `unknown`, so a client cannot
+  mint series with made-up names. At most 500 distinct values are kept per
+  process, the rest are `other`. `provider` is the client's dialect
+  (`anthropic`, `bedrock`, `openai`, `gemini`); `status` is the HTTP status
+  as a string; `stream` is `true` or `false`.
+- Rows ingested from the interceptor (`source: interceptor`) are not
+  counted: they are not this gateway's traffic.
+- Token kinds are the provider's own: `input` includes cache reads for
+  OpenAI and Gemini but not for Anthropic. Compare them within a provider,
+  or add `cache_read` yourself for Anthropic.
+- `gateway_llm_calls_total` and the HTTP request counters of the plane
+  middleware are different series on purpose. This sink only sees calls
+  that reached a provider, so pre-route denials (401, `llm.access`
+  denied, body too large, the per-tenant concurrency limit) are in the
+  HTTP counters only.
+- `GET /mcp/stream` records are written when the stream ends, so they
+  count as `method="stream"` in `gateway_mcp_requests_total` but never
+  reach a duration histogram. Health probes, 401s and session `DELETE`
+  carry no method and are not recorded.
 
 ## Analytics API
 

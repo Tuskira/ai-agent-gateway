@@ -94,6 +94,7 @@ examples-smoke:
 	./examples/07-llm-passthrough/run.sh
 	./examples/08-observability/run.sh
 	./examples/11-server-requests/run.sh
+	./examples/14-prometheus/run.sh
 	./examples/13-claude-desktop/check.sh
 	./examples/13-claude-desktop/run.sh
 	./examples/09-roles-keys-and-rate-limits/run.sh

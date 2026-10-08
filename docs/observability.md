@@ -67,6 +67,48 @@ not running the LLM plane. `sinks` is omitted from the
 response entirely if no `SinksStatus` closure was wired (never happens in
 the shipped binary, but is a valid embedding state).
 
+## Metrics (Prometheus)
+
+Besides the per-request records above, the gateway can export its own
+operational metrics. They are off by default (`metrics.driver: none`).
+With `metrics.driver: prometheus` the gateway opens a fourth listener,
+separate from the three planes, and serves the Prometheus text format
+on it:
+
+```yaml
+metrics:
+  driver: prometheus
+  address: ":9464"   # default
+  path: /metrics     # default
+  namespace: gateway # default: every gateway metric is gateway_*
+```
+
+```sh
+curl -s localhost:9464/metrics | grep gateway_build_info
+# gateway_build_info{go_version="go1.27.1",version="0.3.0"} 1
+```
+
+- **The endpoint is unauthenticated.** It carries no request or
+  credential data, but it does reveal traffic shape and tenant ids.
+  Bind it to a private interface or restrict it with a network policy so
+  only your Prometheus can reach it. `api.dev_mode`'s loopback check does
+  not cover it.
+- The listener also answers `GET /health` (`{"status":"ok"}`), and it
+  starts first and stops last, so it can be scraped while the planes
+  drain.
+- What it serves today: `gateway_build_info` (labels `version`,
+  `go_version`), plus the standard Go runtime (`go_*`) and process
+  (`process_*`) series. The HTTP, MCP, LLM, token, cost and health
+  instruments arrive in follow-up changes.
+- **Driver seam.** Metrics go through `pkg/metrics`: the gateway records
+  with the OpenTelemetry metric API, and the driver named by
+  `metrics.driver` exports them. `prometheus` is a pull driver; a push
+  driver (OTLP, StatsD, a vendor agent) registered by a custom binary
+  opens no listener. See CONTRIBUTING.md, "Adding a metrics exporter".
+- Metrics are aggregates. For per-request detail (who called which tool,
+  tokens and cost per call) use the ClickHouse sink and the analytics
+  API below. The admin console does not read these metrics.
+
 ## Analytics API
 
 `GET /api/v1/analytics/*` is backed by `pkg/analytics.Reader`, satisfied

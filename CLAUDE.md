@@ -60,10 +60,11 @@ LLM provider conformance uses `LLMTEST_*` env vars (see CONTRIBUTING.md for a lo
 | MCP proxy | `:8080` | `internal/dataplane` | `POST/DELETE /mcp`, `GET /mcp/stream` (SSE) |
 | Control API + console | `:8081` | `internal/api` | `/api/v1/*`, embedded UI from `internal/api/ui/dist` |
 | LLM proxy | `:8082` | `internal/llmplane` | `/v1/messages`, `/{provider}/*`, `/model/*` (Bedrock) |
+| Metrics | `:9464` | `internal/metrics` + `pkg/metrics` | `GET /metrics` (prometheus driver, off by default) |
 
 The MCP data plane object is built whenever MCP **or** API is enabled (the API plane uses it for connector health/discover/cache via `pkg/ops`), but its listener only opens when `mcp.enabled` is true.
 
-**Shared core**, constructed once in `main.go` and passed as `Deps`: auth (`internal/auth`, `pkg/auth` — API-key authenticator chain + `RoleAuthorizer`), secrets (`internal/secrets`, AES-256-GCM, plus the header-resolver registry in `internal/dataplane/headers`), store (`pkg/store` interface, `internal/store/postgres` implementation, migrations in `internal/store/postgres/migrations`), and sinks (`pkg/sink` → stdout/otel/clickhouse/postgres, combined in `sink.Multi`).
+**Shared core**, constructed once in `main.go` and passed as `Deps`: auth (`internal/auth`, `pkg/auth` — API-key authenticator chain + `RoleAuthorizer`), secrets (`internal/secrets`, AES-256-GCM, plus the header-resolver registry in `internal/dataplane/headers`), store (`pkg/store` interface, `internal/store/postgres` implementation, migrations in `internal/store/postgres/migrations`), and sinks (`pkg/sink` → stdout/otel/clickhouse/postgres, combined in `sink.Multi`). Operational metrics go through the `pkg/metrics` exporter seam (OpenTelemetry metric API; `none` default, `prometheus` driver), opened once in `internal/metrics`.
 
 **`internal/` vs `pkg/`:** `pkg/` holds the plugin seams — small interfaces a separate Go module can implement (store, session, sink, body store, headers, ops, analytics, auth, LLM `Dialect`/`Provider`). Backends register through driver registries from `init()` and are enabled by a blank import in `cmd/gateway/main.go`. New store/session backends must pass `pkg/store/storetest` / `pkg/session/sessiontest`; LLM adapters must pass `pkg/llm/llmtest`. See CONTRIBUTING.md for the exact steps per seam.
 

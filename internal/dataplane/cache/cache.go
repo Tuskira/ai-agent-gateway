@@ -45,6 +45,17 @@ type Snapshot struct {
 	Stale bool
 }
 
+// Lookup results, as reported to the observer hook of a tools/list that
+// consults the cache (orchestrator.Deps.OnToolCacheLookup): served fresh
+// (LookupHit), served past its TTL (LookupStale), or answered by a live
+// fan-out because nothing usable was cached or the read failed
+// (LookupMiss).
+const (
+	LookupHit   = "hit"
+	LookupStale = "stale"
+	LookupMiss  = "miss"
+)
+
 // ToolCache stores a tenant's advertised tools.
 //
 // Implementations must be safe for concurrent use and must never return

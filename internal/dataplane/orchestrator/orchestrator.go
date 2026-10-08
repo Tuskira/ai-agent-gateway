@@ -105,6 +105,11 @@ type Deps struct {
 	// Sink receives one access-log record per relayed server-initiated
 	// request. Nil writes none.
 	Sink sink.LogSink
+	// OnToolCacheLookup, when set, is told the outcome of every tools/list
+	// cache read: cache.LookupHit, LookupStale or LookupMiss. It runs on
+	// the request path, so it must be cheap and must not block. Nil
+	// observes nothing. Only consulted when Cache is non-nil.
+	OnToolCacheLookup func(result string)
 	// Upstream tunes the connector-stream manager beyond the fields
 	// above (backoff, sweep interval); tests shorten them. Its Client,
 	// Notifications, Requests, Lookup, OnSessionGone and MaxPerSession
@@ -605,9 +610,13 @@ func (o *Orchestrator) tenantTools(ctx context.Context, in Request) ([]cache.Ent
 		} else if snap.Hit {
 			if snap.Stale {
 				o.log.Debug("serving stale tool cache", "tenant_id", tenantID, "tools", len(snap.Entries))
+				o.observeCacheLookup(cache.LookupStale)
+			} else {
+				o.observeCacheLookup(cache.LookupHit)
 			}
 			return snap.Entries, nil
 		}
+		o.observeCacheLookup(cache.LookupMiss)
 	}
 
 	entries, err := o.fanOutListTools(ctx, in, tenantID)
@@ -621,6 +630,14 @@ func (o *Orchestrator) tenantTools(ctx context.Context, in Request) ([]cache.Ent
 		}
 	}
 	return entries, nil
+}
+
+// observeCacheLookup reports one tools/list cache outcome to the optional
+// Deps.OnToolCacheLookup hook.
+func (o *Orchestrator) observeCacheLookup(result string) {
+	if fn := o.deps.OnToolCacheLookup; fn != nil {
+		fn(result)
+	}
 }
 
 // fanOutListTools queries every callable connector concurrently.

@@ -120,6 +120,11 @@ func init() {
 	})
 }
 
+// Stats returns the connection pool's counters (open, idle and in-use
+// connections, waits). It backs the gateway's db_* metrics; the *sql.DB
+// itself stays private.
+func (s *Store) Stats() sql.DBStats { return s.db.Stats() }
+
 func (s *Store) Tenants() store.TenantStore             { return &tenantStore{db: s.db} }
 func (s *Store) APIKeys() store.APIKeyStore             { return &apiKeyStore{db: s.db} }
 func (s *Store) Credentials() store.CredentialStore     { return &credentialStore{db: s.db} }

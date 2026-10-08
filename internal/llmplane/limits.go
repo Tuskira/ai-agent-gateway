@@ -124,6 +124,14 @@ func (l *Limiter) Status() map[string]any {
 	}
 }
 
+// BudgetDenials is how many requests were refused for an exhausted USD or
+// token budget since process start.
+func (l *Limiter) BudgetDenials() uint64 { return l.budgetDenials.Load() }
+
+// RPMDenials is how many requests were refused for exceeding a requests
+// per minute limit since process start.
+func (l *Limiter) RPMDenials() uint64 { return l.rpmDenials.Load() }
+
 // denial is a refused request: the status, the client-facing message, the
 // capture error text, and Retry-After seconds (0 = no header).
 type denial struct {

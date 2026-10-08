@@ -313,6 +313,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are unaffected. New `api.Deps.Instrument` hook mounts the middleware
   first inside the chi router (an outer wrapper cannot see the route
   pattern). See `docs/observability.md`, "HTTP metrics".
+- **Kubernetes: `components/metrics` and `components/metrics-podmonitor`.**
+  The first sets `GATEWAY_METRICS_DRIVER=prometheus`, a named container
+  port `metrics` (9464) and the `prometheus.io/scrape|port|path` pod
+  annotations on the api, mcp and llm Deployments, and appends a
+  NetworkPolicy ingress rule admitting TCP 9464 from the namespace
+  labelled `kubernetes.io/metadata.name=monitoring` (the base policy
+  otherwise drops the scrape). The second is an opt-in `PodMonitor` for
+  the Prometheus Operator; no shipped overlay uses it because the kind
+  cluster has no Prometheus CRDs. See `deploy/README.md`, "Metrics
+  (Prometheus)".
 - **Prometheus metrics endpoint (foundation).** A new `metrics` config
   section (`driver`, `address`, `path`, `namespace`, `options`; env
   `GATEWAY_METRICS_*`) and a `pkg/metrics` exporter seam: the gateway

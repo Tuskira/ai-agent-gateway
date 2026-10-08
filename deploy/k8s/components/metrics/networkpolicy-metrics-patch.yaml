@@ -1,0 +1,26 @@
+# deploy/k8s/base/networkpolicy.yaml only admits ingress from the ingress
+# controller's namespace, on the three plane ports, so Prometheus could not
+# scrape port 9464 without this rule. APPEND it (a JSON patch on
+# /spec/ingress/-): NetworkPolicy rules have no merge key, so a
+# strategic-merge patch would replace the whole ingress list instead of
+# extending it. Same pattern as components/redis/networkpolicy-redis-patch.yaml.
+#
+# The source is every pod in a namespace labelled
+# kubernetes.io/metadata.name=monitoring. The API server sets that label on
+# every namespace to the namespace's own name, so this works as shipped if
+# your Prometheus lives in a namespace called "monitoring". If it lives
+# elsewhere (kube-prometheus-stack's default is "monitoring"; others use
+# "prometheus", "observability", "openshift-monitoring"), change the value
+# below in a copy of this file, or patch it from your overlay. To admit only
+# the Prometheus pods rather than the whole namespace, add a podSelector
+# next to the namespaceSelector inside the same list item.
+- op: add
+  path: /spec/ingress/-
+  value:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+    ports:
+      - protocol: TCP
+        port: 9464 # metrics

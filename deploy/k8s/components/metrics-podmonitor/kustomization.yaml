@@ -1,0 +1,28 @@
+# OPT-IN: a PodMonitor so a Prometheus Operator (kube-prometheus-stack, the
+# OpenShift monitoring stack) discovers the gateway pods and scrapes their
+# "metrics" port. Add it NEXT TO components/metrics, which is what turns the
+# exporter on and opens the NetworkPolicy:
+#
+#   components:
+#     - <path to>/deploy/k8s/components/metrics
+#     - <path to>/deploy/k8s/components/metrics-podmonitor
+#
+# It is deliberately not part of components/metrics and not used by any
+# shipped overlay: applying a monitoring.coreos.com/v1 object fails on a
+# cluster without the Prometheus Operator CRDs, which includes the kind
+# cluster the CI examples run on. With a plain Prometheus (no operator) use
+# the prometheus.io/* annotations components/metrics already sets.
+#
+# A PodMonitor rather than a ServiceMonitor because the plane Services
+# expose only the plane ports; selecting pods avoids patching three
+# Services.
+#
+# Your Prometheus must select this object: kube-prometheus-stack only picks
+# up monitors carrying its release label by default
+# (prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues). Add the
+# label with a patch in your overlay, or set that value to false.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - podmonitor.yaml

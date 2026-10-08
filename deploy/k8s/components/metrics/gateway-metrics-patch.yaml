@@ -1,0 +1,71 @@
+# Turns the Prometheus exporter on for the gateway container of every plane
+# Deployment and advertises the scrape endpoint. Strategic-merge patches:
+# env merges by name and ports by containerPort into the lists in base/.
+# All three planes run the same image and each pod serves its own metrics
+# (HTTP series carry a plane label), so every Deployment gets the same
+# three additions.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-api
+  namespace: ai-gateway
+spec:
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9464"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: gateway
+          env:
+            - name: GATEWAY_METRICS_DRIVER
+              value: "prometheus"
+          ports:
+            - name: metrics
+              containerPort: 9464
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-mcp
+  namespace: ai-gateway
+spec:
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9464"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: gateway
+          env:
+            - name: GATEWAY_METRICS_DRIVER
+              value: "prometheus"
+          ports:
+            - name: metrics
+              containerPort: 9464
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-llm
+  namespace: ai-gateway
+spec:
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9464"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: gateway
+          env:
+            - name: GATEWAY_METRICS_DRIVER
+              value: "prometheus"
+          ports:
+            - name: metrics
+              containerPort: 9464

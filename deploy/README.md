@@ -34,6 +34,13 @@ deploy/k8s/
                        GATEWAY_SESSIONS_STORE=redis with 2 replicas, the
                        appended NetworkPolicy egress rule -- add it to any
                        overlay
+  components/metrics/  a kustomize Component: Prometheus exporter on, the
+                       "metrics" container port (9464), scrape annotations,
+                       a NetworkPolicy ingress rule from the monitoring
+                       namespace -- add it to any overlay
+  components/metrics-podmonitor/
+                       opt-in PodMonitor for the Prometheus Operator (needs
+                       its CRDs, so no shipped overlay uses it)
   overlays/redis/      base + components/redis (production shape)
   overlays/kind-redis/ overlays/kind + components/redis (local testing)
   components/detection-agent/
@@ -214,6 +221,59 @@ Each plane scales independently since it's its own Deployment:
   rule for an `ipBlock` to that endpoint. Redis Cluster mode is not
   supported yet (`redis.cluster: true` is rejected at startup). Losing
   Redis costs every connected agent one re-initialize, nothing more.
+
+## Metrics (Prometheus)
+
+`components/metrics` turns the gateway's Prometheus exporter on for all
+three plane Deployments (see [docs/observability.md](../docs/observability.md#metrics-prometheus)
+for what is exported and the `metrics.*` settings). It sets
+`GATEWAY_METRICS_DRIVER=prometheus`, declares a container port named
+`metrics` (9464) and annotates the pod templates with
+`prometheus.io/scrape: "true"`, `prometheus.io/port: "9464"` and
+`prometheus.io/path: "/metrics"`. Like `components/redis`, it drops into
+any overlay:
+
+```yaml
+# your own overlay's kustomization.yaml
+resources:
+  - <path to>/deploy/k8s/base          # or overlays/kind, overlays/analytics, ...
+components:
+  - <path to>/deploy/k8s/components/metrics
+```
+
+```sh
+kubectl kustomize <your overlay>                     # inspect
+kubectl -n ai-gateway port-forward deploy/gateway-api 9464
+curl -s localhost:9464/metrics | grep gateway_build_info
+```
+
+- **NetworkPolicy label requirement.** `base/networkpolicy.yaml` admits
+  ingress only from the ingress controller, so the component appends a
+  rule allowing TCP 9464 from pods in any namespace labelled
+  `kubernetes.io/metadata.name=monitoring`. Kubernetes sets that label to
+  the namespace's own name, so this works unchanged when Prometheus runs
+  in a namespace called `monitoring` (the kube-prometheus-stack default).
+  If yours is called something else, change that value in a copy of
+  `components/metrics/networkpolicy-metrics-patch.yaml`, or patch it from
+  your overlay. Without a matching namespace the scrape is dropped
+  silently and the Prometheus target shows as down. The endpoint is
+  unauthenticated, so keep this rule as narrow as you can (add a
+  `podSelector` for the Prometheus pods if the namespace is shared).
+- **Plain Prometheus** (no operator) discovers the pods through the
+  annotations with the usual `kubernetes_sd_configs` `role: pod` relabel
+  rules; nothing else is needed.
+- **Prometheus Operator.** Add `components/metrics-podmonitor` next to
+  `components/metrics` to get a `PodMonitor` named `gateway` selecting the
+  gateway pods on port `metrics`. It is separate because applying a
+  `monitoring.coreos.com/v1` object fails on a cluster without the
+  Operator CRDs (the kind cluster used for local testing and CI has
+  none), so no shipped overlay includes it. kube-prometheus-stack only
+  selects monitors carrying its release label by default; add that label
+  with a patch in your overlay, or set
+  `prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false`.
+- If you change `metrics.address` or `metrics.path`, change the container
+  port and the `prometheus.io/*` annotations in
+  `components/metrics/gateway-metrics-patch.yaml` to match.
 
 ## Upgrading
 

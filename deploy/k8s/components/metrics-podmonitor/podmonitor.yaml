@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: gateway
+  namespace: ai-gateway
+  labels:
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  # All three plane Deployments (api, mcp, llm) carry
+  # app.kubernetes.io/name: gateway; the migrate Job pod does not export
+  # metrics and has no "metrics" port, so it is never scraped.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  namespaceSelector:
+    matchNames:
+      - ai-gateway
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  # Keep the plane in the target labels so series can be grouped by
+  # Deployment (api, mcp, llm) without a separate relabel in Prometheus.
+  podTargetLabels:
+    - app.kubernetes.io/component

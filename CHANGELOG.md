@@ -301,6 +301,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Prometheus metrics endpoint (foundation).** A new `metrics` config
+  section (`driver`, `address`, `path`, `namespace`, `options`; env
+  `GATEWAY_METRICS_*`) and a `pkg/metrics` exporter seam: the gateway
+  records through the OpenTelemetry metric API and a driver registered
+  with `metrics.Register` exports it. `none` (the default, no listener) is
+  built in; `pkg/metrics/prometheus` (`metrics.driver: prometheus`)
+  serves the Prometheus text format on its own **unauthenticated**
+  listener (default `:9464`, path `/metrics`, plus `GET /health`), which
+  starts first and stops last. It exposes `gateway_build_info` and the Go
+  runtime and process series today; request, LLM and health instruments
+  follow. Out-of-tree drivers pass `pkg/metrics/metricstest`. See
+  `docs/observability.md`, "Metrics (Prometheus)", and CONTRIBUTING.md,
+  "Adding a metrics exporter". The OpenTelemetry Go modules move from
+  v1.46.0 to v1.47.0, which the Prometheus exporter requires.
 - **Kubernetes example for the detection agent.**
   `deploy/k8s/components/detection-agent` (a kustomize Component) adds the
   agent as a sidecar of `gateway-llm` on `127.0.0.1:8090`, with the engine

@@ -42,6 +42,7 @@ type Config struct {
 	Sinks       Sinks       `yaml:"sinks"`
 	Logging     Logging     `yaml:"logging"`
 	Ingest      Ingest      `yaml:"ingest"`
+	Metrics     Metrics     `yaml:"metrics"`
 }
 
 // Service identifies the running binary.
@@ -319,6 +320,38 @@ type Ingest struct {
 	// positive when Enabled.
 	RatePerMinute int `yaml:"rate_per_minute"`
 }
+
+// Metrics configures the gateway's own operational metrics (pkg/metrics):
+// which exporter driver serves them and, for a pull driver such as
+// "prometheus", the separate listener a scraper reads them from. The
+// listener is unauthenticated, so it must be reachable only from the
+// monitoring network.
+type Metrics struct {
+	// Driver names the pkg/metrics exporter: "none" (the default: no
+	// listener, every instrument a no-op), "prometheus" (a scrape
+	// endpoint at Address+Path), or the name of any other driver the
+	// binary has registered via pkg/metrics.Register.
+	Driver string `yaml:"driver"`
+	// Address is the metrics listener's host:port. Default ":9464".
+	Address string `yaml:"address"`
+	// Path is where the scrape endpoint is served. Default "/metrics".
+	Path string `yaml:"path"`
+	// Namespace prefixes every exported metric name (gateway_...).
+	// Default "gateway".
+	Namespace string `yaml:"namespace"`
+	// Options is passed verbatim to the driver as pkg/metrics.Config
+	// .Options, for a third-party driver that needs settings beyond the
+	// fields above. The built-in drivers ignore it. YAML only (like
+	// sessions.options, a map is not reachable from GATEWAY_* env vars).
+	Options map[string]string `yaml:"options"`
+}
+
+// MetricsDriverNone is the metrics driver that exports nothing.
+const MetricsDriverNone = "none"
+
+// reMetricsNamespace is the shape of metrics.namespace: a Prometheus
+// metric-name prefix.
+var reMetricsNamespace = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // Redis configures the optional Redis connection.
 //
@@ -992,6 +1025,12 @@ func Default() *Config {
 			MaxRecords:    1000,
 			RatePerMinute: 120,
 		},
+		Metrics: Metrics{
+			Driver:    MetricsDriverNone,
+			Address:   ":9464",
+			Path:      "/metrics",
+			Namespace: "gateway",
+		},
 		MCPCatalog: defaultMCPCatalog(),
 	}
 }
@@ -1406,6 +1445,21 @@ func (c *Config) Validate() error {
 		}
 		if c.Ingest.RatePerMinute <= 0 {
 			return fmt.Errorf("ingest: rate_per_minute must be positive when enabled")
+		}
+	}
+
+	if strings.TrimSpace(c.Metrics.Driver) == "" {
+		return fmt.Errorf("metrics: driver is required (use %q to disable metrics)", MetricsDriverNone)
+	}
+	if c.Metrics.Driver != MetricsDriverNone {
+		if strings.TrimSpace(c.Metrics.Address) == "" {
+			return fmt.Errorf("metrics: address is required when driver is %q", c.Metrics.Driver)
+		}
+		if !strings.HasPrefix(c.Metrics.Path, "/") {
+			return fmt.Errorf("metrics: path must start with \"/\", got %q", c.Metrics.Path)
+		}
+		if !reMetricsNamespace.MatchString(c.Metrics.Namespace) {
+			return fmt.Errorf("metrics: namespace must match %s, got %q", reMetricsNamespace, c.Metrics.Namespace)
 		}
 	}
 

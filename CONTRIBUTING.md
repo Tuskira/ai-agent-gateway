@@ -262,6 +262,55 @@ table, NATS, …):
    it is not reachable (the redis driver reads `GATEWAY_TEST_REDIS_ADDR`);
    this repository does not use fakes for external services.
 
+## Adding a metrics exporter
+
+`pkg/metrics` is the seam the gateway's operational metrics leave the
+process through. The gateway records every metric with the
+OpenTelemetry metric API (`go.opentelemetry.io/otel/metric`); a driver
+supplies the `MeterProvider` those instruments come from and decides
+how the numbers are exported. `none` (built into `pkg/metrics`, the
+default) and `pkg/metrics/prometheus` are the reference drivers. To add
+another (OTLP push, StatsD, a vendor agent, …):
+
+1. Implement `metrics.Exporter`: `MeterProvider()` returns the same
+   non-nil provider on every call; `Handler()` returns the scrape surface
+   of a pull exporter, or `nil` for a push exporter (the gateway then
+   opens no listener); `Shutdown(ctx)` flushes and releases, and must be
+   idempotent (a second call returns nil, and recording after it must not
+   panic). Apply `Config.Namespace` as the prefix of every exported name.
+2. Register your driver name from an `init()`:
+
+   ```go
+   func init() {
+       metrics.Register("mydriver", func(ctx context.Context, cfg metrics.Config) (metrics.Exporter, error) {
+           // cfg carries the gateway's metrics.* fields (driver, address,
+           // path, namespace) and metrics.options verbatim.
+       })
+   }
+   ```
+
+   Operators select it with `metrics.driver: mydriver` once your package
+   is blank-imported by the binary (see `cmd/gateway/main.go`'s import of
+   `pkg/metrics/prometheus`). An unregistered name fails startup.
+3. Pass the conformance suite:
+
+   ```go
+   func TestConformance(t *testing.T) {
+       metricstest.Run(t, "gateway", func(t *testing.T) metrics.Exporter {
+           /* a fresh Exporter built with Namespace "gateway" */
+       })
+   }
+   ```
+
+   `metricstest.Run` checks a stable `MeterProvider`, that counters,
+   histograms, up-down counters and observable gauges can be created and
+   recorded from many goroutines, that a pull driver's `Handler` answers
+   `200 text/plain` with a recorded counter under `<namespace>_<name>`,
+   and that `Shutdown` is idempotent. A push driver skips the scrape
+   check; run it against the real collector and skip when that is not
+   reachable, since this repository does not use fakes for external
+   services.
+
 ## Adding an LLM provider adapter
 
 `pkg/llm` is the seam the LLM plane translates calls through: neutral

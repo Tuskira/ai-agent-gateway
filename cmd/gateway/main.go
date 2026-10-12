@@ -32,6 +32,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/llmplane"
 	applog "github.com/Tuskira/tusk-ai-secured-gateway/internal/log"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/mcpcatalog"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/metrics"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/secrets"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/skills"
 	// Blank-imported for its init() side effect: registers driver
@@ -52,6 +53,10 @@ import (
 	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/bedrock"
 	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/gemini"
 	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm/openaicompat"
+	// Blank-imported for its init() side effect: registers metrics driver
+	// "prometheus" with pkg/metrics ("none" is built in). See
+	// pkg/metrics.Open.
+	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/metrics/prometheus"
 	// Blank-imported for their init() side effects: register session
 	// drivers "memory" and "redis" with pkg/session. See pkg/session.Open.
 	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/session/memory"
@@ -175,6 +180,24 @@ func run() error {
 
 	if msg := cfg.Database.DefaultPasswordWarning(); msg != "" {
 		logger.Warn("INSECURE CONFIGURATION: " + msg)
+	}
+
+	// Metrics come first so every later component can record through
+	// them, and close last (deferred first) so a push driver flushes what
+	// the shutdown itself recorded.
+	gwMetrics, err := metrics.New(context.Background(), cfg.Metrics, version, logger)
+	if err != nil {
+		return fmt.Errorf("open metrics: %w", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := gwMetrics.Close(ctx); err != nil {
+			logger.Warn("metrics: shutdown", "error", err)
+		}
+	}()
+	if gwMetrics.Enabled() {
+		logger.Info("metrics enabled", "driver", cfg.Metrics.Driver, "address", cfg.Metrics.Address, "path", cfg.Metrics.Path)
 	}
 
 	dbCtx, cancel := context.WithTimeout(context.Background(), dbConnectTimeout)
@@ -379,6 +402,13 @@ func run() error {
 
 	var routines []supervisor.Routine
 
+	// The metrics listener goes FIRST: routines stop in reverse order, so
+	// it stops last and stays scrapeable while the planes drain.
+	if r := gwMetrics.Routine(); r != nil {
+		routines = append(routines, r)
+	}
+	nonPlaneRoutines := len(routines)
+
 	// Cross-replica key revocation: when the store can push key-revoked
 	// events (Postgres LISTEN/NOTIFY), every process evicts a revoked key
 	// from its cache at once. Without it, other processes wait out
@@ -581,7 +611,7 @@ func run() error {
 		logger.Info("plane enabled", "plane", "llm", "addr", cfg.LLMProxy.Address)
 	}
 
-	if len(routines) == 0 {
+	if len(routines) == nonPlaneRoutines {
 		logger.Warn("no planes enabled; nothing to serve")
 	}
 

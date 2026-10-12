@@ -97,9 +97,10 @@ curl -s localhost:9464/metrics | grep gateway_build_info
   starts first and stops last, so it can be scraped while the planes
   drain.
 - What it serves today: `gateway_build_info` (labels `version`,
-  `go_version`), plus the standard Go runtime (`go_*`) and process
-  (`process_*`) series. The HTTP, MCP, LLM, token, cost and health
-  instruments arrive in follow-up changes.
+  `go_version`), the [HTTP metrics](#http-metrics) below, and the
+  standard Go runtime (`go_*`) and process (`process_*`) series. The MCP
+  tool, LLM, token, cost and health instruments arrive in follow-up
+  changes.
 - **Driver seam.** Metrics go through `pkg/metrics`: the gateway records
   with the OpenTelemetry metric API, and the driver named by
   `metrics.driver` exports them. `prometheus` is a pull driver; a push
@@ -108,6 +109,49 @@ curl -s localhost:9464/metrics | grep gateway_build_info
 - Metrics are aggregates. For per-request detail (who called which tool,
   tokens and cost per call) use the ClickHouse sink and the analytics
   API below. The admin console does not read these metrics.
+
+### HTTP metrics
+
+Every plane (MCP, API and LLM) is wrapped in the same middleware, so each
+records three series. With the default namespace:
+
+| Series | Type | Labels |
+|---|---|---|
+| `gateway_http_requests_total` | counter | `plane`, `method`, `route`, `status` |
+| `gateway_http_request_duration_seconds` (`_bucket`, `_sum`, `_count`) | histogram | `plane`, `method`, `route` |
+| `gateway_http_requests_in_flight` | gauge | `plane` |
+
+- `plane` is `mcp`, `api` or `llm`. `method` is the HTTP method, with
+  `OTHER` for anything that is not a standard method. `status` is the
+  HTTP status code the handler wrote (`200` when it wrote a body or
+  nothing; `101` for an upgraded connection). A JSON-RPC error on the MCP
+  plane is still HTTP `200`: this counts HTTP, not tool outcomes.
+- `route` is bounded and never a raw path:
+  - **mcp:** `/mcp`, `/mcp/stream`, `/health`, or `other`.
+  - **api:** the matched route pattern, such as
+    `/api/v1/connectors/{id}` (ids never reach the label). The console's
+    static files show as `/*`, and a request no route matched as
+    `unmatched`.
+  - **llm:** the provider only (`anthropic`, `openai`, `gemini`,
+    `bedrock`), `/health`, or `other`. The path carries model ids, so it
+    is not used.
+- Requests are counted when the handler returns. A server-sent-event or
+  streamed LLM response therefore lands in the histogram at the end of
+  the stream, with the stream's whole lifetime as its duration; filter on
+  `route="/mcp/stream"` to separate those. While a stream is open it is
+  visible in `gateway_http_requests_in_flight`.
+- Requests rejected before routing (a failed API-key check, a rate limit)
+  are counted too, because the middleware is the outermost layer of each
+  plane.
+- Duration buckets, in seconds: 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5,
+  1, 2.5, 5, 10, 30, 60, 300.
+
+Example queries:
+
+```promql
+sum by (plane, status) (rate(gateway_http_requests_total[5m]))
+histogram_quantile(0.95, sum by (le, plane) (rate(gateway_http_request_duration_seconds_bucket{route!="/mcp/stream"}[5m])))
+```
 
 ## Analytics API
 

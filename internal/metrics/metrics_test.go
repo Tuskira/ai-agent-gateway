@@ -208,3 +208,5 @@ func TestCloseIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func promCfgNone() config.Metrics { return config.Default().Metrics }

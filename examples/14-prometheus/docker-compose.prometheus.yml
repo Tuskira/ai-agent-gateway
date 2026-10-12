@@ -1,0 +1,67 @@
+# Composes with deploy/docker-compose.yml. Adds:
+#
+#   - metrics on the gateway -- GATEWAY_METRICS_DRIVER=prometheus opens the
+#     metrics listener on :9464, published to the host on 127.0.0.1 only.
+#     deploy/docker-compose.yml does not forward any GATEWAY_METRICS_*
+#     variable, so this file is the only place they are set.
+#   - prometheus     -- scrapes gateway:9464 every 5s, evaluates the starter
+#     alert rules in rules.yml. UI at http://localhost:9090.
+#   - grafana        -- OPTIONAL, behind the "grafana" compose profile. UI at
+#     http://localhost:3000 with anonymous Viewer access, a provisioned
+#     Prometheus datasource and the "AI Gateway" dashboard.
+#
+# Usage (see run.sh):
+#   docker compose \
+#     -f deploy/docker-compose.yml \
+#     -f examples/14-prometheus/docker-compose.prometheus.yml \
+#     --profile grafana up -d          # drop --profile grafana for Prometheus only
+#
+# Everything is bound to 127.0.0.1: the metrics endpoint is unauthenticated
+# (see README.md, "Security"), and Grafana's anonymous access is for a local
+# demo only.
+
+services:
+  gateway:
+    environment:
+      GATEWAY_METRICS_DRIVER: "prometheus"
+      # The listener address defaults to ":9464" and the path to "/metrics".
+    ports:
+      - "127.0.0.1:9464:9464" # metrics (unauthenticated)
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    # Relative paths in an overlay file resolve against the PROJECT
+    # directory, which Compose takes from the FIRST -f file
+    # (deploy/docker-compose.yml, i.e. deploy/) -- not against this
+    # overlay file's own directory. Hence "../examples/...", one level up
+    # from deploy/ (same as examples/08-observability).
+    volumes:
+      - ../examples/14-prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../examples/14-prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - gateway
+
+  grafana:
+    image: grafana/grafana:12.0.2
+    profiles: ["grafana"]
+    environment:
+      # Anonymous Viewer: open http://localhost:3000 and the dashboard is
+      # already there. The admin login (admin / admin) is only used by
+      # run.sh to read the datasource list back through the API.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_SECURITY_ADMIN_USER: "admin"
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/var/lib/grafana/dashboards/gateway.json"
+    volumes:
+      - ../examples/14-prometheus/grafana/provisioning:/etc/grafana/provisioning:ro
+      # The one copy of the dashboard in the repo; docs link to this path.
+      - ../examples/14-prometheus/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus

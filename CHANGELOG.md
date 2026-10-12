@@ -301,72 +301,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **HTTP metrics for all three planes.** With `metrics.driver:
-  prometheus` the MCP, API and LLM planes record
-  `gateway_http_requests_total{plane,method,route,status}`,
-  `gateway_http_request_duration_seconds{plane,method,route}` and
-  `gateway_http_requests_in_flight{plane}`. The `route` label is bounded:
-  `/mcp`, `/mcp/stream`, `/health` or `other` on the MCP plane, chi's
-  route pattern on the API (`/api/v1/connectors/{id}`, `/*` for the
-  console, `unmatched`), and the provider only on the LLM plane. The
-  response-writer wrapper keeps `http.Flusher`, so SSE and LLM streaming
-  are unaffected. New `api.Deps.Instrument` hook mounts the middleware
-  first inside the chi router (an outer wrapper cannot see the route
-  pattern). See `docs/observability.md`, "HTTP metrics".
-- **Kubernetes: `components/metrics` and `components/metrics-podmonitor`.**
-  The first sets `GATEWAY_METRICS_DRIVER=prometheus`, a named container
-  port `metrics` (9464) and the `prometheus.io/scrape|port|path` pod
-  annotations on the api, mcp and llm Deployments, and appends a
-  NetworkPolicy ingress rule admitting TCP 9464 from the namespace
-  labelled `kubernetes.io/metadata.name=monitoring` (the base policy
-  otherwise drops the scrape). The second is an opt-in `PodMonitor` for
-  the Prometheus Operator; no shipped overlay uses it because the kind
-  cluster has no Prometheus CRDs. See `deploy/README.md`, "Metrics
-  (Prometheus)".
-- **Prometheus metrics endpoint (foundation).** A new `metrics` config
-  section (`driver`, `address`, `path`, `namespace`, `options`; env
-  `GATEWAY_METRICS_*`) and a `pkg/metrics` exporter seam: the gateway
-  records through the OpenTelemetry metric API and a driver registered
-  with `metrics.Register` exports it. `none` (the default, no listener) is
-  built in; `pkg/metrics/prometheus` (`metrics.driver: prometheus`)
-  serves the Prometheus text format on its own **unauthenticated**
-  listener (default `:9464`, path `/metrics`, plus `GET /health`), which
-  starts first and stops last. It exposes `gateway_build_info` and the Go
-  runtime and process series today; request, LLM and health instruments
-  follow. Out-of-tree drivers pass `pkg/metrics/metricstest`. See
-  `docs/observability.md`, "Metrics (Prometheus)", and CONTRIBUTING.md,
-  "Adding a metrics exporter". The OpenTelemetry Go modules move from
-  v1.46.0 to v1.47.0, which the Prometheus exporter requires.
-- **Prometheus metrics from access-log and LLM-call records.** With
-  `metrics.driver: prometheus` the gateway adds a metrics sink to the
-  `sink.Multi` that both the MCP plane and the LLM plane's capture
-  recorder write to, and exports `gateway_mcp_requests_total`,
-  `gateway_mcp_tool_calls_total`, `gateway_mcp_tool_call_duration_seconds`,
-  `gateway_mcp_errors_total`, `gateway_llm_calls_total`,
-  `gateway_llm_tokens_total`, `gateway_llm_cost_usd_total`,
-  `gateway_llm_call_duration_seconds` and `gateway_llm_fallbacks_total`.
-  Label values that a caller can influence are bounded: JSON-RPC methods
-  and error codes are whitelisted, tool and model names are capped at 500
-  distinct values per process, and key, session, request and user
-  identifiers are never labels. See `docs/observability.md`, "Metrics from
-  access-log and LLM-call records".
-- **Health and capacity metrics.** With `metrics.driver: prometheus` the
-  gateway now also exports, read on each scrape from counters it already
-  keeps: `gateway_auth_locked_ips` and `gateway_auth_failures_total` per
-  plane, `gateway_llm_limit_denials_total` (`budget`, `rpm`),
-  `gateway_llm_detection_turns_total` and
-  `gateway_llm_detection_queue_depth`, `gateway_sink_records_dropped_total`,
-  `gateway_body_store_offloads_total` and `_fallbacks_total`,
-  `gateway_db_connections` and `gateway_db_wait_duration_seconds_total`,
-  `gateway_mcp_sessions_active` (omitted with the redis session driver)
-  and `gateway_mcp_sessions_created_total`, and
-  `gateway_mcp_tool_cache_lookups_total` (`hit`, `stale`, `miss`). The
-  `/health` JSON is unchanged. Backing this, `auth.RateLimiter` counts
-  failures, and `llmplane.Limiter`, `DetectionTee`, the Postgres store
-  (`Stats()`), `dataplane.Plane` (`SessionCount`, `SessionsCreated`) and
-  `session.Manager` gained typed getters; `dataplane.Deps` and
-  `orchestrator.Deps` take an optional `OnToolCacheLookup` hook. See
-  `docs/observability.md`, "Health and capacity series".
+- **Prometheus metrics.** The gateway exports its own operational metrics
+  in the Prometheus text format, off by default.
+  - **Config:** a new `metrics` section (`driver`, `address`, `path`,
+    `namespace`, `options`; env `GATEWAY_METRICS_DRIVER`,
+    `GATEWAY_METRICS_ADDRESS`, `GATEWAY_METRICS_PATH`,
+    `GATEWAY_METRICS_NAMESPACE`). `metrics.driver: prometheus` opens a
+    separate **unauthenticated** listener (default `:9464`, path
+    `/metrics`, plus `GET /health`) that starts first and stops last.
+  - **Seam:** `pkg/metrics` (an exporter interface and `metrics.Register`;
+    the gateway records with the OpenTelemetry metric API), the built-in
+    `none` and `prometheus` drivers, and the `pkg/metrics/metricstest`
+    conformance suite for out-of-tree drivers. See CONTRIBUTING.md,
+    "Adding a metrics exporter". The OpenTelemetry Go modules move from
+    v1.46.0 to v1.47.0, which the Prometheus exporter requires.
+  - **Series:** `gateway_build_info`; HTTP requests, duration and
+    in-flight per plane (`gateway_http_*`, with a bounded `route` label;
+    new `api.Deps.Instrument` hook, and a response-writer wrapper that
+    keeps `http.Flusher` so SSE and LLM streaming are unaffected); MCP
+    requests, tool calls and errors, LLM calls, tokens, cost and fallbacks
+    from a metrics sink on the existing `sink.Multi`; and, read on each
+    scrape, auth failures and locked IPs, LLM limit denials, detection tee
+    turns and queue depth, sink drops, body store offloads, database
+    connections and wait time, MCP sessions and tool cache lookups. Backing
+    these, `auth.RateLimiter` counts failures, and `llmplane.Limiter`,
+    `DetectionTee`, the Postgres store (`Stats()`), `dataplane.Plane` and
+    `session.Manager` gained typed getters. Tenant is a label; key,
+    session, request and user ids are never labels, tool and model names
+    are capped at 500 distinct values, and JSON-RPC methods are
+    whitelisted. The admin console does not show these metrics.
+  - **Kubernetes:** `deploy/k8s/components/metrics` (driver env, a named
+    `metrics` container port, `prometheus.io/*` scrape annotations and a
+    NetworkPolicy rule for the `monitoring` namespace) and the opt-in
+    `deploy/k8s/components/metrics-podmonitor`.
+  - **Example:** `examples/14-prometheus` runs Prometheus (and Grafana
+    behind the `grafana` compose profile) next to the compose stack, with
+    a provisioned "AI Gateway" dashboard (importable into your own
+    Grafana), four starter alert rules and a self-checking `run.sh` that is
+    part of `make examples-smoke`.
+  See `docs/observability.md`, "Metrics (Prometheus)".
 - **Kubernetes example for the detection agent.**
   `deploy/k8s/components/detection-agent` (a kustomize Component) adds the
   agent as a sidecar of `gateway-llm` on `127.0.0.1:8090`, with the engine

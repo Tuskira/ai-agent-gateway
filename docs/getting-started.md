@@ -74,6 +74,11 @@ GATEWAY_SINKS_CLICKHOUSE_ENABLED=true \
 See [observability.md](observability.md#console-pages) for which page
 reads what.
 
+For metrics (request rates, latency, tokens, cost) in Prometheus and
+Grafana, set `GATEWAY_METRICS_DRIVER=prometheus`; the
+[examples/14-prometheus](https://github.com/Tuskira/ai-agent-gateway/tree/main/examples/14-prometheus)
+stack does it for you. See [observability.md](observability.md#metrics-prometheus).
+
 ## Clean up
 
 ```sh

@@ -348,11 +348,13 @@ jobs:
         run: make examples-smoke
 
       - if: failure()
-        run: docker compose -f deploy/docker-compose.yml --profile analytics logs gateway otel-collector
+        run: docker compose -f deploy/docker-compose.yml -f examples/14-prometheus/docker-compose.prometheus.yml --profile analytics --profile grafana logs gateway otel-collector prometheus grafana
 
       - if: always()
-        # 08 adds the analytics profile and an overlay file; tear down both.
-        run: docker compose -f deploy/docker-compose.yml -f examples/08-observability/docker-compose.observability.yml --profile analytics down -v
+        # 08 adds the analytics profile and an overlay file; 14 (which tears
+        # itself down when it passes) adds another overlay and the grafana
+        # profile. Tear down all of it.
+        run: docker compose -f deploy/docker-compose.yml -f examples/08-observability/docker-compose.observability.yml -f examples/14-prometheus/docker-compose.prometheus.yml --profile analytics --profile grafana down -v
 
   examples-k8s:
     name: examples-k8s

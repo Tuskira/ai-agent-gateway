@@ -106,6 +106,10 @@ curl -s localhost:9464/metrics | grep gateway_build_info
   `metrics.driver` exports them. `prometheus` is a pull driver; a push
   driver (OTLP, StatsD, a vendor agent) registered by a custom binary
   opens no listener. See CONTRIBUTING.md, "Adding a metrics exporter".
+- **Kubernetes.** `deploy/k8s/components/metrics` enables the exporter on
+  all three planes, adds the scrape annotations and the NetworkPolicy
+  rule, and `components/metrics-podmonitor` adds an opt-in `PodMonitor`;
+  see [deploy/README.md, "Metrics (Prometheus)"](https://github.com/Tuskira/ai-agent-gateway/blob/main/deploy/README.md#metrics-prometheus).
 - Metrics are aggregates. For per-request detail (who called which tool,
   tokens and cost per call) use the ClickHouse sink and the analytics
   API below. The admin console does not read these metrics.

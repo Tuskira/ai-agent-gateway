@@ -1,0 +1,37 @@
+# Prometheus metrics on every gateway pod, packaged as a kustomize Component
+# so it can be added to ANY overlay (base, kind, redis, analytics, your own).
+# See docs/observability.md, "Metrics (Prometheus)".
+#
+# What it adds:
+#   - gateway-metrics-patch.yaml: on the gateway container of all three
+#     Deployments (api, mcp, llm), GATEWAY_METRICS_DRIVER=prometheus and a
+#     named containerPort "metrics" (9464, the metrics.address default),
+#     plus the conventional prometheus.io/scrape, /port and /path pod
+#     annotations. Annotation-based discovery (the Prometheus
+#     kubernetes_sd "pod" role with the usual relabel rules) works with no
+#     CRDs; for the Prometheus Operator add components/metrics-podmonitor.
+#   - networkpolicy-metrics-patch.yaml: APPENDS an ingress rule on TCP 9464
+#     from the monitoring namespace. base/networkpolicy.yaml admits only
+#     the ingress controller on the plane ports, so without this rule the
+#     scrape is silently dropped. A JSON patch, because NetworkPolicy
+#     rules have no merge key and a strategic merge would replace the
+#     whole ingress list (same pattern as components/redis).
+#
+# The endpoint is unauthenticated (it reveals traffic shape and tenant
+# ids), which is why the NetworkPolicy rule is part of this component
+# rather than an afterthought. GATEWAY_METRICS_ADDRESS and _PATH stay at
+# their defaults (:9464, /metrics); if you change them, change the port
+# and the prometheus.io/* annotations in the patch to match.
+#
+# Not included here: the PodMonitor. It needs the Prometheus Operator CRDs,
+# which a kind cluster does not have, so it is a separate opt-in
+# component (../metrics-podmonitor).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - path: gateway-metrics-patch.yaml
+  - path: networkpolicy-metrics-patch.yaml
+    target:
+      kind: NetworkPolicy
+      name: gateway

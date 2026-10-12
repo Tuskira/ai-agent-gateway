@@ -340,6 +340,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distinct values per process, and key, session, request and user
   identifiers are never labels. See `docs/observability.md`, "Metrics from
   access-log and LLM-call records".
+- **Health and capacity metrics.** With `metrics.driver: prometheus` the
+  gateway now also exports, read on each scrape from counters it already
+  keeps: `gateway_auth_locked_ips` and `gateway_auth_failures_total` per
+  plane, `gateway_llm_limit_denials_total` (`budget`, `rpm`),
+  `gateway_llm_detection_turns_total` and
+  `gateway_llm_detection_queue_depth`, `gateway_sink_records_dropped_total`,
+  `gateway_body_store_offloads_total` and `_fallbacks_total`,
+  `gateway_db_connections` and `gateway_db_wait_duration_seconds_total`,
+  `gateway_mcp_sessions_active` (omitted with the redis session driver)
+  and `gateway_mcp_sessions_created_total`, and
+  `gateway_mcp_tool_cache_lookups_total` (`hit`, `stale`, `miss`). The
+  `/health` JSON is unchanged. Backing this, `auth.RateLimiter` counts
+  failures, and `llmplane.Limiter`, `DetectionTee`, the Postgres store
+  (`Stats()`), `dataplane.Plane` (`SessionCount`, `SessionsCreated`) and
+  `session.Manager` gained typed getters; `dataplane.Deps` and
+  `orchestrator.Deps` take an optional `OnToolCacheLookup` hook. See
+  `docs/observability.md`, "Health and capacity series".
 - **Kubernetes example for the detection agent.**
   `deploy/k8s/components/detection-agent` (a kustomize Component) adds the
   agent as a sidecar of `gateway-llm` on `127.0.0.1:8090`, with the engine

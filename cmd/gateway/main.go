@@ -352,7 +352,7 @@ func run() error {
 	// RatePerMinute is left at its default.
 	ingestRateLimiter := internalauth.NewKeyRateLimiter(cfg.Ingest.RatePerMinute, nil)
 
-	sinks, err := buildSinks(cfg, logger)
+	sinks, err := buildSinks(cfg, gwMetrics, logger)
 	if err != nil {
 		return fmt.Errorf("build sinks: %w", err)
 	}
@@ -932,8 +932,9 @@ type sinksResult struct {
 // the concrete sink each constructor returns -- the same seam pattern
 // pkg/ops uses (this package depends on the concrete sink packages so
 // the seam types (sink.LogSink, analytics.Reader) don't have to know
-// about Dropped() or connection details).
-func buildSinks(cfg *config.Config, logger *slog.Logger) (*sinksResult, error) {
+// about Dropped() or connection details). gwMetrics may be nil or
+// disabled; an enabled one adds its record-derived metrics sink.
+func buildSinks(cfg *config.Config, gwMetrics *metrics.Metrics, logger *slog.Logger) (*sinksResult, error) {
 	var sinks []sink.LogSink
 	statusFns := map[string]func() map[string]any{}
 
@@ -1003,6 +1004,15 @@ func buildSinks(cfg *config.Config, logger *slog.Logger) (*sinksResult, error) {
 
 	if len(sinks) == 0 {
 		logger.Warn("no log sinks enabled: access logs and LLM calls will not be recorded anywhere")
+	}
+
+	// The metrics sink derives counters from the same records. It is added
+	// after the check above on purpose: it stores nothing, so it must not
+	// hide the warning that no record is being kept. The LLM plane reaches
+	// it too: capture.Recorder tees every call into this Multi.
+	if gwMetrics.Enabled() {
+		sinks = append(sinks, gwMetrics.Sink())
+		logger.Info("sink enabled", "sink", "metrics")
 	}
 
 	status := func() map[string]any {

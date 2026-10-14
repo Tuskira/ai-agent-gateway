@@ -520,6 +520,12 @@ type LLMCapture struct {
 	StoreBodies      bool   `yaml:"store_bodies"`       // persist request/response bodies + messages/system/tools
 	MaxRequestBytes  int    `yaml:"max_request_bytes"`  // per-body request cap (also messages/system/tools); default 1 MiB, 0 = unbounded
 	MaxResponseBytes int    `yaml:"max_response_bytes"` // per-body response/stream cap; default 1 MiB, 0 = unbounded
+	// AssembleStreams stores a streamed response as the single message it
+	// describes instead of the raw event stream, when the stream is a complete
+	// Anthropic Messages one that fit MaxResponseBytes. Any other streamed
+	// response is stored raw, and false stores every one raw (for debugging).
+	// Only meaningful with StoreBodies.
+	AssembleStreams bool `yaml:"assemble_streams"`
 	// BodyStore optionally offloads captured bodies out of the capture row
 	// (see sink.BodyStore). Only meaningful with StoreBodies.
 	BodyStore BodyStoreConfig `yaml:"body_store"`
@@ -914,6 +920,7 @@ func Default() *Config {
 				StoreBodies:      false,      // opt-in (privacy); spec default
 				MaxRequestBytes:  1 << 20,    // 1 MiB per body; 0 = unbounded (opt in explicitly)
 				MaxResponseBytes: 1 << 20,    // 1 MiB per body; 0 = unbounded (opt in explicitly)
+				AssembleStreams:  true,       // a streamed Anthropic reply is stored as one message
 				BodyStore: BodyStoreConfig{
 					Type: "none", // bodies inline in the capture row
 					S3:   S3BodyStoreConfig{Prefix: "llm-bodies"},

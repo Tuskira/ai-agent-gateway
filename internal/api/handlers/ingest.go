@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/httpx"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/discovery"
 	applog "github.com/Tuskira/tusk-ai-secured-gateway/internal/log"
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/sink"
 )
 
@@ -475,7 +477,7 @@ func (h Ingest) applyLLMBodies(l *sink.LLMCall, in llmCallIn) {
 	}
 	reqBody, reqCut := sink.TruncateBody([]byte(in.RequestBody), h.LLMCapture.MaxRequestBytes)
 	messages, msgCut := sink.TruncateBody([]byte(in.Messages), h.LLMCapture.MaxRequestBytes)
-	respBody, respCut := sink.TruncateBody([]byte(in.ResponseBody), h.LLMCapture.MaxResponseBytes)
+	respBody, respCut := sink.TruncateBody([]byte(in.assembledResponse(h.LLMCapture.AssembleStreams)), h.LLMCapture.MaxResponseBytes)
 	if len(reqBody) > 0 {
 		l.RequestBody = reqBody
 	}
@@ -486,6 +488,31 @@ func (h Ingest) applyLLMBodies(l *sink.LLMCall, in llmCallIn) {
 		l.ResponseBody = respBody
 	}
 	l.Truncated = reqCut || msgCut || respCut || in.Truncated
+}
+
+// assembledResponse is in's response_body, with a streamed Anthropic Messages
+// reply folded into the one message it describes (what the console renders as
+// JSON) when assemble is set. It is applied before the byte cap, so a stream
+// the interceptor sent whole is capped as the message, not as its events.
+// Whether the body is a stream is read from the body, not from `stream`: that
+// flag and `provider` are self-reported and a client may omit them, while a
+// body that starts like SSE and carries a complete message_start..message_stop
+// sequence is unambiguous (llm.AssembleStream accepts nothing else, so an
+// OpenAI or Gemini stream, a cut one and an error event all stay as sent).
+func (in llmCallIn) assembledResponse(assemble bool) string {
+	if !assemble || !looksLikeSSE(in.ResponseBody) {
+		return in.ResponseBody
+	}
+	if b, ok := llm.AssembleStream("anthropic", []byte(in.ResponseBody)); ok {
+		return string(b)
+	}
+	return in.ResponseBody
+}
+
+// looksLikeSSE reports a body whose first line is an SSE field or comment.
+func looksLikeSSE(body string) bool {
+	body = strings.TrimLeft(body, " \t\r\n")
+	return strings.HasPrefix(body, "event:") || strings.HasPrefix(body, "data:") || strings.HasPrefix(body, ":")
 }
 
 // parseIngestTimestamp parses an RFC3339 timestamp, returning a non-empty

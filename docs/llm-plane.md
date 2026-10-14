@@ -476,7 +476,12 @@ Request/response bodies, parsed `messages`/`system`/`tools`, are only
 captured when `llm_proxy.capture.store_bodies: true`, each capped at
 `llm_proxy.capture.max_request_bytes` / `max_response_bytes` (1 MiB by
 default; a cut body is flagged `truncated`) — usage, latency, and
-identifiers are always recorded regardless. The caller's `client_ip` (resolved
+identifiers are always recorded regardless. A streamed Anthropic Messages
+response (including one reached on Bedrock) is stored as the one message it
+describes (`llm_proxy.capture.assemble_streams`, on by default) rather than
+as hundreds of `event:`/`data:` lines; the client still receives the raw
+stream. Any stream that cannot be assembled (cut short, an error event, a
+capture cut by `max_response_bytes`, another dialect's stream) is stored raw. The caller's `client_ip` (resolved
 by the shared client-IP resolver: the socket address, unless that peer is in
 `api.trusted_proxies`, in which case `X-Forwarded-For` is walked from the
 right to the first untrusted address, as on the MCP plane) is carried on the analytics tee: it is a ClickHouse

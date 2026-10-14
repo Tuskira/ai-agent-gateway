@@ -288,3 +288,30 @@ func names[V any](m map[string]V) string {
 	}
 	return strings.Join(out, ", ")
 }
+
+// StreamAssembler is implemented by a Reader that can fold the bytes of a
+// streamed response, as the client received them, into the single body the
+// same call would have returned without streaming. The gateway stores that
+// body, not the event stream, when it logs a streamed call.
+type StreamAssembler interface {
+	// AssembleStream returns the assembled body. ok is false when body is not
+	// a complete, well-formed stream in this Reader's format (cut short, an
+	// error event, an undecodable frame, ...); the caller then keeps body as
+	// it is.
+	AssembleStream(body []byte) (assembled []byte, ok bool)
+}
+
+// AssembleStream assembles body with the Reader registered under name. ok is
+// false when there is no such Reader, it cannot assemble (only the Readers
+// that implement StreamAssembler can), or the body cannot be assembled.
+func AssembleStream(name string, body []byte) (assembled []byte, ok bool) {
+	rd, err := ReaderByName(name)
+	if err != nil {
+		return nil, false
+	}
+	a, can := rd.(StreamAssembler)
+	if !can {
+		return nil, false
+	}
+	return a.AssembleStream(body)
+}

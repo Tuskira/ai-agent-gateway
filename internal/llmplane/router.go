@@ -33,8 +33,9 @@ type router struct {
 	recorder       Recorder
 	client         *http.Client
 	storeBodies    bool
-	maxCaptureReq  int // bounded storage cap for the request body
-	maxCaptureResp int // bounded storage cap for the response body
+	maxCaptureReq  int  // bounded storage cap for the request body
+	maxCaptureResp int  // bounded storage cap for the response body
+	assembleStream bool // store a streamed response as the message it describes
 	pricing        pricing.Pricer
 	// registry resolves the requested model against the tenant's model
 	// registry; nil resolves nothing (pure passthrough, as before).
@@ -60,6 +61,7 @@ type callInfo struct {
 	translated      bool   // the body was translated between wire formats
 	fallbackIndex   int    // index of the target that answered; 0 unregistered; -1 none
 	region          string // Bedrock region the call was signed for
+	reader          string // pkg/llm reader name of the wire format the client got back ("" when unnamed)
 	price           *store.ModelPrice
 }
 
@@ -346,6 +348,7 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		found = disc.Result()
 	}
 	relayErr := relayError(r.Context(), copyErr, client.err)
+	info.reader = endpoint.Reader
 	rt.emit(r, info, body, start, resp, cap, usage, found, relayErr)
 	// After the record, never waited on: the tee only queues the turn. A
 	// response cut short (client gone, upstream failing, deadline) is not
@@ -451,6 +454,16 @@ func (rt *router) emit(r *http.Request, info callInfo, reqBody []byte, start tim
 	if cap != nil {
 		call.RequestBody = reqBodyCapped
 		call.ResponseBody = cap.Bytes()
+		// A streamed reply is stored as the message it describes, unless the
+		// capture was cut (an assembled prefix would pass for the whole) or the
+		// stream cannot be assembled: those keep the raw bytes and, for a cut
+		// capture, the truncated flag set above. Runs after the relay, on the
+		// capture copy only.
+		if rt.assembleStream && call.Stream && !cap.Truncated {
+			if b, ok := assembledBody(info.reader, resp, call.ResponseBody); ok {
+				call.ResponseBody = b
+			}
+		}
 		call.Messages, call.System, call.Tools = parseRequestParts(reqBody)
 		// The parsed parts are slices of the request body, so they obey the
 		// same per-body cap (the console renders a cut part as truncated).

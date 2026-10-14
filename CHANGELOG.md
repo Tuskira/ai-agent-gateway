@@ -101,6 +101,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A streamed Anthropic response is logged as one message.** With
+  `llm_proxy.capture.store_bodies` on, a streamed Anthropic Messages response
+  (also one served from Bedrock, native or through the model registry) was
+  stored as its raw `event:`/`data:` lines. It is now stored as the message it
+  describes, with unknown fields kept, so the console shows readable JSON; the
+  client still receives the raw stream. A stream that is cut short, carries an
+  error event, or exceeded `max_response_bytes` is stored raw, as before, and
+  so are OpenAI, Gemini and Bedrock Converse streams. `POST /api/v1/ingest`
+  `llm_calls` bodies are assembled the same way. Set
+  `llm_proxy.capture.assemble_streams: false`
+  (`GATEWAY_LLM_PROXY_CAPTURE_ASSEMBLE_STREAMS=false`) to store the raw stream.
 - **Detection agent:** the default `AGENT_ENGINE_TIMEOUT` is `8s` (was
   `9s`), so the 1 s policy lookup and an inline judgment fit a gateway's
   10 s wait with a second to spare. New `AGENT_LOG_LEVEL` (`debug`,

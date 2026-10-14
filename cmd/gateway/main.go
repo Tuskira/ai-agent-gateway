@@ -840,6 +840,7 @@ func llmConfig(c config.LLMProxy, card *pricing.Card, z pkgauth.Authorizer) llmp
 		StoreBodies:             c.Capture.StoreBodies,
 		MaxCaptureRequestBytes:  c.Capture.MaxRequestBytes,
 		MaxCaptureResponseBytes: c.Capture.MaxResponseBytes,
+		AssembleStreams:         c.Capture.AssembleStreams,
 		Pricing:                 card,
 	}
 }

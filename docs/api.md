@@ -287,7 +287,10 @@ An **`access_logs`** entry: same required trio. Optional: `session_id`,
 `client_ip`, `user_agent`, `request_body`, `response_body`, `truncated`.
 
 Body fields (`request_body`/`response_body`/`messages`) are plain JSON/text
-strings, not base64. They're stored only when the matching capture setting
+strings, not base64. A `response_body` that is a complete Anthropic Messages
+SSE stream is stored as the single message it describes (before the byte cap
+below applies), unless `llm_proxy.capture.assemble_streams` is `false`; any
+other body is stored as sent. They're stored only when the matching capture setting
 is on — `llm_proxy.capture.store_bodies` for `llm_calls`,
 `capture.store_bodies` for `access_logs` — and bounded by that setting's
 own `max_request_bytes`/`max_response_bytes`, exactly like a

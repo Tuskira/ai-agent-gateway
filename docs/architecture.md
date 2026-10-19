@@ -680,8 +680,10 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
    even when the body exceeds the capture cap. The same relayed bytes feed
    skill/MCP-tool discovery (`internal/discovery`, see
    [observability.md](observability.md#discovered-skills-and-mcp-servers)).
-10. `pkg/pricing.Card.Cost` prices the call from the rate card (`NULL` for
-    a free utility endpoint or unreadable usage), frozen at write time.
+10. The plane's `pkg/pricing.Pricer` (the built-in `pricing.Card`) prices
+    the call from the rate card (`NULL` for a free utility endpoint,
+    unreadable usage or a model the card has no rate for), frozen at write
+    time.
 11. The record is written synchronously to Postgres `llm_calls` (text
     sanitized for invalid UTF-8/NUL; idempotent, `request_id` PK) before
     the request is considered captured — see [llm-plane.md](llm-plane.md).

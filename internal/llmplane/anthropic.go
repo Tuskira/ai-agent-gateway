@@ -35,7 +35,7 @@ func (p anthropicProvider) BuildUpstream(ctx context.Context, r *http.Request, b
 	if err != nil {
 		return nil, err
 	}
-	copyHeaders(up.Header, r.Header)
+	copyRequestHeaders(up.Header, r)
 	return up, nil
 }
 

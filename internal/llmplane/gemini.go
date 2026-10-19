@@ -46,7 +46,7 @@ func (p geminiProvider) BuildUpstream(ctx context.Context, r *http.Request, body
 	if err != nil {
 		return nil, err
 	}
-	copyHeaders(up.Header, r.Header) // x-goog-api-key rides along (BYOK)
+	copyRequestHeaders(up.Header, r) // x-goog-api-key rides along (BYOK)
 	return up, nil
 }
 

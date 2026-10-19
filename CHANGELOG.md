@@ -237,6 +237,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The LLM plane strips the credential the caller authenticated with, not only
+  `Authorization: Bearer gk_...`. A token accepted by another authenticator
+  (an OIDC JWT, say) used to be forwarded to Anthropic, OpenAI and Gemini
+  passthrough targets; any header value equal to the authenticated
+  `Principal.RawCredential` (bare, or behind an auth scheme) is now removed,
+  while a provider key sent beside it, `X-Gateway-Key` handling and Bedrock
+  signed requests are unchanged.
 - `deploy/docker-compose.yml` no longer writes prompts, completions and tool
   arguments to container logs: bodies are still stored for the console, but
   the stdout sink runs without them. The gateway logs a startup warning when

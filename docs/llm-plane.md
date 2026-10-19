@@ -5,7 +5,7 @@ one authenticated surface: every request needs a gateway API key
 (`internal/auth.Middleware`, ahead of the plane), and every call is
 captured for usage/cost. Authentication is *not* the plane's own concern —
 `llmplane.Handler` builds only the provider routing, limits, and capture;
-`cmd/gateway/main.go` wraps it with the shared auth middleware and an
+`pkg/gateway.Run` wraps it with the shared auth middleware and an
 unauthenticated `GET /health` ahead of it.
 
 Unregistered calls are forwarded **byte-for-byte** for Anthropic/OpenAI/Gemini

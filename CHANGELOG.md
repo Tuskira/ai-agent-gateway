@@ -311,6 +311,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cost formula, snapshot fallbacks and Bedrock regional rules are the
   same as the embedded card's. `NewCard`, `Default`, `MergeFile` and
   `llm_proxy.pricing_file` are unchanged.
+- **`pkg/gateway.Run(ctx, Options)`: start the gateway from another Go
+  module.** The serving path that was `run()` in `cmd/gateway/main.go`
+  moved to `pkg/gateway`; the binary now parses `--config` and calls
+  `gateway.Run`, and its subcommands are unchanged. A module outside this
+  one cannot import `internal/`, so this is how it embeds the gateway with
+  its own pieces: `Options` adds `Authenticators` (after the API-key
+  authenticator, before the session cookie and dev mode) and `LogSinks`,
+  and replaces the `BatchSink` capture store, the `LLMCalls` and
+  `Analytics` readers, the `Pricer` and the limiter's `KeyLookup` (new
+  `pkg/store.APIKeyLookup`). Every field is optional and `Options{}`
+  behaves exactly like the binary; Run never closes what it is given.
+  With a supplied `Pricer` the Overview's `pricingSource` is the new
+  `analytics.PricingSourceCustom` (`"custom"`). See docs/architecture.md,
+  "Embedding the gateway".
 - **Prometheus metrics.** The gateway exports its own operational metrics
   in the Prometheus text format, off by default.
   - **Config:** a new `metrics` section (`driver`, `address`, `path`,

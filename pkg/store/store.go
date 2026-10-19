@@ -533,6 +533,15 @@ type APIKeyStore interface {
 	SetProfile(ctx context.Context, tenantID, id string, profileID *string) error
 }
 
+// APIKeyLookup is the one APIKeyStore read the LLM plane's per-key limiter
+// needs: an API key's current row, for its Limits (GetByID has
+// APIKeyStore.GetByID's contract). Every APIKeyStore satisfies it; a program
+// that starts the gateway with pkg/gateway.Run can pass its own through
+// Options.KeyLookup.
+type APIKeyLookup interface {
+	GetByID(ctx context.Context, tenantID, id string) (*APIKey, error)
+}
+
 // RevocationNotifier is an OPTIONAL capability of a Store (discovered with a
 // type assertion on the store.Store value, like io.WriterTo): a backend that
 // can push "this API key changed" events between gateway processes

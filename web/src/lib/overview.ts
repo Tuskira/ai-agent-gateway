@@ -206,7 +206,7 @@ export interface OverviewMetrics {
    * (`llm_proxy.pricing_file`). Optional for the same reason as
    * `costEstimated`.
    */
-  pricingSource?: 'embedded' | 'file'
+  pricingSource?: 'embedded' | 'file' | 'custom'
   topAgents: NamedCount[]
   statusCodes: StatusCodeSlice[]
   successPct: number

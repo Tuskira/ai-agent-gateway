@@ -34,6 +34,7 @@ var ErrNotFound = errors.New("analytics: not found")
 const (
 	PricingSourceEmbedded = "embedded" // the rate card built into the binary (pkg/pricing/prices.json)
 	PricingSourceFile     = "file"     // llm_proxy.pricing_file was loaded and merged over the embedded card
+	PricingSourceCustom   = "custom"   // a program started the gateway with its own pricing.Pricer (pkg/gateway Options.Pricer)
 )
 
 // Meta carries request-independent facts about the running gateway
@@ -586,7 +587,7 @@ type Overview struct {
 	// provider-reported cost is ingested for at least part of the window.
 	// Set by the handler, not by any Reader implementation.
 	CostEstimated bool `json:"costEstimated"`
-	// PricingSource is "embedded" or "file" (see the PricingSource*
+	// PricingSource is "embedded", "file" or "custom" (see the PricingSource*
 	// constants): which rate card the running gateway instance is
 	// costing calls from. Set by the handler from analytics.Meta, not by
 	// any Reader implementation.

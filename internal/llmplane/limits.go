@@ -18,10 +18,9 @@ import (
 )
 
 // KeyLookup resolves an API key's current row (for its Limits).
-// store.APIKeyStore satisfies it.
-type KeyLookup interface {
-	GetByID(ctx context.Context, tenantID, id string) (*store.APIKey, error)
-}
+// store.APIKeyStore satisfies it. It is store.APIKeyLookup, so a program
+// outside this module can implement it (pkg/gateway Options.KeyLookup).
+type KeyLookup = store.APIKeyLookup
 
 // LimiterConfig configures a Limiter.
 type LimiterConfig struct {

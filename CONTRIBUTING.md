@@ -184,7 +184,7 @@ the reference implementation. To add another backend (SQLite, MySQL, …):
    ```
 
    Callers pick it up with `store.Open(ctx, "sqlite", cfg.Database)` once
-   your package is blank-imported (see `cmd/gateway/main.go`'s import of
+   your package is blank-imported (see `pkg/gateway/gateway.go`'s import of
    `internal/store/postgres`).
 3. Pass the conformance suite:
 
@@ -240,7 +240,7 @@ table, NATS, …):
    ```
 
    Operators select it with `sessions.store: mydriver` once your package
-   is blank-imported by the binary (see `cmd/gateway/main.go`'s imports of
+   is blank-imported by the binary (see `pkg/gateway/gateway.go`'s imports of
    `pkg/session/memory` and `pkg/session/redis`).
 4. Pass the conformance suites:
 
@@ -290,7 +290,7 @@ another (OTLP push, StatsD, a vendor agent, …):
    ```
 
    Operators select it with `metrics.driver: mydriver` once your package
-   is blank-imported by the binary (see `cmd/gateway/main.go`'s import of
+   is blank-imported by the binary (see `pkg/gateway/gateway.go`'s import of
    `pkg/metrics/prometheus`). An unregistered name fails startup.
 3. Pass the conformance suite:
 
@@ -351,7 +351,7 @@ format (Gemini's native API, Bedrock Converse, …):
    func init() { llm.RegisterProvider(Provider{}) }
    ```
 
-   and blank-import the package from `cmd/gateway/main.go` next to
+   and blank-import the package from `pkg/gateway/gateway.go` next to
    `pkg/llm/openaicompat`. A new client format is the same with
    `llm.Dialect` / `llm.RegisterDialect` (and wire samples under
    `pkg/llm/llmtest/testdata/<name>/`). To make a format readable (its
@@ -395,8 +395,11 @@ These are the other two pluggable seams (see
 - **A sink** implements `pkg/sink.LogSink` (`WriteAccess`, `WriteLLMCall`,
   `Close`, all non-blocking) or `pkg/sink.BatchSink` (`WriteBatch`,
   synchronous, for a durable capture destination like the Postgres LLM
-  sink). Wire the constructor into `cmd/gateway/main.go`'s `buildSinks`
-  (or `buildBatchSink`) behind its own config section.
+  sink). Wire the constructor into `pkg/gateway`'s `buildSinks`
+  (or `buildBatchSink`) behind its own config section. A sink that lives
+  in another Go module needs no change here: start the gateway from that
+  module with `gateway.Run(ctx, gateway.Options{LogSinks: ..., BatchSink: ...})`
+  (see "Embedding the gateway" in docs/architecture.md).
 - **A header provider** implements `pkg/headers.ExternalProvider`
   (`ProviderID`, `ProviderName`, `ConfigSchema`, `Validate`, `Resolve`,
   and optionally `Invalidator` if resolved values can go stale). Register

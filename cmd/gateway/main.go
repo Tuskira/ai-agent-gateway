@@ -821,7 +821,7 @@ func runSecretsRekey() error {
 // llmConfig maps the LLMProxy config section onto the llmplane package's own
 // Config (which doesn't import config). card is the rate card built by
 // buildPricingCard (embedded, or merged with llm_proxy.pricing_file).
-func llmConfig(c config.LLMProxy, card *pricing.Card, z pkgauth.Authorizer) llmplane.Config {
+func llmConfig(c config.LLMProxy, card pricing.Pricer, z pkgauth.Authorizer) llmplane.Config {
 	return llmplane.Config{
 		UpstreamBaseURL:         c.UpstreamBaseURL,
 		MaxRequestBytes:         c.Limits.MaxRequestBytes,

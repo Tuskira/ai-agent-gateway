@@ -35,7 +35,7 @@ type router struct {
 	storeBodies    bool
 	maxCaptureReq  int // bounded storage cap for the request body
 	maxCaptureResp int // bounded storage cap for the response body
-	pricing        *pricing.Card
+	pricing        pricing.Pricer
 	// registry resolves the requested model against the tenant's model
 	// registry; nil resolves nothing (pure passthrough, as before).
 	registry *Registry

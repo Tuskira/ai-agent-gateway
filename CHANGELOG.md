@@ -308,6 +308,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pkg/pricing` seam: `Pricer` and `NewCardFromRates`.** `pricing.Pricer`
+  is the one method the LLM plane calls on its rate card
+  (`Cost(provider, model, Usage)`); `*pricing.Card` implements it and the
+  plane now holds a `Pricer`, so a program that embeds the gateway can
+  price calls from its own source. `pricing.NewCardFromRates` builds a
+  `Card` from a `map[string]pricing.Rate` (the per-model rate type, now
+  exported, with prices.json's JSON keys) without reading a file; the
+  cost formula, snapshot fallbacks and Bedrock regional rules are the
+  same as the embedded card's. `NewCard`, `Default`, `MergeFile` and
+  `llm_proxy.pricing_file` are unchanged.
 - **Prometheus metrics.** The gateway exports its own operational metrics
   in the Prometheus text format, off by default.
   - **Config:** a new `metrics` section (`driver`, `address`, `path`,

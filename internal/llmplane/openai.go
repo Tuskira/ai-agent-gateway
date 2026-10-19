@@ -72,7 +72,7 @@ func (p openaiProvider) BuildUpstream(ctx context.Context, r *http.Request, body
 	if err != nil {
 		return nil, err
 	}
-	copyHeaders(up.Header, r.Header) // Authorization: Bearer rides along (BYOK)
+	copyRequestHeaders(up.Header, r) // Authorization: Bearer rides along (BYOK)
 	return up, nil
 }
 

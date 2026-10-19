@@ -263,7 +263,7 @@ func newUpstream(ctx context.Context, r *http.Request, body []byte, base, upstre
 	if err != nil {
 		return nil, err
 	}
-	copyHeaders(up.Header, r.Header)
+	copyRequestHeaders(up.Header, r)
 	return up, nil
 }
 

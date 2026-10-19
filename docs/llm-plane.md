@@ -54,8 +54,8 @@ Claude Code sets `ANTHROPIC_BASE_URL` and appends `/v1/messages`. The
 gateway's own key authenticates to the gateway (as
 `Authorization: Bearer gk_...` or `X-Gateway-Key`); the Anthropic key
 rides through as `x-api-key`/its own `Authorization` untouched — the
-gateway strips only its *own* bearer credential before forwarding, never
-a provider one. (`ANTHROPIC_AUTH_TOKEN=$GATEWAY_KEY` also works when
+gateway strips only the credential it authenticated the caller with
+(whichever header carried it) before forwarding, never a provider one. (`ANTHROPIC_AUTH_TOKEN=$GATEWAY_KEY` also works when
 `ANTHROPIC_API_KEY` is set, but it replaces a `claude login` credential.)
 
 ```sh
@@ -663,7 +663,9 @@ refused before any upstream call, in the client dialect's own error
 envelope: `400 "model <name>: no credential for target <i> (set a
 credential or allow_caller_key)"`.
 
-In every case the gateway's own key (`Bearer gk_…`, `X-Gateway-Key`) and
+In every case the credential the caller authenticated to the gateway with
+(`Bearer gk_…`, `X-Gateway-Key`, or whatever another authenticator accepted,
+such as an OIDC token, in whichever header it came) and
 any other vendor's key header (`x-goog-api-key` on an Anthropic call,
 `x-api-key` on an OpenAI one, ...) are removed from the upstream request,
 and so is every `X-Provider-Key*` header.

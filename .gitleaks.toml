@@ -66,6 +66,12 @@ paths = [
 ]
 
 [[allowlists]]
+description = "internal/llmplane/strip_credential_test.go fixtures: fake gateway keys used to test inbound credential stripping"
+paths = [
+  '''internal/llmplane/strip_credential_test\.go''',
+]
+
+[[allowlists]]
 description = "docs/observability.md sample analytics payload: a connector UUID under a JSON field named \"key\" (a node key, not a credential)"
 matchCondition = "AND"
 paths = [

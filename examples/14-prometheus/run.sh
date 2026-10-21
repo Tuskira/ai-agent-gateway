@@ -83,8 +83,8 @@ port_open() {
 if port_open "$EVERYTHING_PORT"; then
   echo "check: MCP 'everything' server already listening on :$EVERYTHING_PORT -- reusing it"
 else
-  echo "check: starting MCP 'everything' server on :$EVERYTHING_PORT (npx @modelcontextprotocol/server-everything)"
-  PORT="$EVERYTHING_PORT" npx -y @modelcontextprotocol/server-everything streamableHttp \
+  echo "check: starting MCP 'everything' server on :$EVERYTHING_PORT (npx @modelcontextprotocol/server-everything@2026.8.31)"
+  PORT="$EVERYTHING_PORT" npx -y @modelcontextprotocol/server-everything@2026.8.31 streamableHttp \
     >"$EVERYTHING_LOG_FILE" 2>&1 &
   echo $! >"$EVERYTHING_PID_FILE"
 

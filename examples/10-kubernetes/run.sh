@@ -254,7 +254,9 @@ discovered_count="$(jq -r '.total' <<<"$discover_resp")"
 echo "  -> discovered $discovered_count tool(s), written to the tool cache"
 
 # Same floor as the tools/list check below, and for the same reason:
-# server-everything's tool count isn't pinned and `npx -y` pulls latest.
+# server-everything is pinned to 2026.8.31, but we assert a floor rather
+# than an exact count so a deliberate version bump does not need a matching
+# edit here.
 if [[ "$discovered_count" -lt 10 ]]; then
   echo "FAIL: expected at least 10 tools from the 'everything' connector, got $discovered_count" >&2
   exit 1
@@ -343,9 +345,9 @@ list_resp="$MCP_RESP"
 tool_count="$(jq '[.result.tools[] | select(.name | startswith("everything__"))] | length' <<<"$list_resp")"
 echo "  -> $tool_count tool(s) advertised under the 'everything' connector"
 
-# See 01-quickstart/run.sh's identical comment: server-everything's tool
-# count isn't pinned in this repo and `npx -y` always pulls latest, so
-# assert a floor, not an exact number.
+# See 01-quickstart/run.sh's identical comment: server-everything is pinned
+# to 2026.8.31, but we assert a floor rather than an exact count so a
+# deliberate version bump does not need a matching edit here.
 if [[ "$tool_count" -lt 10 ]]; then
   echo "FAIL: expected at least 10 tools from the 'everything' connector, got $tool_count" >&2
   exit 1

@@ -92,7 +92,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     # Lets the gateway container reach an MCP server running on the host
-    # (e.g. `npx @modelcontextprotocol/server-everything`) via
+    # (e.g. `npx @modelcontextprotocol/server-everything@2026.8.31`) via
     # host.docker.internal. Docker Desktop (macOS/Windows) already
     # provides this mapping; on Linux it's only added with this entry.
     extra_hosts:

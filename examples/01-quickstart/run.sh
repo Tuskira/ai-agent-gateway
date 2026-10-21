@@ -82,8 +82,8 @@ port_open() {
 if port_open "$EVERYTHING_PORT"; then
   echo "check: MCP 'everything' server already listening on :$EVERYTHING_PORT -- reusing it"
 else
-  echo "check: starting MCP 'everything' server on :$EVERYTHING_PORT (npx @modelcontextprotocol/server-everything)"
-  PORT="$EVERYTHING_PORT" npx -y @modelcontextprotocol/server-everything streamableHttp \
+  echo "check: starting MCP 'everything' server on :$EVERYTHING_PORT (npx @modelcontextprotocol/server-everything@2026.8.31)"
+  PORT="$EVERYTHING_PORT" npx -y @modelcontextprotocol/server-everything@2026.8.31 streamableHttp \
     >"$EVERYTHING_LOG_FILE" 2>&1 &
   echo $! >"$EVERYTHING_PID_FILE"
 
@@ -311,12 +311,11 @@ list_resp="$MCP_RESP"
 tool_count="$(jq '[.result.tools[] | select(.name | startswith("everything__"))] | length' <<<"$list_resp")"
 echo "  -> $tool_count tool(s) advertised under the 'everything' connector"
 
-# NOTE on the "10" floor: @modelcontextprotocol/server-everything's exact
-# tool count isn't pinned anywhere in this repo -- test/e2e/mcp_test.go and
-# internal/dataplane/dptest only ever stand up a synthetic 2-tool double,
-# never the real npm package -- and `npx -y` always pulls the latest
-# published version, so the upstream count can drift across releases.
-# Assert a floor, not an exact number.
+# NOTE on the "10" floor: @modelcontextprotocol/server-everything is pinned
+# to 2026.8.31, but we assert a floor rather than an exact count so a
+# deliberate version bump does not need a matching edit here.
+# (test/e2e/mcp_test.go and internal/dataplane/dptest only ever stand up a
+# synthetic 2-tool double, never the real npm package.)
 if [[ "$tool_count" -lt 10 ]]; then
   echo "FAIL: expected at least 10 tools from the 'everything' connector, got $tool_count" >&2
   exit 1

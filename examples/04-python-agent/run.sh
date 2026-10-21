@@ -93,8 +93,8 @@ port_open() {
 if port_open "$EVERYTHING_PORT"; then
   echo "check: MCP 'everything' server already listening on :$EVERYTHING_PORT -- reusing it"
 else
-  echo "check: starting MCP 'everything' server on :$EVERYTHING_PORT (npx @modelcontextprotocol/server-everything)"
-  PORT="$EVERYTHING_PORT" npx -y @modelcontextprotocol/server-everything streamableHttp \
+  echo "check: starting MCP 'everything' server on :$EVERYTHING_PORT (npx @modelcontextprotocol/server-everything@2026.8.31)"
+  PORT="$EVERYTHING_PORT" npx -y @modelcontextprotocol/server-everything@2026.8.31 streamableHttp \
     >"$EVERYTHING_LOG_FILE" 2>&1 &
   echo $! >"$EVERYTHING_PID_FILE"
 
@@ -221,9 +221,9 @@ discover_resp="$(curl -sSf -X POST "$CONTROL_BASE/connectors/$CONNECTOR_ID/disco
 discovered_count="$(jq -r '.total' <<<"$discover_resp")"
 echo "  -> discovered $discovered_count tool(s), written to the tool cache"
 
-# See 01-quickstart's README for the note on this floor: server-everything's
-# exact tool count isn't pinned anywhere in this repo, and `npx -y` always
-# pulls the latest published version.
+# See 01-quickstart's README for the note on this floor: server-everything is
+# pinned to 2026.8.31, but we assert a floor rather than an exact count so a
+# deliberate version bump does not need a matching edit here.
 if [[ "$discovered_count" -lt 10 ]]; then
   echo "FAIL: expected at least 10 tools from the 'everything' connector, got $discovered_count" >&2
   exit 1

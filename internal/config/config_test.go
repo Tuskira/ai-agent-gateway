@@ -281,6 +281,34 @@ func TestLoad_EnvOverlay_BodyStore(t *testing.T) {
 	}
 }
 
+// Streamed LLM responses are stored assembled unless the switch is turned off,
+// from the environment or from YAML.
+func TestLoad_AssembleStreams(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		cfg, err := Load("")
+		if err != nil || !cfg.LLMProxy.Capture.AssembleStreams {
+			t.Errorf("assemble_streams should default to true: %v, err %v", cfg, err)
+		}
+	})
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("GATEWAY_LLM_PROXY_CAPTURE_ASSEMBLE_STREAMS", "false")
+		cfg, err := Load("")
+		if err != nil || cfg.LLMProxy.Capture.AssembleStreams {
+			t.Errorf("env false: assemble_streams = %v, err %v", cfg, err)
+		}
+	})
+	t.Run("yaml", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "gateway.yml")
+		if err := os.WriteFile(path, []byte("llm_proxy:\n  capture:\n    assemble_streams: false\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil || cfg.LLMProxy.Capture.AssembleStreams {
+			t.Errorf("yaml false: assemble_streams = %v, err %v", cfg, err)
+		}
+	})
+}
+
 func TestLoad_EnvOverlay_Detection(t *testing.T) {
 	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_AGENT_URL", "http://127.0.0.1:8090")
 	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_TIMEOUT", "2s")

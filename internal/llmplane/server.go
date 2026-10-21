@@ -42,6 +42,10 @@ type Config struct {
 	StoreBodies             bool
 	MaxCaptureRequestBytes  int // bounded storage cap for the request body
 	MaxCaptureResponseBytes int // bounded storage cap for the response body (the stream tee)
+	// AssembleStreams stores a complete streamed response as the one message it
+	// describes, when its reader can assemble one (see assembledBody); false
+	// stores the raw stream.
+	AssembleStreams bool
 
 	// Authorizer decides PermissionLLMAccess for the Principal the caller's auth
 	// middleware put on the context. It is REQUIRED: Handler returns an error
@@ -120,6 +124,7 @@ func Handler(cfg Config, rec Recorder) (http.Handler, error) {
 		storeBodies:    cfg.StoreBodies,
 		maxCaptureReq:  cfg.MaxCaptureRequestBytes,
 		maxCaptureResp: cfg.MaxCaptureResponseBytes,
+		assembleStream: cfg.AssembleStreams,
 		pricing:        pc,
 		registry:       cfg.Registry,
 		bedrock:        bedrock,

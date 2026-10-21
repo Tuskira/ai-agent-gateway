@@ -112,6 +112,7 @@ func llmConfig(c config.LLMProxy, card pricing.Pricer, z pkgauth.Authorizer) llm
 		StoreBodies:             c.Capture.StoreBodies,
 		MaxCaptureRequestBytes:  c.Capture.MaxRequestBytes,
 		MaxCaptureResponseBytes: c.Capture.MaxResponseBytes,
+		AssembleStreams:         c.Capture.AssembleStreams,
 		Pricing:                 card,
 	}
 }

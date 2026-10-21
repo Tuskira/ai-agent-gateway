@@ -35,7 +35,7 @@ reference `@modelcontextprotocol/server-everything`, over Streamable HTTP,
 on port 23014:
 
 ```sh
-PORT=23014 npx -y @modelcontextprotocol/server-everything streamableHttp &
+PORT=23014 npx -y @modelcontextprotocol/server-everything@2026.8.31 streamableHttp &
 echo $! > examples/01-quickstart/.everything.pid
 ```
 
@@ -234,8 +234,9 @@ to server-everything, and the `tools/call` returns error `-32800`
   `{"status":"ok","plane":"api",...}`.
 - The connector health probe answers `{"status":"healthy",...}`.
 - `tools/list` returns the server's tools named `everything__*`,
-  including `everything__echo`. The count varies by release (`npx -y`
-  pulls the latest), so `run.sh` asserts at least 10.
+  including `everything__echo`. The version is pinned to 2026.8.31, but
+  `run.sh` asserts at least 10 rather than an exact count, so a deliberate
+  version bump needs no matching edit.
 - `tools/call` on `everything__echo` returns content whose text contains
   `hello from the gateway`.
 - `prompts/list` returns the server's prompts named `everything__*`

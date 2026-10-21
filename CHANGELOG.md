@@ -133,6 +133,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- examples: pin @modelcontextprotocol/server-everything to 2026.8.31 and
+  assert on the refusal message, not the JSON-RPC code; 1.0.0+ reformats the
+  error text.
+
 - **Detection agent: the secret-scan cache no longer keeps whole texts
   alive, and is bounded by bytes.** Each cached value was a substring of
   the text it was found in, so the cache pinned every scanned text (200

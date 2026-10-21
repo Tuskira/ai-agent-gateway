@@ -15,7 +15,9 @@
 #   - calls everything-requests__get-roots-list and answers roots/list the
 #     same way
 #   - turns the connector's elicitation policy off and shows the same
-#     call refused (-32601) without anything reaching the agent
+#     call refused (the gateway answers the server with JSON-RPC -32601;
+#     the tool text is the server's own formatting of that error) without
+#     anything reaching the agent
 #
 # Self-contained: does not assume 01-quickstart has been run first, but
 # reuses whatever it already left running (the "everything" MCP server,
@@ -122,8 +124,8 @@ port_open() {
 if port_open "$EVERYTHING_PORT"; then
   echo "check: MCP 'everything' server already listening on :$EVERYTHING_PORT -- reusing it"
 else
-  echo "check: starting MCP 'everything' server on :$EVERYTHING_PORT (npx @modelcontextprotocol/server-everything)"
-  PORT="$EVERYTHING_PORT" npx -y @modelcontextprotocol/server-everything streamableHttp \
+  echo "check: starting MCP 'everything' server on :$EVERYTHING_PORT (npx @modelcontextprotocol/server-everything@2026.8.31)"
+  PORT="$EVERYTHING_PORT" npx -y @modelcontextprotocol/server-everything@2026.8.31 streamableHttp \
     >"$EVERYTHING_LOG_FILE" 2>&1 &
   echo $! >"$EVERYTHING_PID_FILE"
 
@@ -558,8 +560,8 @@ call_tool_in_background "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\"
 wait_for_call
 refused_text="$(jq -r '[.result.content[]?.text // empty] | join(" ")' <<<"$MCP_RESP")"
 echo "  -> tool result: $refused_text"
-if [[ "$refused_text" != *"-32601"* || "$refused_text" != *"not permitted for this connector"* ]]; then
-  echo "FAIL: expected the connector to be refused with -32601 'not permitted for this connector'" >&2
+if [[ "$refused_text" != *"not permitted for this connector"* ]]; then
+  echo "FAIL: expected the refusal text to contain 'not permitted for this connector'" >&2
   exit 1
 fi
 if tail -n +"$((seen + 1))" "$STREAM_FILE" | grep -q '"elicitation/create"'; then

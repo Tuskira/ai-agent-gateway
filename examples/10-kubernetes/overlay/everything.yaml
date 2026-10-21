@@ -30,7 +30,7 @@ spec:
       containers:
         - name: everything
           image: node:22-alpine
-          command: ["npx", "-y", "@modelcontextprotocol/server-everything", "streamableHttp"]
+          command: ["npx", "-y", "@modelcontextprotocol/server-everything@2026.8.31", "streamableHttp"]
           env:
             - name: PORT
               value: "3001"

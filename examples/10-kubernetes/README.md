@@ -52,7 +52,7 @@ first; this README only covers what's specific to running it as an example.
 - **A real MCP connector, running in-cluster.** `overlay/everything.yaml`
   runs the reference `@modelcontextprotocol/server-everything` as its own
   Deployment+Service inside the cluster (`node:22-alpine`, `npx -y
-  @modelcontextprotocol/server-everything streamableHttp`, port 3001 — see
+  @modelcontextprotocol/server-everything@2026.8.31 streamableHttp`, port 3001 — see
   `overlay/kustomization.yaml`'s comment for why in-cluster rather than on
   the host).
   `run.sh` registers it and calls `everything__echo` through the
@@ -104,7 +104,7 @@ first; this README only covers what's specific to running it as an example.
 - Outbound internet access **from inside the kind node**, not just the
   host: the default path builds the gateway image locally, but the
   in-cluster `everything` server still pulls `node:22-alpine` and runs
-  `npx -y @modelcontextprotocol/server-everything`, both of which need the
+  `npx -y @modelcontextprotocol/server-everything@2026.8.31`, both of which need the
   node to reach a registry/npm at pod-start time.
 - Nothing else: no API keys, no cloud account, no LLM provider credentials.
 

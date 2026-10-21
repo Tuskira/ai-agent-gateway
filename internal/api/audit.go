@@ -29,9 +29,9 @@ import (
 // route has one), key_id (the {id} path parameter), actor (the
 // authenticated principal's subject), actor_auth_method, actor_tenant_id,
 // client_ip (as the rate limiter resolves it, honouring trusted proxies),
-// request_id (the request's X-Request-Id header when the client or a proxy
-// sent one; the gateway does not generate one), and on the result line
-// status and outcome (ok, denied for 401/403, not_found, invalid for other
+// request_id (the request's X-Request-Id header, cut to 128 characters, when
+// the client or a proxy sent one; the gateway does not generate one), and on the result line
+// status and outcome (ok, denied for 403, not_found, invalid for other
 // 4xx, error for 5xx). Plaintext keys, hashes and request bodies are never
 // logged.
 func platformAudit(logger *slog.Logger, rl *internalauth.RateLimiter) func(http.Handler) http.Handler {
@@ -43,7 +43,7 @@ func platformAudit(logger *slog.Logger, rl *internalauth.RateLimiter) func(http.
 			ctx, trail := handlers.WithAuditTrail(r.Context())
 			r = r.WithContext(ctx)
 
-			base := []any{"method", r.Method, "client_ip", rl.ClientIP(r), "request_id", r.Header.Get("X-Request-Id")}
+			base := []any{"method", r.Method, "client_ip", rl.ClientIP(r), "request_id", clip(r.Header.Get("X-Request-Id"), maxRequestIDLen)}
 			if p, ok := pkgauth.PrincipalFrom(ctx); ok {
 				base = append(base, "actor", p.Subject, "actor_auth_method", p.AuthMethod, "actor_tenant_id", p.TenantID)
 			}
@@ -73,11 +73,25 @@ func platformAudit(logger *slog.Logger, rl *internalauth.RateLimiter) func(http.
 	}
 }
 
+// maxRequestIDLen bounds the client-supplied X-Request-Id written to the log.
+const maxRequestIDLen = 128
+
+// clip returns s cut to at most n runes.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
 func outcome(status int) string {
 	switch {
 	case status < 400:
 		return "ok"
-	case status == http.StatusUnauthorized, status == http.StatusForbidden:
+	case status == http.StatusForbidden:
 		return "denied"
 	case status == http.StatusNotFound:
 		return "not_found"

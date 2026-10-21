@@ -133,9 +133,9 @@ attempts are logged as well. Fields: `method`, `route` (the pattern),
 `tenant_id` and `key_id` (the URL parameters when the route has them),
 `actor` (the calling key's id), `actor_auth_method`, `actor_tenant_id`,
 `client_ip` (as the rate limiter resolves it, so trusted-proxy settings
-apply) and `request_id` (the request's `X-Request-Id` header if the client or
-a proxy sent one; the gateway does not generate one). The result line adds
-`status`, `outcome` (`ok`, `denied`, `not_found`, `invalid`, `error`) and
+apply) and `request_id` (the request's `X-Request-Id` header, cut to 128
+characters, if the client or a proxy sent one; the gateway does not generate one). The result line adds
+`status`, `outcome` (`ok`, `denied` for 403, `not_found` for 404, `invalid` for other 4xx, `error` for 5xx; a failed authentication is a 401 and never reaches these lines) and
 what the handler recorded: `new_key_id` for create and rotate,
 `old_key_id` and `old_key_revoked` for a rotate once the old key is gone,
 and `created_tenant_id`, `created_tenant_slug` and `id_supplied` for a tenant

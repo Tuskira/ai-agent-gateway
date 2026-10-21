@@ -98,8 +98,24 @@ func TestPlatformRoutes_UnknownTenant404(t *testing.T) {
 
 func TestTenantsList_EmptySlug400(t *testing.T) {
 	h := platformRouter(t, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
-	if w := doPlatform(h, platformCall{http.MethodGet, "/api/v1/tenants?slug=", ""}, "platform"); w.Code != http.StatusBadRequest {
-		t.Errorf("?slug= = %d, want 400", w.Code)
+	for _, q := range []string{"?slug=", "?slug=x&slug=", "?slug=&slug=x"} {
+		if w := doPlatform(h, platformCall{http.MethodGet, "/api/v1/tenants" + q, ""}, "platform"); w.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", q, w.Code)
+		}
+	}
+}
+
+func TestPlatformAudit_RequestIDIsCapped(t *testing.T) {
+	var buf bytes.Buffer
+	h := platformRouter(t, slog.New(slog.NewJSONHandler(&buf, nil)))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants", nil)
+	req.Header.Set("Authorization", "Bearer platform")
+	req.Header.Set("X-Request-Id", strings.Repeat("é", 500))
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	for _, l := range parseLogs(t, &buf) {
+		if id, _ := l["request_id"].(string); len([]rune(id)) != 128 {
+			t.Errorf("request_id has %d runes, want 128", len([]rune(id)))
+		}
 	}
 }
 

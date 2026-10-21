@@ -96,9 +96,11 @@ func (h Tenants) List(w http.ResponseWriter, r *http.Request) {
 	var tenants []*store.Tenant
 	var err error
 	q := r.URL.Query()
-	if q.Has("slug") && q.Get("slug") == "" {
-		httpx.ValidationError(w, "slug must not be empty")
-		return
+	for _, v := range q["slug"] {
+		if v == "" {
+			httpx.ValidationError(w, "slug must not be empty")
+			return
+		}
 	}
 	if slug := q.Get("slug"); slug != "" {
 		var t *store.Tenant

@@ -254,7 +254,11 @@ func NewRouter(deps Deps) http.Handler {
 				// Permission is checked before the id is parsed so an
 				// unauthorised caller learns nothing about which ids exist.
 				h := requireUUIDParam("id")(rt.Handler)
-				if rt.Permission != "" {
+				if rt.Permission == pkgauth.PermPlatformAdmin {
+					// Audited outside the permission check so refused
+					// callers are logged too (see platformAudit).
+					r.With(platformAudit(deps.Logger, deps.RateLimiter), internalauth.RequirePermission(deps.Authorizer, rt.Permission)).Method(rt.Method, rt.Pattern, h)
+				} else if rt.Permission != "" {
 					r.With(internalauth.RequirePermission(deps.Authorizer, rt.Permission)).Method(rt.Method, rt.Pattern, h)
 				} else {
 					r.Method(rt.Method, rt.Pattern, h)
@@ -384,6 +388,14 @@ func buildRoutes(deps Deps) []routeSpec {
 		// why an ordinary "*.read"/"*" grant must not satisfy this.
 		{Method: http.MethodPost, Pattern: "/tenants", Tag: "tenants", Summary: "Create a tenant", Permission: "platform.admin", Handler: tenants.Create},
 		{Method: http.MethodGet, Pattern: "/tenants", Tag: "tenants", Summary: "List tenants", Permission: "platform.admin", Handler: tenants.List},
+		// A platform-admin key manages API keys in a named tenant (same
+		// bodies and rules as /api-keys, scoped to {tenant_id}). Gated on
+		// platform.admin, so a tenant admin gets 403 even for its own tenant.
+		{Method: http.MethodPost, Pattern: "/tenants/{tenant_id}/api-keys", Tag: "tenants", Summary: "Create an API key in a named tenant", Permission: "platform.admin", Handler: apiKeys.PlatformCreate},
+		{Method: http.MethodGet, Pattern: "/tenants/{tenant_id}/api-keys", Tag: "tenants", Summary: "List a named tenant's API keys", Permission: "platform.admin", Handler: apiKeys.PlatformList},
+		{Method: http.MethodPatch, Pattern: "/tenants/{tenant_id}/api-keys/{id}", Tag: "tenants", Summary: "Update an API key's limits or profile binding in a named tenant", Permission: "platform.admin", Handler: apiKeys.PlatformUpdate},
+		{Method: http.MethodDelete, Pattern: "/tenants/{tenant_id}/api-keys/{id}", Tag: "tenants", Summary: "Revoke an API key in a named tenant", Permission: "platform.admin", Handler: apiKeys.PlatformRevoke},
+		{Method: http.MethodPost, Pattern: "/tenants/{tenant_id}/api-keys/{id}/rotate", Tag: "tenants", Summary: "Rotate an API key in a named tenant", Permission: "platform.admin", Handler: apiKeys.PlatformRotate},
 
 		{Method: http.MethodPost, Pattern: "/api-keys", Tag: "api-keys", Summary: "Create an API key", Permission: "admin.manage", Handler: apiKeys.Create},
 		{Method: http.MethodGet, Pattern: "/api-keys", Tag: "api-keys", Summary: "List API keys", Permission: "admin.manage", Handler: apiKeys.List},

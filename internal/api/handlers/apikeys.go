@@ -173,30 +173,35 @@ func (h APIKeys) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.create(w, r, tid)
+}
 
+// create is Create's body, shared with the platform-admin variant that
+// targets a named tenant (apikeys_platform.go).
+func (h APIKeys) create(w http.ResponseWriter, r *http.Request, tid string) string {
 	var req createAPIKeyRequest
 	if !httpx.Decode(w, r, &req) {
-		return
+		return ""
 	}
 	if err := validateName("name", req.Name); err != nil {
 		httpx.ValidationError(w, err.Error())
-		return
+		return ""
 	}
 	if err := validateRole(req.Role, h.AllowedRoles); err != nil {
 		httpx.ValidationError(w, err.Error())
-		return
+		return ""
 	}
 	if !h.checkPlatformRole(w, r, req.Role) {
-		return
+		return ""
 	}
 	if req.Limits != nil {
 		if err := validateLimits(req.Limits); err != nil {
 			httpx.ValidationError(w, err.Error())
-			return
+			return ""
 		}
 	}
 	if req.ProfileID != nil && !h.checkProfile(w, r, tid, *req.ProfileID) {
-		return
+		return ""
 	}
 
 	var expiresAt *time.Time
@@ -212,13 +217,13 @@ func (h APIKeys) Create(w http.ResponseWriter, r *http.Request) {
 			t, dateErr = time.Parse("2006-01-02", *req.ExpiresAt)
 			if dateErr != nil {
 				httpx.ValidationError(w, "expires_at must be an RFC3339 timestamp or a YYYY-MM-DD date")
-				return
+				return ""
 			}
 			t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, time.UTC)
 		}
 		if !t.After(time.Now().UTC()) {
 			httpx.ValidationError(w, "expires_at must be in the future")
-			return
+			return ""
 		}
 		expiresAt = &t
 	}
@@ -226,7 +231,7 @@ func (h APIKeys) Create(w http.ResponseWriter, r *http.Request) {
 	plaintext, hash, prefix, err := apikey.Generate()
 	if err != nil {
 		writeStoreErr(w, r, "generate api key", err)
-		return
+		return ""
 	}
 
 	k := &store.APIKey{
@@ -242,10 +247,11 @@ func (h APIKeys) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.Store.APIKeys().Create(r.Context(), k); err != nil {
 		writeStoreErr(w, r, "create api key", err)
-		return
+		return ""
 	}
 
 	httpx.WriteJSON(w, http.StatusCreated, apiKeyCreateView{apiKeyView: h.withProfileName(r, tid, newAPIKeyView(k)), Key: plaintext})
+	return k.ID
 }
 
 // List handles GET /api/v1/api-keys.
@@ -254,7 +260,12 @@ func (h APIKeys) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.list(w, r, tid)
+}
 
+// list is List's body, shared with the platform-admin variant that
+// targets a named tenant (apikeys_platform.go).
+func (h APIKeys) list(w http.ResponseWriter, r *http.Request, tid string) {
 	keys, err := h.Store.APIKeys().List(r.Context(), tid)
 	if err != nil {
 		writeStoreErr(w, r, "list api keys", err)
@@ -278,6 +289,12 @@ func (h APIKeys) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.update(w, r, tid)
+}
+
+// update is Update's body, shared with the platform-admin variant that
+// targets a named tenant (apikeys_platform.go).
+func (h APIKeys) update(w http.ResponseWriter, r *http.Request, tid string) {
 	id := chi.URLParam(r, "id")
 
 	var req updateAPIKeyRequest
@@ -343,6 +360,12 @@ func (h APIKeys) Revoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.revoke(w, r, tid)
+}
+
+// revoke is Revoke's body, shared with the platform-admin variant that
+// targets a named tenant (apikeys_platform.go).
+func (h APIKeys) revoke(w http.ResponseWriter, r *http.Request, tid string) string {
 	id := chi.URLParam(r, "id")
 
 	// Fetched before the write so its KeyHash is available to invalidate
@@ -352,17 +375,18 @@ func (h APIKeys) Revoke(w http.ResponseWriter, r *http.Request) {
 	existing, err := h.Store.APIKeys().GetByID(r.Context(), tid, id)
 	if err != nil {
 		writeStoreErr(w, r, "revoke api key", err)
-		return
+		return ""
 	}
 
 	if err := h.Store.APIKeys().Revoke(r.Context(), tid, id); err != nil {
 		writeStoreErr(w, r, "revoke api key", err)
-		return
+		return ""
 	}
 	if h.KeyInvalidator != nil {
 		h.KeyInvalidator.InvalidateKey(existing.KeyHash)
 	}
 	w.WriteHeader(http.StatusNoContent)
+	return id
 }
 
 // Rotate handles POST /api/v1/api-keys/{id}/rotate: revoke the named key
@@ -373,30 +397,38 @@ func (h APIKeys) Rotate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.rotate(w, r, tid)
+}
+
+// rotate is Rotate's body, shared with the platform-admin variant that
+// targets a named tenant (apikeys_platform.go).
+func (h APIKeys) rotate(w http.ResponseWriter, r *http.Request, tid string) string {
 	id := chi.URLParam(r, "id")
 
 	existing, err := h.Store.APIKeys().GetByID(r.Context(), tid, id)
 	if err != nil {
 		writeStoreErr(w, r, "rotate api key", err)
-		return
+		return ""
 	}
 
 	if !h.checkPlatformRole(w, r, existing.Role) {
-		return
+		return ""
 	}
 
 	if err := h.Store.APIKeys().Revoke(r.Context(), tid, id); err != nil {
 		writeStoreErr(w, r, "rotate api key (revoke old)", err)
-		return
+		return ""
 	}
 	if h.KeyInvalidator != nil {
 		h.KeyInvalidator.InvalidateKey(existing.KeyHash)
 	}
+	// From here the old key is gone even if issuing the new one fails.
+	AuditNote(r.Context(), "old_key_id", id, "old_key_revoked", true)
 
 	plaintext, hash, prefix, err := apikey.Generate()
 	if err != nil {
 		writeStoreErr(w, r, "rotate api key (generate new)", err)
-		return
+		return ""
 	}
 
 	k := &store.APIKey{
@@ -413,8 +445,9 @@ func (h APIKeys) Rotate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.Store.APIKeys().Create(r.Context(), k); err != nil {
 		writeStoreErr(w, r, "rotate api key (create new)", err)
-		return
+		return ""
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, apiKeyCreateView{apiKeyView: h.withProfileName(r, tid, newAPIKeyView(k)), Key: plaintext})
+	return k.ID
 }

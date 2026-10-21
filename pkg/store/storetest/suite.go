@@ -117,6 +117,24 @@ func testTenants(t *testing.T, s store.Store) {
 	if err := s.Tenants().Create(ctx, dup); !errors.Is(err, store.ErrConflict) {
 		t.Errorf("Create(duplicate slug) error = %v, want ErrConflict", err)
 	}
+
+	// A caller-chosen id is kept; reusing it is a conflict even under a
+	// fresh slug.
+	wantID := uuid.NewString()
+	withID := &store.Tenant{ID: wantID, Slug: unique("tenant-id"), Name: "with id"}
+	if err := s.Tenants().Create(ctx, withID); err != nil {
+		t.Fatalf("Create(with id): %v", err)
+	}
+	if withID.ID != wantID {
+		t.Errorf("Create(with id) ID = %q, want %q", withID.ID, wantID)
+	}
+	if got, err := s.Tenants().GetBySlug(ctx, withID.Slug); err != nil || got.ID != wantID {
+		t.Errorf("GetBySlug after Create(with id) = %+v, %v; want ID %q", got, err, wantID)
+	}
+	dupID := &store.Tenant{ID: wantID, Slug: unique("tenant-dup-id"), Name: "dup id"}
+	if err := s.Tenants().Create(ctx, dupID); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("Create(duplicate id) error = %v, want ErrConflict", err)
+	}
 }
 
 func containsTenant(list []*store.Tenant, id string) bool {

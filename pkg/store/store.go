@@ -506,6 +506,9 @@ type ListOptions struct {
 
 // TenantStore manages Tenant rows.
 type TenantStore interface {
+	// Create inserts t and fills ID and CreatedAt. A non-empty t.ID (a
+	// canonical UUID) is used as the tenant id; empty means the store
+	// generates one. ErrConflict on a duplicate slug or id.
 	Create(ctx context.Context, t *Tenant) error
 	GetBySlug(ctx context.Context, slug string) (*Tenant, error)
 	List(ctx context.Context) ([]*Tenant, error)

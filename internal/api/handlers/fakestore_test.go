@@ -99,8 +99,14 @@ func (s *fakeTenantStore) Create(_ context.Context, t *store.Tenant) error {
 			return store.ErrConflict
 		}
 	}
-	s.seq++
-	t.ID = fmt.Sprintf("tenant-%d", s.seq)
+	if t.ID != "" {
+		if _, taken := s.byID[t.ID]; taken {
+			return store.ErrConflict
+		}
+	} else {
+		s.seq++
+		t.ID = fmt.Sprintf("tenant-%d", s.seq)
+	}
 	t.CreatedAt = time.Now().UTC()
 	cp := *t
 	s.byID[t.ID] = &cp

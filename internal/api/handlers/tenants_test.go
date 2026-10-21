@@ -109,3 +109,44 @@ func assertErrorType(t *testing.T, w *httptest.ResponseRecorder, wantType string
 		t.Error("error.message is empty")
 	}
 }
+
+func TestTenants_Create_WithID(t *testing.T) {
+	h := Tenants{Deps: newTestDeps()}
+	create := func(body string) (int, tenantView) {
+		req := withPrincipal(httptest.NewRequest(http.MethodPost, "/tenants", strings.NewReader(body)), "caller-tenant", "admin")
+		w := serve(http.MethodPost, "/tenants", h.Create, req)
+		var v tenantView
+		_ = json.Unmarshal(w.Body.Bytes(), &v)
+		return w.Code, v
+	}
+
+	const id = "0b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a21"
+	if code, v := create(`{"id":"` + id + `","slug":"ext","name":"External"}`); code != http.StatusCreated || v.ID != id {
+		t.Fatalf("with id = %d %+v, want 201 with id %s", code, v, id)
+	}
+	// Same id under another slug, and same slug under another id: 409.
+	if code, _ := create(`{"id":"` + id + `","slug":"other","name":"x"}`); code != http.StatusConflict {
+		t.Errorf("duplicate id = %d, want 409", code)
+	}
+	if code, _ := create(`{"id":"1b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a21","slug":"ext","name":"x"}`); code != http.StatusConflict {
+		t.Errorf("duplicate slug = %d, want 409", code)
+	}
+	// Absent id: generated, unchanged behavior.
+	if code, v := create(`{"slug":"gen","name":"Generated"}`); code != http.StatusCreated || v.ID == "" || v.ID == id {
+		t.Errorf("without id = %d %+v", code, v)
+	}
+	// Uppercase is accepted and stored lowercase.
+	if code, v := create(`{"id":"0B6F3F0E-5A5E-4D8E-9C35-0D4C3B1F7A22","slug":"upper","name":"x"}`); code != http.StatusCreated || v.ID != "0b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a22" {
+		t.Errorf("uppercase id = %d %+v, want 201 with lowercase id", code, v)
+	}
+	// Anything that is not a plain 8-4-4-4-12 UUID is rejected.
+	for _, bad := range []string{
+		"not-a-uuid", "00000000-0000-0000-0000-000000000000",
+		"{0b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a23}",
+		"urn:uuid:0b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a24", "0b6f3f0e5a5e4d8e9c350d4c3b1f7a25",
+	} {
+		if code, _ := create(`{"id":"` + bad + `","slug":"bad-` + bad[:4] + `","name":"x"}`); code != http.StatusBadRequest {
+			t.Errorf("id %q = %d, want 400", bad, code)
+		}
+	}
+}

@@ -143,6 +143,12 @@ func TestPermissions_FullStack(t *testing.T) {
 		t.Errorf("platform-admin POST /tenants = 403, want anything but 403 (permission should pass)")
 	}
 
+	// Choosing a tenant's id is part of POST /tenants, so it is
+	// platform.admin as well: a tenant admin sending one is refused.
+	if w := do(http.MethodPost, "/api/v1/tenants", "admin-a"); w.Code != http.StatusForbidden {
+		t.Errorf("tenant admin POST /tenants with id = %d, want 403", w.Code)
+	}
+
 	// Per-tenant API keys are platform.admin too: a tenant admin is
 	// refused on every one of them, even for its own tenant, and an agent
 	// likewise. A platform-admin passes the permission (nopStore has no

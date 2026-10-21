@@ -100,7 +100,7 @@ authentication.
 | DELETE | `/users/{id}` | `users.manage` | Soft-delete; revokes sessions. Same `409` guards. |
 | POST | `/users/{id}/reset-password` | `users.manage` | `200 {temporary_password}`; forces a change and revokes all the user's sessions. Admin API keys may call it. |
 | POST | `/users/{id}/revoke-sessions` | `users.manage` | Revoke all of the user's sessions; `204`. |
-| POST | `/tenants` | `platform.admin` | Create a tenant. |
+| POST | `/tenants` | `platform.admin` | Create a tenant: `{slug, name}`. Optional `id`: a UUID in the plain 8-4-4-4-12 form (stored lowercase; not the nil UUID) to use as the tenant id instead of a generated one, e.g. to match an external system's tenant id; `409` if the id or slug already exists. |
 | GET | `/tenants` | `platform.admin` | List every tenant (cross-tenant by nature). `?slug=<slug>` returns only the tenant with that exact slug (an empty list if none). |
 | POST | `/tenants/{tenant_id}/api-keys` | `platform.admin` | Create an API key in the named tenant (`404` if it does not exist). Same body and rules as `POST /api-keys` (`name`, `role`, `expires_at`, `limits`, `profile_id`, the last resolved in the target tenant); returns the plaintext once. The key's `created_by` is the calling key. A tenant admin gets `403`, even for its own tenant. |
 | GET | `/tenants/{tenant_id}/api-keys` | `platform.admin` | List the named tenant's API keys (no plaintext). |

@@ -19,10 +19,10 @@ func (s *tenantStore) Create(ctx context.Context, t *store.Tenant) error {
 	}
 
 	const q = `
-		INSERT INTO tenants (slug, name, settings)
-		VALUES ($1, $2, $3)
+		INSERT INTO tenants (id, slug, name, settings)
+		VALUES (COALESCE(NULLIF($1::text, '')::uuid, gen_random_uuid()), $2, $3, $4)
 		RETURNING id, created_at`
-	err = s.db.QueryRowContext(ctx, q, t.Slug, t.Name, settings).Scan(&t.ID, &t.CreatedAt)
+	err = s.db.QueryRowContext(ctx, q, t.ID, t.Slug, t.Name, settings).Scan(&t.ID, &t.CreatedAt)
 	return mapWriteErr(err)
 }
 

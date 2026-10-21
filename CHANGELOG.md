@@ -324,6 +324,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `POST /api-keys` against the target tenant, and log the acting key and
   the target tenant. `GET /api/v1/tenants?slug=<slug>` finds a tenant by its
   slug. Behavior of the existing `/api-keys` routes is unchanged.
+- **`POST /api/v1/tenants` accepts an optional `id`.** A platform admin can
+  create a tenant with a chosen UUID, so records that carry the tenant id
+  (`llm_calls`, access logs, ClickHouse rows) match an external tenant id
+  without a mapping table. `409` on an existing id; without `id` a UUID is
+  generated as before. `store.TenantStore.Create` now uses a non-empty
+  `Tenant.ID` as the id.
 - **`pkg/pricing` seam: `Pricer` and `NewCardFromRates`.** `pricing.Pricer`
   is the one method the LLM plane calls on its rate card
   (`Cost(provider, model, Usage)`); `*pricing.Card` implements it and the

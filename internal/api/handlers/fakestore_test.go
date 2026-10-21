@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"sort"
 	"sync"
 	"time"
@@ -104,8 +105,7 @@ func (s *fakeTenantStore) Create(_ context.Context, t *store.Tenant) error {
 			return store.ErrConflict
 		}
 	} else {
-		s.seq++
-		t.ID = fmt.Sprintf("tenant-%d", s.seq)
+		t.ID = uuid.NewString()
 	}
 	t.CreatedAt = time.Now().UTC()
 	cp := *t

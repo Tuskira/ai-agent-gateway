@@ -80,6 +80,11 @@ func TestPlatformAdminMintsKeyInNamedTenant(t *testing.T) {
 		t.Fatalf("GET /tenants?slug = %d %s (%v)", code, body, err)
 	}
 
+	// An empty slug filter is an error, not "every tenant".
+	if code, _ := call(platformKey, http.MethodGet, "/tenants?slug=", ""); code != http.StatusBadRequest {
+		t.Errorf("GET /tenants?slug= = %d, want 400", code)
+	}
+
 	// Mint.
 	path := "/tenants/" + target.ID + "/api-keys"
 	code, body = call(platformKey, http.MethodPost, path, `{"name":"provisioned","role":"agent","limits":{"rpm":10}}`)
@@ -128,6 +133,18 @@ func TestPlatformAdminMintsKeyInNamedTenant(t *testing.T) {
 	// Unknown tenant.
 	if code, _ := call(platformKey, http.MethodPost, "/tenants/"+uuid.NewString()+"/api-keys", `{"name":"x","role":"agent"}`); code != http.StatusNotFound {
 		t.Errorf("unknown tenant = %d, want 404", code)
+	}
+
+	// Change the key's limits through the platform route; a request naming
+	// the caller's own tenant cannot reach it.
+	if code, body := call(platformKey, http.MethodPatch, path+"/"+minted.ID, `{"limits":{"rpm":99}}`); code != http.StatusOK || !strings.Contains(string(body), `"rpm":99`) {
+		t.Errorf("PATCH = %d %s", code, body)
+	}
+	if code, _ := call(platformKey, http.MethodPatch, "/tenants/"+home.ID+"/api-keys/"+minted.ID, `{"limits":{"rpm":1}}`); code != http.StatusNotFound {
+		t.Errorf("PATCH via the wrong tenant = %d, want 404", code)
+	}
+	if code, _ := call(homeAdminKey, http.MethodPatch, path+"/"+minted.ID, `{"limits":{"rpm":1}}`); code != http.StatusForbidden {
+		t.Errorf("tenant admin PATCH = %d, want 403", code)
 	}
 
 	// Rotate, then revoke; the old and revoked keys stop authenticating.

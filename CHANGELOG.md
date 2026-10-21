@@ -321,11 +321,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with database credentials. The routes need `platform.admin` (a tenant
   admin gets `403`, even for its own tenant), return `404` for an unknown
   tenant, apply the same role, `limits`, `expires_at` and `profile_id` rules
-  as `POST /api-keys` against the target tenant, and log the acting key and
-  the target tenant. `GET /api/v1/tenants?slug=<slug>` finds a tenant by its
-  slug. Behavior of the existing `/api-keys` routes is unchanged.
+  as `POST /api-keys` against the target tenant. Every platform route
+  (these, `POST/GET /tenants`) now writes a `platform request` line before
+  it runs and a `platform result` line after, including refused (403) and
+  not-found attempts; see `docs/security-model.md`.
+  `GET /api/v1/tenants?slug=<slug>` finds a tenant by its slug (an empty
+  `slug=` is `400`). Behavior of the existing `/api-keys` routes is unchanged.
 - **`POST /api/v1/tenants` accepts an optional `id`.** A platform admin can
-  create a tenant with a chosen UUID, so records that carry the tenant id
+  create a tenant with a chosen lowercase UUID, so records that carry the tenant id
   (`llm_calls`, access logs, ClickHouse rows) match an external tenant id
   without a mapping table. `409` on an existing id; without `id` a UUID is
   generated as before. `store.TenantStore.Create` now uses a non-empty

@@ -1,11 +1,10 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -121,6 +120,7 @@ func TestAPIKeys_PlatformRoutes_UnknownTenant404(t *testing.T) {
 	}{
 		{"create", h.PlatformCreate, http.MethodPost, platKeys, "/tenants/nope/api-keys", `{"name":"x","role":"agent"}`},
 		{"list", h.PlatformList, http.MethodGet, platKeys, "/tenants/nope/api-keys", ""},
+		{"update", h.PlatformUpdate, http.MethodPatch, platKeyByID, "/tenants/nope/api-keys/k1", `{"limits":{"rpm":1}}`},
 		{"revoke", h.PlatformRevoke, http.MethodDelete, platKeyByID, "/tenants/nope/api-keys/k1", ""},
 		{"rotate", h.PlatformRotate, http.MethodPost, platRotate, "/tenants/nope/api-keys/k1/rotate", ""},
 	} {
@@ -179,34 +179,6 @@ func TestAPIKeys_PlatformRevokeRotate_ScopedToNamedTenant(t *testing.T) {
 	}
 }
 
-// Every successful platform action is logged with the acting principal
-// and the target tenant.
-func TestAPIKeys_PlatformCreate_AuditLog(t *testing.T) {
-	var buf bytes.Buffer
-	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(old) })
-
-	d := keyDeps()
-	h := APIKeys{Deps: d}
-	target := seedTenant(t, d, "target")
-	w := keyCall(h.PlatformCreate, http.MethodPost, platKeys, "/tenants/"+target+"/api-keys", `{"name":"k","role":"agent"}`, "home", pkgauth.RolesForKey(pkgauth.RolePlatformAdmin)...)
-	var v apiKeyCreateView
-	_ = json.Unmarshal(w.Body.Bytes(), &v)
-
-	var rec map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
-		t.Fatalf("no audit line: %v (%q)", err, buf.String())
-	}
-	if rec["action"] != "create" || rec["actor"] != "test-principal" || rec["actor_tenant_id"] != "home" ||
-		rec["target_tenant_id"] != target || rec["key_id"] != v.ID {
-		t.Errorf("audit = %v", rec)
-	}
-	if strings.Contains(buf.String(), v.Key) {
-		t.Error("audit line contains the plaintext key")
-	}
-}
-
 func TestTenants_List_SlugFilter(t *testing.T) {
 	d := newTestDeps()
 	h := Tenants{Deps: d}
@@ -230,5 +202,91 @@ func TestTenants_List_SlugFilter(t *testing.T) {
 	}
 	if _, items := list(""); len(items) != 2 {
 		t.Errorf("no filter = %d items, want 2", len(items))
+	}
+}
+
+// PATCH changes limits and the profile binding of a key in the named
+// tenant only, with the same validation as the own-tenant route.
+func TestAPIKeys_PlatformUpdate(t *testing.T) {
+	d := keyDeps()
+	h := APIKeys{Deps: d}
+	a := seedTenant(t, d, "a")
+	b := seedTenant(t, d, "b")
+	roles := pkgauth.RolesForKey(pkgauth.RolePlatformAdmin)
+	profA := seedProfile(t, d, a, "pa")
+	profB := seedProfile(t, d, b, "pb")
+
+	w := keyCall(h.PlatformCreate, http.MethodPost, platKeys, "/tenants/"+a+"/api-keys", `{"name":"k","role":"agent","limits":{"rpm":5}}`, "home", roles...)
+	var k apiKeyCreateView
+	_ = json.Unmarshal(w.Body.Bytes(), &k)
+	patch := func(tenant, body string) *httptest.ResponseRecorder {
+		return keyCall(h.PlatformUpdate, http.MethodPatch, platKeyByID, "/tenants/"+tenant+"/api-keys/"+k.ID, body, "home", roles...)
+	}
+
+	if w := patch(a, `{"limits":{"rpm":60,"daily_usd":2}}`); w.Code != http.StatusOK {
+		t.Fatalf("set limits = %d: %s", w.Code, w.Body.String())
+	}
+	if got, _ := d.Store.APIKeys().GetByID(context.Background(), a, k.ID); got.Limits == nil || *got.Limits.RPM != 60 {
+		t.Errorf("limits = %+v, want rpm 60", got.Limits)
+	}
+	if w := patch(a, `{"profile_id":"`+profA+`"}`); w.Code != http.StatusOK {
+		t.Errorf("bind own-tenant profile = %d: %s", w.Code, w.Body.String())
+	}
+	if w := patch(a, `{"profile_id":"`+profB+`"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("bind other tenant's profile = %d, want 400", w.Code)
+	}
+	if w := patch(a, `{"limits":{}}`); w.Code != http.StatusBadRequest {
+		t.Errorf("empty limits = %d, want 400", w.Code)
+	}
+	if w := patch(a, `{}`); w.Code != http.StatusBadRequest {
+		t.Errorf("empty body = %d, want 400", w.Code)
+	}
+	if w := patch(a, `{"limits":null,"profile_id":null}`); w.Code != http.StatusOK {
+		t.Errorf("clear = %d: %s", w.Code, w.Body.String())
+	}
+	if got, _ := d.Store.APIKeys().GetByID(context.Background(), a, k.ID); got.Limits != nil || got.ProfileID != nil {
+		t.Errorf("not cleared: %+v", got)
+	}
+	// Naming the wrong tenant, or none that exists, leaves the key alone.
+	if w := patch(b, `{"limits":{"rpm":1}}`); w.Code != http.StatusNotFound {
+		t.Errorf("wrong tenant = %d, want 404", w.Code)
+	}
+	if w := patch("nope", `{"limits":{"rpm":1}}`); w.Code != http.StatusNotFound {
+		t.Errorf("unknown tenant = %d, want 404", w.Code)
+	}
+	if got, _ := d.Store.APIKeys().GetByID(context.Background(), a, k.ID); got.Limits != nil {
+		t.Errorf("limits changed through the wrong tenant: %+v", got.Limits)
+	}
+}
+
+// A rotate records the revoked key in the audit trail as soon as the old
+// key is gone, so the result line shows a half-finished rotate.
+func TestAPIKeys_Rotate_NotesRevokedOldKey(t *testing.T) {
+	d := keyDeps()
+	h := APIKeys{Deps: d}
+	a := seedTenant(t, d, "a")
+	roles := pkgauth.RolesForKey(pkgauth.RolePlatformAdmin)
+	w := keyCall(h.PlatformCreate, http.MethodPost, platKeys, "/tenants/"+a+"/api-keys", `{"name":"k","role":"agent"}`, "home", roles...)
+	var k apiKeyCreateView
+	_ = json.Unmarshal(w.Body.Bytes(), &k)
+
+	ctx, trail := WithAuditTrail(context.Background())
+	req := withPrincipal(httptest.NewRequest(http.MethodPost, "/tenants/"+a+"/api-keys/"+k.ID+"/rotate", nil).WithContext(ctx), "home", roles...)
+	if w := serve(http.MethodPost, platRotate, h.PlatformRotate, req); w.Code != http.StatusOK {
+		t.Fatalf("rotate = %d: %s", w.Code, w.Body.String())
+	}
+	got := trail.Fields()
+	want := map[string]any{"old_key_id": k.ID, "old_key_revoked": true}
+	seen := map[string]any{}
+	for i := 0; i+1 < len(got); i += 2 {
+		seen[got[i].(string)] = got[i+1]
+	}
+	for key, v := range want {
+		if seen[key] != v {
+			t.Errorf("trail %s = %v, want %v (trail %v)", key, seen[key], v, got)
+		}
+	}
+	if seen["new_key_id"] == nil {
+		t.Errorf("trail missing new_key_id: %v", got)
 	}
 }

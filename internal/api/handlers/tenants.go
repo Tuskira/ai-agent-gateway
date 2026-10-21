@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -71,8 +70,8 @@ func (h Tenants) Create(w http.ResponseWriter, r *http.Request) {
 	id := ""
 	if req.ID != "" {
 		u, err := uuid.Parse(req.ID)
-		if err != nil || u == uuid.Nil || u.String() != strings.ToLower(req.ID) {
-			httpx.ValidationError(w, "id must be a UUID in the canonical 8-4-4-4-12 form and not the nil UUID")
+		if err != nil || u == uuid.Nil || u.String() != req.ID {
+			httpx.ValidationError(w, "id must be a lowercase UUID in the canonical 8-4-4-4-12 form and not the nil UUID")
 			return
 		}
 		id = u.String()
@@ -84,6 +83,7 @@ func (h Tenants) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	AuditNote(r.Context(), "created_tenant_id", t.ID, "created_tenant_slug", t.Slug, "id_supplied", id != "")
 	httpx.WriteJSON(w, http.StatusCreated, newTenantView(t))
 }
 
@@ -95,7 +95,12 @@ func (h Tenants) Create(w http.ResponseWriter, r *http.Request) {
 func (h Tenants) List(w http.ResponseWriter, r *http.Request) {
 	var tenants []*store.Tenant
 	var err error
-	if slug := r.URL.Query().Get("slug"); slug != "" {
+	q := r.URL.Query()
+	if q.Has("slug") && q.Get("slug") == "" {
+		httpx.ValidationError(w, "slug must not be empty")
+		return
+	}
+	if slug := q.Get("slug"); slug != "" {
 		var t *store.Tenant
 		if t, err = h.Store.Tenants().GetBySlug(r.Context(), slug); err == nil {
 			tenants = []*store.Tenant{t}

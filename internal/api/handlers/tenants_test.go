@@ -135,14 +135,10 @@ func TestTenants_Create_WithID(t *testing.T) {
 	if code, v := create(`{"slug":"gen","name":"Generated"}`); code != http.StatusCreated || v.ID == "" || v.ID == id {
 		t.Errorf("without id = %d %+v", code, v)
 	}
-	// Uppercase is accepted and stored lowercase.
-	if code, v := create(`{"id":"0B6F3F0E-5A5E-4D8E-9C35-0D4C3B1F7A22","slug":"upper","name":"x"}`); code != http.StatusCreated || v.ID != "0b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a22" {
-		t.Errorf("uppercase id = %d %+v, want 201 with lowercase id", code, v)
-	}
-	// Anything that is not a plain 8-4-4-4-12 UUID is rejected.
+	// Only a lowercase canonical 8-4-4-4-12 UUID is accepted.
 	for _, bad := range []string{
 		"not-a-uuid", "00000000-0000-0000-0000-000000000000",
-		"{0b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a23}",
+		"0B6F3F0E-5A5E-4D8E-9C35-0D4C3B1F7A22", "{0b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a23}",
 		"urn:uuid:0b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a24", "0b6f3f0e5a5e4d8e9c350d4c3b1f7a25",
 	} {
 		if code, _ := create(`{"id":"` + bad + `","slug":"bad-` + bad[:4] + `","name":"x"}`); code != http.StatusBadRequest {

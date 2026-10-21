@@ -92,16 +92,55 @@ with `role: "platform-admin"` — or any custom role with a `platform.*`
 pattern — requires the caller to hold `platform.admin` itself, so a tenant
 admin cannot mint a platform key.
 
+**Platform admin bootstrap.** `gateway bootstrap-key` is the only way to
+create the first `platform-admin` key; it needs the database credentials and
+applies pending migrations on every run. The first key ever created in the
+database (no API key exists in any tenant, revoked or not) is
+`admin` + `platform-admin` automatically, whatever its tenant:
+
+```sh
+gateway bootstrap-key -tenant platform -name provisioning
+```
+
+prints that key's plaintext once on stdout and creates the tenant `platform`
+if it is missing. On a database that already has any key the same command
+yields a tenant admin only; add `-platform` (a `bool` flag, so `-platform`
+and `--platform` both work) to get `platform-admin`. A tenant that already has
+a non-revoked admin key also needs `-force`. To be safe in a provisioning
+script, always pass `-platform`: it is a no-op on a fresh database and
+required on any other. The key may live in any tenant; the routes below take
+the target tenant from the URL.
+
 **Keys for another tenant.** `/api-keys` always acts on the caller's own
-tenant. A `platform-admin` key can also create, list, revoke and rotate API
-keys in any named tenant through `/tenants/{tenant_id}/api-keys`
-(`platform.admin`; see `api.md`), so an operator tool can provision a key
-per tenant without database access. A tenant admin or console user cannot
-use these routes, not even for its own tenant. The key is created with the
-same rules as one made by that tenant's admin, its `created_by` is the
-calling key, and each action is logged with the acting key and the target
-tenant. Like every platform-admin action this is full control of the target
-tenant's keys, so keep platform-admin keys few and rotate them.
+tenant. A `platform-admin` key can also create, list, update (limits and
+profile binding), revoke and rotate API keys in any named tenant through
+`/tenants/{tenant_id}/api-keys` (`platform.admin`; see `api.md`), so an
+operator tool can provision keys per tenant without database access. A
+tenant admin, agent, viewer, custom role without `platform.admin` and any
+console user cannot use these routes, not even for their own tenant. The key
+is created with the same rules as one made by that tenant's admin, and its
+`created_by` is the calling key. Like every platform-admin action this is
+full control of the target tenant's keys, so keep platform-admin keys few and
+rotate them.
+
+*What is logged.* Every `platform.admin` route (`POST/GET /tenants` and all
+the per-tenant key routes) writes two INFO lines on the gateway's logger.
+`platform request` is written before the handler runs, and `platform result`
+after it, so an action that dies half way (a rotate that revoked the old key
+and failed to issue the new one) still leaves both lines. They are written
+outside the permission check, so refused (403) and unknown-tenant (404)
+attempts are logged as well. Fields: `method`, `route` (the pattern),
+`tenant_id` and `key_id` (the URL parameters when the route has them),
+`actor` (the calling key's id), `actor_auth_method`, `actor_tenant_id`,
+`client_ip` (as the rate limiter resolves it, so trusted-proxy settings
+apply) and `request_id` (the request's `X-Request-Id` header if the client or
+a proxy sent one; the gateway does not generate one). The result line adds
+`status`, `outcome` (`ok`, `denied`, `not_found`, `invalid`, `error`) and
+what the handler recorded: `new_key_id` for create and rotate,
+`old_key_id` and `old_key_revoked` for a rotate once the old key is gone,
+and `created_tenant_id`, `created_tenant_slug` and `id_supplied` for a tenant
+create. Plaintext keys, hashes and request bodies are never logged. This is
+log output only; there is no audit table for it.
 
 **`platform.catalog.manage`.** The other permission in the `platform.`
 namespace, gating every [model catalog](llm-plane.md#model-registry) write

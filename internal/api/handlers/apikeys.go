@@ -289,6 +289,12 @@ func (h APIKeys) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.update(w, r, tid)
+}
+
+// update is Update's body, shared with the platform-admin variant that
+// targets a named tenant (apikeys_platform.go).
+func (h APIKeys) update(w http.ResponseWriter, r *http.Request, tid string) {
 	id := chi.URLParam(r, "id")
 
 	var req updateAPIKeyRequest
@@ -416,6 +422,8 @@ func (h APIKeys) rotate(w http.ResponseWriter, r *http.Request, tid string) stri
 	if h.KeyInvalidator != nil {
 		h.KeyInvalidator.InvalidateKey(existing.KeyHash)
 	}
+	// From here the old key is gone even if issuing the new one fails.
+	AuditNote(r.Context(), "old_key_id", id, "old_key_revoked", true)
 
 	plaintext, hash, prefix, err := apikey.Generate()
 	if err != nil {

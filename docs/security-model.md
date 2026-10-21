@@ -92,6 +92,17 @@ with `role: "platform-admin"` — or any custom role with a `platform.*`
 pattern — requires the caller to hold `platform.admin` itself, so a tenant
 admin cannot mint a platform key.
 
+**Keys for another tenant.** `/api-keys` always acts on the caller's own
+tenant. A `platform-admin` key can also create, list, revoke and rotate API
+keys in any named tenant through `/tenants/{tenant_id}/api-keys`
+(`platform.admin`; see `api.md`), so an operator tool can provision a key
+per tenant without database access. A tenant admin or console user cannot
+use these routes, not even for its own tenant. The key is created with the
+same rules as one made by that tenant's admin, its `created_by` is the
+calling key, and each action is logged with the acting key and the target
+tenant. Like every platform-admin action this is full control of the target
+tenant's keys, so keep platform-admin keys few and rotate them.
+
 **`platform.catalog.manage`.** The other permission in the `platform.`
 namespace, gating every [model catalog](llm-plane.md#model-registry) write
 route (`api.md`'s `/model-catalog/*` rows) — the platform-wide list of

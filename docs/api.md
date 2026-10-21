@@ -101,7 +101,11 @@ authentication.
 | POST | `/users/{id}/reset-password` | `users.manage` | `200 {temporary_password}`; forces a change and revokes all the user's sessions. Admin API keys may call it. |
 | POST | `/users/{id}/revoke-sessions` | `users.manage` | Revoke all of the user's sessions; `204`. |
 | POST | `/tenants` | `platform.admin` | Create a tenant. |
-| GET | `/tenants` | `platform.admin` | List every tenant (cross-tenant by nature). |
+| GET | `/tenants` | `platform.admin` | List every tenant (cross-tenant by nature). `?slug=<slug>` returns only the tenant with that exact slug (an empty list if none). |
+| POST | `/tenants/{tenant_id}/api-keys` | `platform.admin` | Create an API key in the named tenant (`404` if it does not exist). Same body and rules as `POST /api-keys` (`name`, `role`, `expires_at`, `limits`, `profile_id`, the last resolved in the target tenant); returns the plaintext once. The key's `created_by` is the calling key. A tenant admin gets `403`, even for its own tenant. |
+| GET | `/tenants/{tenant_id}/api-keys` | `platform.admin` | List the named tenant's API keys (no plaintext). |
+| DELETE | `/tenants/{tenant_id}/api-keys/{id}` | `platform.admin` | Revoke a key of the named tenant (`404` if the key belongs to another tenant). |
+| POST | `/tenants/{tenant_id}/api-keys/{id}/rotate` | `platform.admin` | Revoke and reissue a key of the named tenant; returns the new plaintext once. |
 | POST | `/api-keys` | `admin.manage` | Create an API key; returns the plaintext once. Optional `expires_at`: an RFC 3339 timestamp, or a `YYYY-MM-DD` date meaning the end of that day (UTC); must be in the future. Optional `limits` (see [API key limits](#api-key-limits)). Optional `profile_id`: bind the key to an agent profile of the tenant (see [profiles.md](profiles.md#binding-a-key-to-a-profile)). `role: "platform-admin"` needs the caller to hold `platform.admin`. |
 | GET | `/api-keys` | `admin.manage` | List the tenant's API keys (no plaintext; includes `limits`, and `profile_id`/`profile_name` for a bound key). |
 | PATCH | `/api-keys/{id}` | `admin.manage` | Set (`{"limits":{...}}`, replaces wholesale) or clear (`{"limits":null}`) a key's LLM limits; set (`{"profile_id":"<id>"}`) or clear (`{"profile_id":null}`) its profile binding. At least one of the two fields is required (`400` otherwise). |

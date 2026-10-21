@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/httpx"
@@ -70,8 +71,23 @@ func (h Tenants) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // List handles GET /api/v1/tenants.
+//
+// ?slug=<slug> narrows the list to the tenant with that exact slug (an
+// empty list when there is none), so an operator who knows only the slug
+// can find the id the tenant-scoped routes need.
 func (h Tenants) List(w http.ResponseWriter, r *http.Request) {
-	tenants, err := h.Store.Tenants().List(r.Context())
+	var tenants []*store.Tenant
+	var err error
+	if slug := r.URL.Query().Get("slug"); slug != "" {
+		var t *store.Tenant
+		if t, err = h.Store.Tenants().GetBySlug(r.Context(), slug); err == nil {
+			tenants = []*store.Tenant{t}
+		} else if errors.Is(err, store.ErrNotFound) {
+			err = nil
+		}
+	} else {
+		tenants, err = h.Store.Tenants().List(r.Context())
+	}
 	if err != nil {
 		writeStoreErr(w, r, "list tenants", err)
 		return

@@ -142,6 +142,27 @@ func TestPermissions_FullStack(t *testing.T) {
 	if w := do(http.MethodPost, "/api/v1/tenants", "platform-a"); w.Code == http.StatusForbidden {
 		t.Errorf("platform-admin POST /tenants = 403, want anything but 403 (permission should pass)")
 	}
+
+	// Per-tenant API keys are platform.admin too: a tenant admin is
+	// refused on every one of them, even for its own tenant, and an agent
+	// likewise. A platform-admin passes the permission (nopStore has no
+	// tenants, so it reaches the handler's 404 rather than a 403).
+	keyRoutes := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/tenants/tenant-a/api-keys"},
+		{http.MethodGet, "/api/v1/tenants/tenant-a/api-keys"},
+		{http.MethodDelete, "/api/v1/tenants/tenant-a/api-keys/k1"},
+		{http.MethodPost, "/api/v1/tenants/tenant-a/api-keys/k1/rotate"},
+	}
+	for _, rt := range keyRoutes {
+		for _, who := range []string{"admin-a", "agent-a"} {
+			if w := do(rt.method, rt.path, who); w.Code != http.StatusForbidden {
+				t.Errorf("%s %s %s = %d, want 403", who, rt.method, rt.path, w.Code)
+			}
+		}
+		if w := do(rt.method, rt.path, "platform-a"); w.Code != http.StatusNotFound {
+			t.Errorf("platform-admin %s %s = %d, want 404 (unknown tenant)", rt.method, rt.path, w.Code)
+		}
+	}
 }
 
 // TestPermissions_PlatformAdmin_BareStarRoleDenied is the full-stack

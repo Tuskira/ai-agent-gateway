@@ -201,7 +201,7 @@ func (p *bedrockProvider) buildPassthrough(ctx context.Context, r *http.Request,
 	}
 	// Keep the client's signed headers (Authorization, X-Amz-*, Content-Type); drop
 	// only hop-by-hop + gateway/session/cred headers (skipForward). No re-signing.
-	copyHeaders(up.Header, r.Header)
+	copyRequestHeaders(up.Header, r)
 	up.Host = host
 	return up, nil
 }

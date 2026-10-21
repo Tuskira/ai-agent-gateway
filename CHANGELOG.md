@@ -237,6 +237,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The LLM plane strips the credential the caller authenticated with, not only
+  `Authorization: Bearer gk_...`. A token accepted by another authenticator
+  (an OIDC JWT, say) used to be forwarded to Anthropic, OpenAI and Gemini
+  passthrough targets; any header value equal to the authenticated
+  `Principal.RawCredential` (bare, or behind an auth scheme) is now removed,
+  while a provider key sent beside it, `X-Gateway-Key` handling and Bedrock
+  signed requests are unchanged.
 - `deploy/docker-compose.yml` no longer writes prompts, completions and tool
   arguments to container logs: bodies are still stored for the console, but
   the stdout sink runs without them. The gateway logs a startup warning when
@@ -301,6 +308,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pkg/pricing` seam: `Pricer` and `NewCardFromRates`.** `pricing.Pricer`
+  is the one method the LLM plane calls on its rate card
+  (`Cost(provider, model, Usage)`); `*pricing.Card` implements it and the
+  plane now holds a `Pricer`, so a program that embeds the gateway can
+  price calls from its own source. `pricing.NewCardFromRates` builds a
+  `Card` from a `map[string]pricing.Rate` (the per-model rate type, now
+  exported, with prices.json's JSON keys) without reading a file; the
+  cost formula, snapshot fallbacks and Bedrock regional rules are the
+  same as the embedded card's. `NewCard`, `Default`, `MergeFile` and
+  `llm_proxy.pricing_file` are unchanged.
+- **`pkg/gateway.Run(ctx, Options)`: start the gateway from another Go
+  module.** The serving path that was `run()` in `cmd/gateway/main.go`
+  moved to `pkg/gateway`; the binary now parses `--config` and calls
+  `gateway.Run`, and its subcommands are unchanged. A module outside this
+  one cannot import `internal/`, so this is how it embeds the gateway with
+  its own pieces: `Options` adds `Authenticators` (after the API-key
+  authenticator, before the session cookie and dev mode) and `LogSinks`,
+  and replaces the `BatchSink` capture store, the `LLMCalls` and
+  `Analytics` readers, the `Pricer` and the limiter's `KeyLookup` (new
+  `pkg/store.APIKeyLookup`). Every field is optional and `Options{}`
+  behaves exactly like the binary; Run never closes what it is given.
+  With a supplied `Pricer` the Overview's `pricingSource` is the new
+  `analytics.PricingSourceCustom` (`"custom"`). See docs/architecture.md,
+  "Embedding the gateway".
 - **Prometheus metrics.** The gateway exports its own operational metrics
   in the Prometheus text format, off by default.
   - **Config:** a new `metrics` section (`driver`, `address`, `path`,

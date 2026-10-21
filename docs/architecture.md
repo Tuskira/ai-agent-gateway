@@ -18,8 +18,8 @@ and if a plane is disabled its listener is simply never started — with
 all three off it opens no listener: it stays up running only its
 background API-key revocation listener (API keys on, the default), or
 otherwise logs `"no planes enabled; nothing to serve"` and exits 0. Each
-plane's `Deps` struct is separately constructed in
-`cmd/gateway/main.go`'s `run()`, so planes have no compile-time dependency
+plane's `Deps` struct is separately constructed in `pkg/gateway.Run`
+(which `cmd/gateway` calls), so planes have no compile-time dependency
 on each other; they share only the collaborators listed below.
 
 ```
@@ -46,8 +46,8 @@ API-only, LLM-only) behind three different services — toggling only
 see [configuration.md](configuration.md)'s single-plane examples for the
 bare env-var form, or [`deploy/README.md`](https://github.com/Tuskira/ai-agent-gateway/blob/main/deploy/README.md) for the
 `deploy/k8s` shape of the same idea (one image, three Deployments —
-`gateway-mcp`/`gateway-api`/`gateway-llm`). This works because `main.go`'s
-`run()` builds the MCP **data plane** whenever `mcp.enabled`
+`gateway-mcp`/`gateway-api`/`gateway-llm`). This works because
+`pkg/gateway.Run` builds the MCP **data plane** whenever `mcp.enabled`
 OR `api.enabled` is true — the API plane's health/discover/cache routes
 for connectors (MCP servers registered with the gateway; the console's
 **MCPs** page) come from it (`pkg/ops.ConnectorOps`/`CacheOps`) — but only opens
@@ -112,6 +112,8 @@ implementations:
 | Body offload | `pkg/sink.BodyStore` | `pkg/sink/bodystore/{fs,s3}` | LLM capture (`llm_proxy.capture.body_store`), LLM-log detail |
 | LLM translation | `pkg/llm.Dialect` / `Provider` / `Reader` (registry) | `pkg/llm/anthropic`, `pkg/llm/openaicompat`; Readers also in `pkg/llm/gemini`, `pkg/llm/bedrock` | model-registry targets in another wire format; the detection tee's canonical conversation |
 | Ingest | `pkg/sink.IngestSink` | `pkg/sink/clickhouse.Sink` | `POST /api/v1/ingest` |
+| LLM pricing | `pkg/pricing.Pricer` | `pkg/pricing.Card` (embedded `prices.json`, `NewCardFromRates`) | the cost on every captured LLM call |
+| Per-key limits lookup | `pkg/store.APIKeyLookup` | the store's `APIKeys()` | the LLM plane's per-key limiter |
 
 The LLM plane's detection tee (`llm_proxy.detection`) is not a
 `pkg/sink.LogSink`: a sink only sees the `LLMCall` record, whose bodies are
@@ -126,9 +128,9 @@ calls (this replaces a list of utility path suffixes) and reads their
 bodies through that Reader into a canonical conversation.
 
 A plugin implements one of these interfaces, registers it (a driver name
-for `pkg/store.Register` or `pkg/session.Register`, or is wired directly
-into the relevant `Deps` struct in a fork of `main.go`), and the rest of
-the gateway is unaware it's not the built-in one. For example, adding a
+for `pkg/store.Register` or `pkg/session.Register`, or is passed to
+`pkg/gateway.Run` through `Options`, below), and the rest of the gateway
+is unaware it's not the built-in one. For example, adding a
 SQLite store backend means implementing `pkg/store.Store` and passing
 `pkg/store/storetest`'s conformance suite — no change to any plane.
 Likewise a session backend implements `pkg/session.Store` (and
@@ -145,7 +147,7 @@ generation format the LLM plane relays: `anthropic` (Messages) and
 `anthropic_complete` (legacy Text Completions) in `pkg/llm/anthropic`;
 `openai_chat`, `openai_responses` and `openai_completions` in
 `pkg/llm/openaicompat`; `gemini` in `pkg/llm/gemini`; `bedrock_converse`
-and `bedrock_invoke` in `pkg/llm/bedrock`. `cmd/gateway` blank-imports all
+and `bedrock_invoke` in `pkg/llm/bedrock`. `pkg/gateway` blank-imports all
 four packages. Readers are strict where two parsers could disagree (a
 repeated key, two keys differing only by case, an unknown role), so what
 is read is what the vendor executes. The detection tee uses them to hand
@@ -177,6 +179,33 @@ only when there are none here (see
 [Upstream streams and subscriptions](#upstream-streams-and-subscriptions)).
 A `Notifier` never delivers a publish to its own subscriber, so each
 stream receives a message exactly once.
+
+## Embedding the gateway: `pkg/gateway.Run`
+
+`cmd/gateway` is a thin caller: it parses `--config` (or `CONFIG_PATH`)
+and calls `gateway.Run(ctx, gateway.Options{ConfigPath, Version})`. A
+separate Go module starts the same gateway the same way, with its own
+implementations of the seams above plugged in. Every `Options` field is
+optional; `Options{}` is exactly what the binary runs. Run does not close
+anything passed in `Options` (the caller closes it after Run returns).
+
+| Field | Type | Effect |
+|---|---|---|
+| `ConfigPath` | `string` | YAML config file; empty loads the defaults. `GATEWAY_*` env vars apply on top either way. |
+| `Version` | `string` | Reported on `/health` and in metrics; empty is `"dev"`. |
+| `Authenticators` | `[]pkg/auth.Authenticator` | **Added** to every plane's chain right after the API-key authenticator, before the console session cookie (API plane) and dev mode. A `gk_` key is still decided by the API-key authenticator. |
+| `LogSinks` | `[]pkg/sink.LogSink` | **Added** to the configured sinks (access logs and LLM calls). |
+| `BatchSink` | `pkg/sink.BatchSink` | **Replaces** the LLM capture store (`llm_proxy.capture.store`). If it is also a `sink.SpendReader`, USD budgets read spend from it. |
+| `LLMCalls` | `pkg/analytics.LLMCallReader` | **Replaces** the Postgres reader behind LLM Logs (used only when there is no analytics reader). |
+| `Analytics` | `pkg/analytics.Reader` | **Replaces** the reader behind `/api/v1/analytics/*`, LLM Logs included. |
+| `Pricer` | `pkg/pricing.Pricer` | **Replaces** the rate card; `llm_proxy.pricing_file` is then not read and the Overview reports `pricingSource: "custom"`. |
+| `KeyLookup` | `pkg/store.APIKeyLookup` | **Replaces** where the per-key limiter reads each key's limits. |
+
+Run blocks until `ctx` is canceled, the process gets SIGINT/SIGTERM, or a
+plane fails, then stops every plane. Like the binary it needs the
+database and master key, and sets the process-wide `slog` default logger.
+No package under `internal/` or the other `pkg/` packages may import
+`pkg/gateway` (a test enforces it).
 
 ## Request flow: an MCP tool call
 
@@ -680,8 +709,10 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
    even when the body exceeds the capture cap. The same relayed bytes feed
    skill/MCP-tool discovery (`internal/discovery`, see
    [observability.md](observability.md#discovered-skills-and-mcp-servers)).
-10. `pkg/pricing.Card.Cost` prices the call from the rate card (`NULL` for
-    a free utility endpoint or unreadable usage), frozen at write time.
+10. The plane's `pkg/pricing.Pricer` (the built-in `pricing.Card`) prices
+    the call from the rate card (`NULL` for a free utility endpoint,
+    unreadable usage or a model the card has no rate for), frozen at write
+    time.
 11. The record is written synchronously to Postgres `llm_calls` (text
     sanitized for invalid UTF-8/NUL; idempotent, `request_id` PK) before
     the request is considered captured — see [llm-plane.md](llm-plane.md).

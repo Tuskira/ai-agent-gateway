@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 )
 
 // Usage is the normalized token accounting a provider extracts from a response.
@@ -190,13 +192,39 @@ var skipForward = map[string]bool{
 const providerKeyHeader = "X-Provider-Key"
 
 // copyHeaders copies headers from src to dst, dropping hop-by-hop and
-// gateway-internal ones (skipForward, providerKeyHeader). Used both ways: client→upstream (the
-// client's own provider credential — x-api-key / BYOK Authorization — is
-// preserved, so it rides along) and upstream→client. A gateway key presented
-// via Authorization (Bearer gk_…) is OUR credential, not the provider's, so it
-// is never forwarded upstream (it would otherwise leak the gateway key); a BYOK
-// Authorization (sk-…, OAuth, AWS4-…) is kept.
-func copyHeaders(dst, src http.Header) {
+// gateway-internal ones (skipForward, providerKeyHeader). It is the
+// upstream->client copy, and the client->upstream copy when the caller has
+// no Principal to name its credential (see copyRequestHeaders). The client's
+// own provider credential -- x-api-key / BYOK Authorization -- is preserved,
+// so it rides along; a gateway key presented via Authorization (Bearer gk_...)
+// is OUR credential, not the provider's, so it is never forwarded upstream
+// (it would otherwise leak the gateway key); a BYOK Authorization (sk-...,
+// OAuth, AWS4-...) is kept.
+func copyHeaders(dst, src http.Header) { copyHeadersWithout(dst, src, "") }
+
+// copyRequestHeaders is copyHeaders for the client->upstream direction. On top
+// of the gk_ rule it drops every header value that carries the credential
+// the caller authenticated with (Principal.RawCredential), wherever the
+// Authenticator found it: "Authorization: Bearer <cred>" for a non-gk_ bearer
+// (an OIDC JWT, a future authenticator's token), the bare value in a custom
+// header, or a repeat of it in a second header. Only the value that carries
+// the credential is removed; a provider key beside it is still forwarded.
+func copyRequestHeaders(dst http.Header, r *http.Request) {
+	copyHeadersWithout(dst, r.Header, principalCredential(r.Context()))
+}
+
+// principalCredential returns the credential the request authenticated with,
+// or "" when it has no Principal or the Authenticator kept none.
+func principalCredential(ctx context.Context) string {
+	if p, ok := pkgauth.PrincipalFrom(ctx); ok {
+		return p.RawCredential
+	}
+	return ""
+}
+
+// copyHeadersWithout is copyHeaders that also drops any value carrying cred
+// (when cred is not empty).
+func copyHeadersWithout(dst, src http.Header, cred string) {
 	for name, vals := range src {
 		lname := strings.ToLower(name)
 		if skipForward[lname] || isProviderKeyHeader(lname) {
@@ -206,9 +234,28 @@ func copyHeaders(dst, src http.Header) {
 			continue
 		}
 		for _, v := range vals {
+			if carriesCredential(v, cred) {
+				continue
+			}
 			dst.Add(name, v)
 		}
 	}
+}
+
+// carriesCredential reports whether a header value is cred itself, bare or
+// behind an auth scheme ("Bearer <cred>", any case). It matches the whole
+// token, never a substring, so a provider key that merely contains cred is
+// not mistaken for it.
+func carriesCredential(v, cred string) bool {
+	if cred == "" {
+		return false
+	}
+	v = strings.TrimSpace(v)
+	if v == cred {
+		return true
+	}
+	scheme, rest, ok := strings.Cut(v, " ")
+	return ok && scheme != "" && strings.TrimSpace(rest) == cred
 }
 
 // isProviderKeyHeader reports whether a lowercased header name is

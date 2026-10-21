@@ -12,7 +12,10 @@
 // file over it (see Card.MergeFile), and the LLM plane is handed the
 // resulting instance via its Config. Default is a package-level Card built
 // from the embedded JSON alone, kept for callers that don't need an
-// override, and Cost is a convenience wrapping Default.Cost.
+// override, and Cost is a convenience wrapping Default.Cost. The LLM plane
+// only needs the Pricer interface (Card.Cost), so a caller can also price
+// calls from its own source, or build a Card from rates it already holds
+// with NewCardFromRates.
 //
 // Prices are estimates: the embedded rate card is a static, approximate
 // list-price table (see prices.json's "_note"), and even an
@@ -35,7 +38,12 @@ import (
 //go:embed prices.json
 var pricesJSON []byte
 
-// rate is a model's price card, in USD per MILLION tokens. Above200k, when set,
+// *Card is the built-in Pricer.
+var _ Pricer = (*Card)(nil)
+
+// Rate is a model's price card, in USD per MILLION tokens -- one entry of
+// prices.json's "models" object (the JSON tags are that file's keys), and
+// what NewCardFromRates takes per model. Above200k, when set,
 // is the long-context override applied to the WHOLE request once the prompt
 // exceeds 200K tokens (Claude Sonnet 4.5, Gemini 2.5/3.x Pro bill every token at
 // the higher tier past that threshold). RegionalPremium marks models whose
@@ -44,15 +52,15 @@ var pricesJSON []byte
 // provider service tier (OpenAI service_tier, Gemini serviceTier).
 // FastMultiplier and USGeoMultiplier scale every token cost of an Anthropic
 // call reported as speed "fast" / inference_geo "us".
-type rate struct {
+type Rate struct {
 	Input           float64 `json:"input"`
 	Output          float64 `json:"output"`
 	CacheRead       float64 `json:"cache_read"`
 	CacheWrite      float64 `json:"cache_write"`
-	Above200k       *rate   `json:"above_200k,omitempty"`
+	Above200k       *Rate   `json:"above_200k,omitempty"`
 	RegionalPremium bool    `json:"regional_premium,omitempty"`
-	Priority        *rate   `json:"priority,omitempty"`
-	Flex            *rate   `json:"flex,omitempty"`
+	Priority        *Rate   `json:"priority,omitempty"`
+	Flex            *Rate   `json:"flex,omitempty"`
 	FastMultiplier  float64 `json:"fast_multiplier,omitempty"`
 	USGeoMultiplier float64 `json:"us_geo_multiplier,omitempty"`
 }
@@ -87,15 +95,26 @@ const webSearchUSD = 0.01
 // operator-supplied override file (llm_proxy.pricing_file) parse into this.
 type cardFile struct {
 	Note   string          `json:"_note"`
-	Models map[string]rate `json:"models"`
+	Models map[string]Rate `json:"models"`
+}
+
+// Pricer prices one captured LLM call: the USD cost of provider/model at
+// u's token counts and pricing context, or (nil, false) when it has no
+// price for that model -- the caller then stores NULL, never a guess. It is
+// the one method the LLM plane calls on its rate card, so a caller that
+// embeds the gateway can supply its own source of prices. *Card implements
+// it. Implementations must be safe for concurrent use.
+type Pricer interface {
+	Cost(provider, model string, u Usage) (*float64, bool)
 }
 
 // Card is a rate card: a set of per-model USD/Mtok rates plus the cost
 // formula in Cost. Build one from the embedded prices.json (Default, or
-// NewCard) and optionally layer an operator override file over it with
-// MergeFile. A Card is safe for concurrent use.
+// NewCard), or from caller-supplied rates (NewCardFromRates), and optionally
+// layer an operator override file over it with MergeFile. A Card is safe
+// for concurrent use.
 type Card struct {
-	table    map[string]rate
+	table    map[string]Rate
 	missOnce sync.Map // dedupes the "no rate-card entry" warning per provider/model
 }
 
@@ -130,6 +149,31 @@ func NewCard() *Card {
 		panic("pricing: invalid embedded prices.json: " + err.Error())
 	}
 	return c
+}
+
+// NewCardFromRates builds a Card from rates, keyed by model id the way
+// prices.json's "models" object is: no file is read and the embedded card
+// is not included. Keys are lowercased and trimmed, as MergeFile does with
+// an override file's keys. rates is deep-copied, so the caller may reuse or
+// change it afterwards. An empty or nil map gives a Card that prices
+// nothing (every Cost is (nil, false)).
+func NewCardFromRates(rates map[string]Rate) *Card {
+	table := make(map[string]Rate, len(rates))
+	for k, v := range rates {
+		table[strings.ToLower(strings.TrimSpace(k))] = v.clone()
+	}
+	return &Card{table: table}
+}
+
+// clone returns a copy of r whose tier rows are copies too.
+func (r Rate) clone() Rate {
+	for _, p := range []**Rate{&r.Above200k, &r.Priority, &r.Flex} {
+		if *p != nil {
+			c := (*p).clone()
+			*p = &c
+		}
+	}
+	return r
 }
 
 func newCardFromJSON(data []byte) (*Card, error) {
@@ -168,7 +212,7 @@ func (c *Card) MergeFile(path string) (*Card, int, error) {
 		return nil, 0, fmt.Errorf("pricing file %q: no models defined", path)
 	}
 
-	merged := make(map[string]rate, len(c.table)+len(f.Models))
+	merged := make(map[string]Rate, len(c.table)+len(f.Models))
 	for k, v := range c.table {
 		merged[k] = v
 	}
@@ -193,7 +237,7 @@ func normalize(provider, model string) string {
 // (us-gov-west-1/amazon.nova-lite-v1:0), then the id with the profile prefix
 // stripped. regional reports whether a region-specific row matched (its price
 // already includes any regional difference).
-func (c *Card) lookup(provider, model, region string) (r rate, regional, ok bool) {
+func (c *Card) lookup(provider, model, region string) (r Rate, regional, ok bool) {
 	key := normalize(provider, model)
 	if provider == "bedrock" {
 		for _, k := range []string{strings.ToLower(strings.TrimSpace(model)), region + "/" + key} {
@@ -221,7 +265,7 @@ func (c *Card) lookup(provider, model, region string) (r rate, regional, ok bool
 			}
 		}
 	}
-	return rate{}, false, false
+	return Rate{}, false, false
 }
 
 // Cost returns the USD cost of one call, or (nil, false) if the model is not
@@ -273,7 +317,7 @@ func (c *Card) Cost(provider, model string, u Usage) (*float64, bool) {
 // tokenCost applies the per-token formula for rate r scaled by mult, with
 // provider's cache accounting, plus flat server-tool fees. Shared by
 // Card.Cost and CostOverride so both price a call identically.
-func tokenCost(provider string, r rate, mult float64, u Usage) float64 {
+func tokenCost(provider string, r Rate, mult float64, u Usage) float64 {
 	baseIn := u.Input
 	switch provider {
 	case "openai", "gemini":
@@ -322,7 +366,7 @@ type Override struct {
 // falls back to the input rate, as on the card. Always returns a value:
 // the caller configured the price, so there is no "unknown" case.
 func CostOverride(provider string, o Override, u Usage) *float64 {
-	r := rate{Input: o.Input, Output: o.Output, CacheRead: o.CacheRead, CacheWrite: o.CacheWrite}
+	r := Rate{Input: o.Input, Output: o.Output, CacheRead: o.CacheRead, CacheWrite: o.CacheWrite}
 	cost := tokenCost(provider, r, 1, u)
 	return &cost
 }

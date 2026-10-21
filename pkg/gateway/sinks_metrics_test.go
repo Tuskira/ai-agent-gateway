@@ -1,4 +1,4 @@
-package main
+package gateway
 
 import (
 	"context"
@@ -32,7 +32,7 @@ func TestBuildSinksAddsMetricsSink(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = gm.Close(context.Background()) })
 
-	res, err := buildSinks(cfg, gm, logger)
+	res, err := buildSinks(cfg, gm, nil, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestBuildSinksAddsMetricsSink(t *testing.T) {
 
 	// Disabled and absent metrics add no sink; the writes are harmless.
 	for name, m := range map[string]*metrics.Metrics{"nil": nil} {
-		r, err := buildSinks(cfg, m, logger)
+		r, err := buildSinks(cfg, m, nil, logger)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -66,7 +66,7 @@ func TestBuildSinksAddsMetricsSink(t *testing.T) {
 	if off.Enabled() {
 		t.Fatal("none driver reports Enabled")
 	}
-	r, err := buildSinks(cfg, off, logger)
+	r, err := buildSinks(cfg, off, nil, logger)
 	if err != nil {
 		t.Fatal(err)
 	}

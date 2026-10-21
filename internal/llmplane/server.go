@@ -54,11 +54,11 @@ type Config struct {
 	// X-Forwarded-For is never trusted on its own.
 	ClientIP func(*http.Request) string
 
-	// Pricing is the rate card used to cost each captured call
-	// (pricing.Card.Cost). Nil means the package-level embedded default
+	// Pricing costs each captured call (pricing.Pricer; *pricing.Card is
+	// the built-in one). Nil means the package-level embedded default
 	// (pricing.Default) — the caller (cmd/gateway) supplies a card merged
 	// with an operator override file when llm_proxy.pricing_file is set.
-	Pricing *pricing.Card
+	Pricing pricing.Pricer
 
 	// Registry resolves each request's "model" against the tenant's model
 	// registry (see NewRegistry and docs/llm-plane.md "Model registry").

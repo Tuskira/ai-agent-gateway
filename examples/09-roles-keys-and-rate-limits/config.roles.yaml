@@ -19,7 +19,7 @@ auth:
   # A role name that doesn't collide with a built-in (admin,
   # platform-admin, agent, viewer, interceptor) is
   # added alongside them: pkg/auth.NewRoleAuthorizer seeds the built-ins
-  # first, then cmd/gateway/main.go's run() merges this map over them --
+  # first, then pkg/gateway.Run merges this map over them --
   # a name that DID collide with a built-in would replace it outright,
   # not merge into it (see config.go's Auth.Roles doc comment).
   #

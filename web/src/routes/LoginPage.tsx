@@ -22,6 +22,8 @@ interface LocationState {
 
 const GENERIC_LOGIN_ERROR = 'Invalid username or password'
 const NETWORK_ERROR = 'Could not reach the gateway. Check your connection and try again.'
+const TENANT_REQUIRED_NOTICE =
+  'This username exists in more than one tenant. Enter the tenant to sign in to.'
 
 export default function LoginPage() {
   const { principal, signIn, signInWithKey } = useAuth()
@@ -34,6 +36,10 @@ export default function LoginPage() {
   // field; if it fails (older gateway) fall back to the most general form.
   const config = configQuery.data
   const singleTenant = config?.single_tenant ?? false
+  // The gateway resolves the tenant from the username alone; the field is
+  // only needed when the same username exists in several tenants, which
+  // the server reports with 409 `tenant_required` after the first attempt.
+  const tenantOptional = config?.tenant_optional ?? false
   const apiKeyLogin = config?.api_key_login ?? false
   const defaultTenant = config?.default_tenant ?? ''
   // First run: a single-tenant install with no console user yet.
@@ -45,13 +51,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   // null = "not edited yet", so the field follows the config's default.
   const [tenantInput, setTenantInput] = useState<string | null>(null)
+  // Set when the server asked for a tenant (409 tenant_required): reveals
+  // the tenant field, empty, for the retry.
+  const [tenantRequired, setTenantRequired] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const tenant = singleTenant ? defaultTenant : (tenantInput ?? defaultTenant)
+  const showTenantField = !singleTenant && (!tenantOptional || tenantRequired)
+  const tenant = singleTenant
+    ? defaultTenant
+    : !showTenantField
+      ? ''
+      : (tenantInput ?? (tenantRequired ? '' : defaultTenant))
   const keyMode = (useKey ?? firstRun) && apiKeyLogin
 
   // Already signed in — don't show the login form again.
@@ -71,6 +85,10 @@ export default function LoginPage() {
       setError('Enter your username and password.')
       return
     }
+    if (tenantRequired && !tenant.trim()) {
+      setError('Enter your tenant.')
+      return
+    }
     setIsSubmitting(true)
     setError(null)
     try {
@@ -80,6 +98,15 @@ export default function LoginPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
         setError('Too many attempts. Wait a few minutes and try again.')
+      } else if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.type === 'tenant_required'
+      ) {
+        // Not a failure: the credentials were not checked yet. Reveal the
+        // tenant field and keep the password so one more submit suffices.
+        setTenantRequired(true)
+        setTenantInput(null)
       } else if (err instanceof ApiError) {
         // Never say which part was wrong.
         setError(GENERIC_LOGIN_ERROR)
@@ -241,7 +268,16 @@ export default function LoginPage() {
               onSubmit={handlePasswordSubmit}
               noValidate
             >
-              {singleTenant ? null : (
+              {tenantRequired ? (
+                <p
+                  role="status"
+                  data-testid="tenant-required-notice"
+                  className="rounded-r-3 border border-border bg-bg-muted px-3 py-2 text-[13px] text-foreground"
+                >
+                  {TENANT_REQUIRED_NOTICE}
+                </p>
+              ) : null}
+              {!showTenantField ? null : (
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="tenant">Tenant</Label>
                   <InputGroup className="h-10">
@@ -258,6 +294,8 @@ export default function LoginPage() {
                       placeholder="your-org"
                       value={tenant}
                       onChange={(event) => setTenantInput(event.target.value)}
+                      autoFocus={tenantRequired}
+                      aria-invalid={error ? true : undefined}
                       className="h-full"
                     />
                   </InputGroup>
@@ -355,8 +393,8 @@ export default function LoginPage() {
 
       <div className="flex flex-col items-center gap-1 text-xs text-text-subtle">
         <p>
-          {new Date().getFullYear()} Tuskira&reg; AI Agent Gateway &middot; open source &middot;
-          v{health?.version ?? '0.1'}
+          {new Date().getFullYear()} Tuskira&reg; AI Agent Gateway &middot; open source
+          &middot; v{health?.version ?? '0.1'}
         </p>
       </div>
     </div>

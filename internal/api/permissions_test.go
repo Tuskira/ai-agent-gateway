@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	internalauth "github.com/Tuskira/tusk-ai-secured-gateway/internal/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/dptest"
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
@@ -142,6 +143,29 @@ func TestPermissions_FullStack(t *testing.T) {
 	if w := do(http.MethodPost, "/api/v1/tenants", "platform-a"); w.Code == http.StatusForbidden {
 		t.Errorf("platform-admin POST /tenants = 403, want anything but 403 (permission should pass)")
 	}
+
+	// X-Gateway-Acting-Tenant rides on platform.admin too: a tenant admin
+	// sending it is refused outright (403 permission_error, not silently
+	// scoped to its own tenant), even on a route it may otherwise call.
+	// A platform-admin gets past the permission check; nopStore knows no
+	// tenant, so its request ends as 404 from the tenant lookup.
+	doActing := func(method, path, bearer, tenant string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set(internalauth.ActingTenantHeader, tenant)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	const otherTenant = "0b6f3f0e-5a5e-4d8e-9c35-0d4c3b1f7a21"
+	for _, who := range []string{"admin-a", "agent-a"} {
+		if w := doActing(http.MethodGet, "/api/v1/connectors", who, otherTenant); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "permission_error") {
+			t.Errorf("%s GET /connectors with the acting header = %d %s, want 403 permission_error", who, w.Code, w.Body.String())
+		}
+	}
+	if w := doActing(http.MethodGet, "/api/v1/connectors", "platform-a", otherTenant); w.Code != http.StatusNotFound {
+		t.Errorf("platform-admin GET /connectors acting in an unknown tenant = %d, want 404 (permission passed, tenant lookup failed)", w.Code)
+	}
 }
 
 // TestPermissions_PlatformAdmin_BareStarRoleDenied is the full-stack
@@ -227,6 +251,9 @@ func (nopStore) Close() error                         { return nil }
 type nopTenants struct{}
 
 func (nopTenants) Create(context.Context, *store.Tenant) error { return nil }
+func (nopTenants) GetByID(context.Context, string) (*store.Tenant, error) {
+	return nil, store.ErrNotFound
+}
 func (nopTenants) GetBySlug(context.Context, string) (*store.Tenant, error) {
 	return nil, store.ErrNotFound
 }

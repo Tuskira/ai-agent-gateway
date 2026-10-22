@@ -139,6 +139,12 @@ import {
   type SkillKind,
   type UpdateSkillInput,
 } from '@/lib/skills'
+import {
+  createTenant,
+  listTenants,
+  TENANTS_QUERY_KEY,
+  type CreateTenantInput,
+} from '@/lib/tenants'
 
 /** `GET /api/v1/health` — no auth required. */
 export function useHealth() {
@@ -1032,6 +1038,32 @@ export function useChangePassword() {
 
 export function useUsersList() {
   return useQuery({ queryKey: ['users', 'list'], queryFn: listUsers, retry: false })
+}
+
+/* ------------------------------------------------------------------------ */
+/* Tenants (platform.admin)                                                 */
+/* ------------------------------------------------------------------------ */
+
+/** `GET /api/v1/tenants?limit=200`. Pass `enabled: false` for sessions
+ * without `platform.admin`, which would get a 403. */
+export function useTenants(enabled = true) {
+  return useQuery({
+    queryKey: TENANTS_QUERY_KEY,
+    queryFn: listTenants,
+    enabled,
+    retry: false,
+    staleTime: 60_000,
+  })
+}
+
+export function useCreateTenant() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CreateTenantInput) => createTenant(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: TENANTS_QUERY_KEY })
+    },
+  })
 }
 
 export function useCreateUser() {

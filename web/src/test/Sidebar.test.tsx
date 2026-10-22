@@ -7,6 +7,7 @@ import { setCsrfToken } from '@/lib/api'
 import { navGroups } from '@/lib/nav'
 import {
   SESSION_ADMIN,
+  SESSION_PLATFORM_ADMIN,
   SESSION_VIEWER,
   errorResponse,
   jsonResponse,
@@ -28,12 +29,46 @@ describe('Sidebar', () => {
 
     // The Users link appears once the session is restored.
     await screen.findByRole('link', { name: 'Users' })
-    for (const group of navGroups) {
+    // Platform-only items (and a group made only of them) are not for a
+    // tenant admin.
+    const visible = navGroups
+      .map((g) => ({ ...g, items: g.items.filter((i) => !i.platformOnly) }))
+      .filter((g) => g.items.length > 0)
+    expect(visible.length).toBeLessThan(navGroups.length)
+    for (const group of visible) {
       expect(screen.getAllByText(group.label).length).toBeGreaterThan(0)
       for (const item of group.items) {
         expect(screen.getByRole('link', { name: item.label })).toBeInTheDocument()
       }
     }
+    expect(screen.queryByRole('link', { name: 'Tenants' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Platform')).not.toBeInTheDocument()
+  })
+
+  it('shows Tenants under Platform only to a platform admin', async () => {
+    stubApi({
+      'GET /auth/me': () => jsonResponse(SESSION_PLATFORM_ADMIN),
+      'GET /tenants?limit=200': () => jsonResponse({ items: [], total: 0 }),
+    })
+    renderSidebar(<Sidebar />)
+
+    const link = await screen.findByRole('link', { name: 'Tenants' })
+    expect(link).toHaveAttribute('href', '/tenants')
+    expect(screen.getByText('Platform')).toBeInTheDocument()
+    // Every nav item, including the admin-only ones, is listed.
+    for (const item of navGroups.flatMap((g) => g.items)) {
+      expect(screen.getByRole('link', { name: item.label })).toBeInTheDocument()
+    }
+  })
+
+  it('hides Tenants from a viewer', async () => {
+    stubApi({ 'GET /auth/me': () => jsonResponse(SESSION_VIEWER) })
+    renderSidebar(<Sidebar />)
+
+    await screen.findByRole('link', { name: 'Models' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryByRole('link', { name: 'Tenants' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Platform')).not.toBeInTheDocument()
   })
 
   it('links Token Monitoring under Dashboards, below Overview, for every signed-in role', async () => {

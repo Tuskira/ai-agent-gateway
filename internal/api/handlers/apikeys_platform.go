@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/httpx"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
 // The routes below let a platform-admin API key manage API keys in a NAMED
@@ -24,24 +26,19 @@ import (
 // request body.
 
 // platformKeyTenant resolves the {tenant_id} path parameter to an existing
-// tenant. It writes a 404 and returns false when there is none. The store
-// has no get-by-id, so this scans the tenant list (platform-admin only,
-// low volume); an id that is not a tenant -- including a malformed one --
-// is simply not found.
+// tenant. It writes a 404 and returns false when there is none; an id that
+// is not a tenant -- including a malformed one -- is simply not found.
 func (h APIKeys) platformKeyTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
-	id := chi.URLParam(r, "tenant_id")
-	tenants, err := h.Store.Tenants().List(r.Context())
+	t, err := h.Store.Tenants().GetByID(r.Context(), chi.URLParam(r, "tenant_id"))
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, httpx.TypeNotFound, "tenant not found")
+			return "", false
+		}
 		writeStoreErr(w, r, "look up tenant", err)
 		return "", false
 	}
-	for _, t := range tenants {
-		if t.ID == id {
-			return t.ID, true
-		}
-	}
-	httpx.WriteError(w, http.StatusNotFound, httpx.TypeNotFound, "tenant not found")
-	return "", false
+	return t.ID, true
 }
 
 // PlatformCreate handles POST /api/v1/tenants/{tenant_id}/api-keys.

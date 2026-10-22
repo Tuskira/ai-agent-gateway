@@ -4,6 +4,11 @@
 // pkg/gateway (Run); this file parses the flags and holds the one-shot
 // subcommands (migrate, bootstrap-key, create-user, reset-password,
 // secrets).
+//
+// A fresh install is set up in two steps: `bootstrap-key` creates the
+// first tenant and its platform-admin API key (the key alone goes to
+// stdout), then `create-user -role platform-admin` creates the console
+// account that can list tenants and act in any of them.
 package main
 
 import (
@@ -336,6 +341,7 @@ func runBootstrapKey() error {
 
 	if withPlatform {
 		fmt.Fprintf(os.Stderr, "created admin + platform-admin api key %q for tenant %q (id=%s, prefix=%s)\n", *name, *tenant, k.ID, prefix)
+		fmt.Fprintf(os.Stderr, "for a console login that can act in every tenant, next run: gateway create-user -tenant %s -username <email> -role platform-admin\n", *tenant)
 	} else {
 		fmt.Fprintf(os.Stderr, "created admin api key %q for tenant %q (id=%s, prefix=%s); it is a tenant admin only -- pass --platform for platform-admin\n", *name, *tenant, k.ID, prefix)
 	}

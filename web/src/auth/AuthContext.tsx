@@ -11,16 +11,49 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ApiError,
   apiFetch,
+  clearStoredActingTenant,
   clearStoredApiKey,
+  getStoredActingTenant,
   getStoredApiKey,
   onPasswordChangeRequired,
+  setActingTenant,
   setCsrfToken,
+  setStoredActingTenant,
   setStoredApiKey,
 } from '@/lib/api'
 import { login, logout, me } from '@/lib/auth-api'
+import { listTenants, TENANTS_QUERY_KEY } from '@/lib/tenants'
 import type { Principal } from '@/lib/types'
 
 export const AUTH_ME_QUERY_KEY = ['auth', 'me'] as const
+
+/** Cache key of the resolved acting tenant for one subject. Session state,
+ * not tenant data, so `switchTenant` keeps it along with `/auth/me`. */
+export const ACTING_TENANT_QUERY_KEY_PREFIX = ['auth', 'acting-tenant'] as const
+
+function actingTenantQueryKey(subject: string) {
+  return [...ACTING_TENANT_QUERY_KEY_PREFIX, subject] as const
+}
+
+/** True for the keys `switchTenant` must not drop: the signed-in identity
+ * and its resolved acting tenant. Everything else is (or may be) data of the
+ * tenant we are leaving. */
+function isSessionQueryKey(key: readonly unknown[]): boolean {
+  return (
+    key[0] === AUTH_ME_QUERY_KEY[0] &&
+    (key[1] === AUTH_ME_QUERY_KEY[1] || key[1] === ACTING_TENANT_QUERY_KEY_PREFIX[1])
+  )
+}
+
+export function isPlatformAdminPrincipal(p: Principal | null | undefined): boolean {
+  return Boolean(p?.roles.includes('platform-admin'))
+}
+
+/** The tenant the account belongs to. Older gateways do not send
+ * `home_tenant_id`; for them `tenant_id` is always the home tenant. */
+function homeTenantOf(p: Principal): string {
+  return p.home_tenant_id || p.tenant_id
+}
 
 export type AuthMode = 'session' | 'api_key'
 
@@ -44,6 +77,16 @@ interface AuthContextValue {
   signOut: () => void
   /** Call after a successful password change to lift the forced-change gate. */
   passwordChanged: () => void
+  /** True when the principal holds `platform-admin` and may act in any tenant. */
+  isPlatformAdmin: boolean
+  /** The tenant a platform session currently acts in (its home tenant until
+   * it picks another). `null` for every other session: no header is sent. */
+  actingTenantId: string | null
+  /** Platform sessions only: act in `tenantId` from now on. Remembers the
+   * choice per subject and resets every cached answer except the session's
+   * own (refetching those on screen), so no data of the previous tenant
+   * lingers. */
+  switchTenant: (tenantId: string) => void
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
@@ -81,6 +124,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data
   }, [data, signedOut, apiKeyMode])
 
+  const isPlatformAdmin = isPlatformAdminPrincipal(principal)
+  const subject = principal?.subject ?? ''
+
+  // Resolve which tenant a platform session acts in. This runs as a query
+  // rather than an effect so the module-level header state is written before
+  // the app shell mounts: child effects fire before parent effects, so an
+  // effect here would race the first page queries and cache the home
+  // tenant's answers under the new tenant's keys. The remembered selection
+  // is honoured only when it is still a real tenant; otherwise the home
+  // tenant is used. A failing tenant list (older gateway, network) also
+  // falls back to home rather than blocking sign-in.
+  const actingQuery = useQuery({
+    queryKey: actingTenantQueryKey(subject),
+    queryFn: async (): Promise<string> => {
+      const home = homeTenantOf(principal as Principal)
+      const stored = getStoredActingTenant(subject)
+      let next = home
+      if (stored && stored !== home) {
+        try {
+          const page = await queryClient.fetchQuery({
+            queryKey: TENANTS_QUERY_KEY,
+            queryFn: listTenants,
+            staleTime: 60_000,
+          })
+          if (page.items.some((t) => t.id === stored)) next = stored
+        } catch {
+          // fall back to home
+        }
+      }
+      if (stored && next !== stored) clearStoredActingTenant(subject)
+      setActingTenant(next)
+      return next
+    },
+    enabled: isPlatformAdmin && subject !== '',
+    retry: false,
+    staleTime: Infinity,
+  })
+  const actingTenantId = isPlatformAdmin ? (actingQuery.data ?? null) : null
+  const actingPending = isPlatformAdmin && actingQuery.isPending
+
   const csrfToken = !apiKeyMode ? (principal?.csrf_token ?? null) : null
   useEffect(() => {
     setCsrfToken(csrfToken)
@@ -92,6 +175,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(
     async (username: string, password: string, tenant?: string) => {
+      // A new identity starts in its own tenant; platform sessions resolve
+      // their remembered selection through the acting-tenant query.
+      setActingTenant(null)
       const res = await login({ username, password, tenant })
       setCsrfToken(res.csrf_token)
       let fetched: Principal
@@ -122,6 +208,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithKey = useCallback(
     async (apiKey: string) => {
       const trimmed = apiKey.trim()
+      setActingTenant(null)
       // skipAuthRedirect: a bad key here should surface as an inline form
       // error, not trigger the global clear-and-redirect-to-login behavior.
       const fetched = await apiFetch<Principal>('/auth/me', {
@@ -155,13 +242,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     clearStoredApiKey()
     setCsrfToken(null)
+    setActingTenant(null)
+    if (subject) clearStoredActingTenant(subject)
     setApiKeyMode(false)
     setSignedOut(true)
     setForcedChange(false)
     // Drop every cached answer so the next person to sign in never sees this
     // one's data.
     queryClient.clear()
-  }, [apiKeyMode, queryClient])
+  }, [apiKeyMode, queryClient, subject])
+
+  const switchTenant = useCallback(
+    (tenantId: string) => {
+      if (!isPlatformAdmin || !subject) return
+      // Header state first, so the refetches below already carry it.
+      setActingTenant(tenantId)
+      setStoredActingTenant(subject, tenantId)
+      queryClient.setQueryData(actingTenantQueryKey(subject), tenantId)
+      // Reset, not remove: removing only empties the cache, and a mounted
+      // query that is not re-rendered by this switch (most pages do not read
+      // useAuth) would keep showing the old tenant's rows. Reset wipes the
+      // state and refetches every query that is on screen, under the header
+      // set above.
+      void queryClient.resetQueries({ predicate: (q) => !isSessionQueryKey(q.queryKey) })
+    },
+    [isPlatformAdmin, subject, queryClient],
+  )
 
   const passwordChanged = useCallback(() => {
     setForcedChange(false)
@@ -174,25 +280,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       principal,
       mode: apiKeyMode ? 'api_key' : 'session',
-      isLoading: !signedOut && isLoading,
+      isLoading: !signedOut && (isLoading || actingPending),
       mustChangePassword: forcedChange || Boolean(principal?.must_change_password),
       csrfToken,
       signIn,
       signInWithKey,
       signOut,
       passwordChanged,
+      isPlatformAdmin,
+      actingTenantId,
+      switchTenant,
     }),
     [
       principal,
       apiKeyMode,
       signedOut,
       isLoading,
+      actingPending,
       forcedChange,
       csrfToken,
       signIn,
       signInWithKey,
       signOut,
       passwordChanged,
+      isPlatformAdmin,
+      actingTenantId,
+      switchTenant,
     ],
   )
 

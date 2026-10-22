@@ -27,7 +27,10 @@ import (
 // failed to issue the new one) still leaves both lines. Fields: method,
 // route (the pattern), tenant_id (the {tenant_id} path parameter when the
 // route has one), key_id (the {id} path parameter), actor (the
-// authenticated principal's subject), actor_auth_method, actor_tenant_id,
+// authenticated principal's subject), actor_auth_method, actor_tenant_id
+// (the principal's own tenant, Principal.Home), acting_tenant_id (only
+// when a platform-admin selected another tenant with
+// X-Gateway-Acting-Tenant: the tenant it acts in for this request),
 // client_ip (as the rate limiter resolves it, honouring trusted proxies),
 // request_id (the request's X-Request-Id header, cut to 128 characters, when
 // the client or a proxy sent one; the gateway does not generate one), and on the result line
@@ -45,7 +48,10 @@ func platformAudit(logger *slog.Logger, rl *internalauth.RateLimiter) func(http.
 
 			base := []any{"method", r.Method, "client_ip", rl.ClientIP(r), "request_id", clip(r.Header.Get("X-Request-Id"), maxRequestIDLen)}
 			if p, ok := pkgauth.PrincipalFrom(ctx); ok {
-				base = append(base, "actor", p.Subject, "actor_auth_method", p.AuthMethod, "actor_tenant_id", p.TenantID)
+				base = append(base, "actor", p.Subject, "actor_auth_method", p.AuthMethod, "actor_tenant_id", p.Home())
+				if p.HomeTenantID != "" {
+					base = append(base, "acting_tenant_id", p.TenantID)
+				}
 			}
 			rec := &statusWriter{ResponseWriter: w}
 			// This runs inside the matched route's handler chain, so the

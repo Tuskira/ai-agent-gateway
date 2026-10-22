@@ -88,13 +88,23 @@ func actor(r *http.Request) (kind, id string) {
 }
 
 // audit appends one auth_audit row. It is best-effort: a failure is logged
-// but never fails the request it describes.
+// but never fails the request it describes. ActorTenantID is filled in
+// when the actor's home tenant (Principal.Home) is not the tenant the row
+// belongs to -- a platform-admin acting in another tenant -- so that
+// tenant's trail shows the actor came from elsewhere.
 func (d Deps) audit(r *http.Request, e store.AuthAuditEntry) {
 	if d.Store == nil {
 		return
 	}
 	if e.ActorKind == "" {
 		e.ActorKind, e.ActorID = actor(r)
+	}
+	if e.ActorTenantID == "" {
+		if p, ok := pkgauth.PrincipalFrom(r.Context()); ok {
+			if home := p.Home(); home != "" && home != e.TenantID {
+				e.ActorTenantID = home
+			}
+		}
 	}
 	e.IP = d.clientIP(r)
 	if err := d.Store.AuthAudit().Append(r.Context(), &e); err != nil {
@@ -116,11 +126,18 @@ type authConfigView struct {
 	// install; with several tenants it is always true, so the public
 	// endpoint never reveals whether a given tenant has users.
 	HasUsers bool `json:"has_users"`
+	// TenantOptional tells the console that POST /auth/login accepts a
+	// body without "tenant": the server then finds the account by
+	// username across tenants (see Login). Always true; the field exists
+	// so a console built for this server can hide the tenant field and
+	// an older server (which lacks it) keeps showing it.
+	TenantOptional bool `json:"tenant_optional"`
 }
 
-// defaultTenant resolves the tenant the login form should use: the only
-// tenant when exactly one exists, otherwise the configured default slug.
-// tenantID is set only in the single-tenant case.
+// defaultTenant resolves the tenant the login form should prefill: the
+// only tenant when exactly one exists, otherwise the configured default
+// slug. tenantID is set only in the single-tenant case. Login itself no
+// longer needs it (a body without a tenant is resolved by username).
 func (h Auth) defaultTenant(ctx context.Context) (slug, tenantID string, single bool) {
 	if h.Store != nil {
 		if tenants, err := h.Store.Tenants().List(ctx); err == nil && len(tenants) == 1 {
@@ -156,11 +173,12 @@ func (h Auth) Config(w http.ResponseWriter, r *http.Request) {
 		hasUsers = h.hasActiveUsers(r.Context(), tenantID)
 	}
 	httpx.WriteJSON(w, http.StatusOK, authConfigView{
-		PasswordLogin: true,
-		APIKeyLogin:   h.Console.APIKeyLogin,
-		SingleTenant:  single,
-		DefaultTenant: slug,
-		HasUsers:      hasUsers,
+		PasswordLogin:  true,
+		APIKeyLogin:    h.Console.APIKeyLogin,
+		SingleTenant:   single,
+		DefaultTenant:  slug,
+		HasUsers:       hasUsers,
+		TenantOptional: true,
 	})
 }
 
@@ -169,10 +187,21 @@ func (h Auth) Config(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type loginRequest struct {
+	// Tenant is the tenant slug. Optional: when empty the username is
+	// looked up across every tenant (see Login).
 	Tenant   string `json:"tenant"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
+
+const (
+	// typeTenantRequired is the error type of the 409 a tenant-less login
+	// gets when the username exists in more than one tenant.
+	typeTenantRequired = "tenant_required"
+	// msgTenantRequired names no tenant: the body must not list where the
+	// username exists.
+	msgTenantRequired = "choose a tenant"
+)
 
 // sessionUserView is the user object of the login and /auth/me responses.
 type sessionUserView struct {
@@ -190,6 +219,18 @@ type loginResponse struct {
 }
 
 // Login handles POST /api/v1/auth/login (public).
+//
+// The body's tenant is optional. With one, the account is (tenant,
+// username) as before. Without one, the username is looked up across all
+// tenants: exactly one live account logs in as if its tenant had been
+// named; none is the same generic 401 as a wrong password (after the same
+// dummy hash work, so timing does not tell the cases apart); more than one
+// is 409 tenant_required with a body that names no tenant, and the caller
+// retries with the tenant set. That 409 does say the username exists in
+// several tenants -- the accepted trade-off for not having to type a
+// tenant on every login -- but it costs the caller the same as a failed
+// login (throttle strike, dummy hash, login_fail audit row), so it is no
+// cheaper to probe than a password guess.
 func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if !httpx.Decode(w, r, &req) {
@@ -202,7 +243,9 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	fail := func(tenantID, targetUserID, reason string) {
+	// noteFailure charges the attempt to the per-IP throttle and records it
+	// in the audit trail; every answer other than a login does both.
+	noteFailure := func(tenantID, targetUserID, reason string) {
 		if h.LoginThrottle != nil {
 			h.LoginThrottle.ReportFailure(h.clientIP(r))
 		}
@@ -210,6 +253,9 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 			TenantID: tenantID, ActorKind: "anonymous", ActorID: truncate(username, 80),
 			Action: "login_fail", TargetUserID: targetUserID, Detail: reason,
 		})
+	}
+	fail := func(tenantID, targetUserID, reason string) {
+		noteFailure(tenantID, targetUserID, reason)
 		httpx.WriteError(w, http.StatusUnauthorized, errAuthentication, msgInvalidLogin)
 	}
 
@@ -218,28 +264,66 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenant, err := h.loginTenant(ctx, strings.TrimSpace(req.Tenant))
-	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			applog.From(ctx).Error("login: resolve tenant failed", "error", err)
+	var (
+		tenant *store.Tenant
+		user   *store.User
+	)
+	if slug := strings.TrimSpace(req.Tenant); slug != "" {
+		var err error
+		tenant, err = h.Store.Tenants().GetBySlug(ctx, slug)
+		if err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				applog.From(ctx).Error("login: resolve tenant failed", "error", err)
+				httpx.Internal(w, "internal error")
+				return
+			}
+			password.DummyVerify(req.Password)
+			fail("", "", "unknown_tenant")
+			return
+		}
+		user, err = h.Store.Users().GetByUsername(ctx, tenant.ID, username)
+		if err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				applog.From(ctx).Error("login: load user failed", "error", err)
+				httpx.Internal(w, "internal error")
+				return
+			}
+			password.DummyVerify(req.Password)
+			fail(tenant.ID, "", "unknown_user")
+			return
+		}
+	} else {
+		matches, err := h.Store.Users().FindByUsername(ctx, username)
+		if err != nil {
+			applog.From(ctx).Error("login: find user failed", "error", err)
 			httpx.Internal(w, "internal error")
 			return
 		}
-		password.DummyVerify(req.Password)
-		fail("", "", "unknown_tenant")
-		return
-	}
-
-	user, err := h.Store.Users().GetByUsername(ctx, tenant.ID, username)
-	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			applog.From(ctx).Error("login: load user failed", "error", err)
+		switch len(matches) {
+		case 0:
+			password.DummyVerify(req.Password)
+			fail("", "", "unknown_user")
+			return
+		case 1:
+			user = matches[0]
+		default:
+			// Priced like a wrong password: the same hash work, a throttle
+			// strike and a login_fail row (under no tenant, like
+			// unknown_user), so walking a username list for 409s is no
+			// cheaper than guessing passwords and leaves a trace.
+			password.DummyVerify(req.Password)
+			noteFailure("", "", "tenant_required")
+			httpx.WriteError(w, http.StatusConflict, typeTenantRequired, msgTenantRequired)
+			return
+		}
+		tenant, err = h.Store.Tenants().GetByID(ctx, user.TenantID)
+		if err != nil {
+			// A live user always has a tenant; this is a broken store, not a
+			// caller error.
+			applog.From(ctx).Error("login: load user's tenant failed", "user_id", user.ID, "error", err)
 			httpx.Internal(w, "internal error")
 			return
 		}
-		password.DummyVerify(req.Password)
-		fail(tenant.ID, "", "unknown_user")
-		return
 	}
 
 	now := time.Now()
@@ -293,18 +377,6 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// loginTenant resolves the login body's tenant slug; an empty slug means
-// the default tenant (the only one, or the configured default).
-func (h Auth) loginTenant(ctx context.Context, slug string) (*store.Tenant, error) {
-	if slug == "" {
-		slug, _, _ = h.defaultTenant(ctx)
-		if slug == "" {
-			return nil, store.ErrNotFound
-		}
-	}
-	return h.Store.Tenants().GetBySlug(ctx, slug)
-}
-
 func (h Auth) newSession(r *http.Request, user *store.User) (*store.UserSession, string, error) {
 	raw, id, err := session.NewToken()
 	if err != nil {
@@ -342,7 +414,8 @@ func truncate(s string, n int) string {
 
 // Logout handles POST /api/v1/auth/logout: revokes the calling session
 // and clears the cookie. For a non-session caller (an API key) there is no
-// session to end and it is a no-op 204.
+// session to end and it is a no-op 204. The audit row goes to the user's
+// home tenant, whatever tenant it was acting in.
 func (h Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	p, ok := pkgauth.PrincipalFrom(r.Context())
 	if ok && p.IsUser() && p.SessionID != "" {
@@ -351,7 +424,7 @@ func (h Auth) Logout(w http.ResponseWriter, r *http.Request) {
 			httpx.Internal(w, "internal error")
 			return
 		}
-		h.audit(r, store.AuthAuditEntry{TenantID: p.TenantID, Action: "logout", TargetUserID: p.Subject})
+		h.audit(r, store.AuthAuditEntry{TenantID: p.Home(), Action: "logout", TargetUserID: p.Subject})
 	}
 	session.ClearCookie(w, r, h.Console.CookieSecure)
 	w.WriteHeader(http.StatusNoContent)
@@ -363,16 +436,21 @@ func (h Auth) Logout(w http.ResponseWriter, r *http.Request) {
 
 // meView is the JSON shape of GET /api/v1/auth/me. The first group
 // mirrors pkgauth.Principal (minus RawCredential, which must never be
-// echoed); the rest is new: Kind says whether the caller is a logged-in
-// console user or an API key, and for a user the account, whether it must
-// change its password, and the CSRF token to echo on writes.
+// echoed): TenantID is the tenant the caller acts in (the acting tenant
+// while a platform-admin sends X-Gateway-Acting-Tenant) and HomeTenantID
+// the one it belongs to (Principal.Home; equal to TenantID otherwise).
+// The rest is new: Kind says whether the caller is a logged-in console
+// user or an API key, and for a user the account (always the home
+// account), whether it must change its password, and the CSRF token to
+// echo on writes.
 type meView struct {
-	Subject    string   `json:"subject"`
-	TenantID   string   `json:"tenant_id"`
-	Email      string   `json:"email,omitempty"`
-	Roles      []string `json:"roles"`
-	AuthMethod string   `json:"auth_method"`
-	KeyID      string   `json:"key_id,omitempty"`
+	Subject      string   `json:"subject"`
+	TenantID     string   `json:"tenant_id"`
+	HomeTenantID string   `json:"home_tenant_id"`
+	Email        string   `json:"email,omitempty"`
+	Roles        []string `json:"roles"`
+	AuthMethod   string   `json:"auth_method"`
+	KeyID        string   `json:"key_id,omitempty"`
 
 	Kind               string           `json:"kind"` // "user" | "api_key"
 	User               *sessionUserView `json:"user,omitempty"`
@@ -391,16 +469,16 @@ func (h Auth) Me(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := meView{
-		Subject: p.Subject, TenantID: p.TenantID, Email: p.Email, Roles: p.Roles,
+		Subject: p.Subject, TenantID: p.TenantID, HomeTenantID: p.Home(), Email: p.Email, Roles: p.Roles,
 		AuthMethod: p.AuthMethod, KeyID: p.KeyID, Kind: "api_key",
 	}
 	if p.IsUser() {
-		user, err := h.Store.Users().Get(r.Context(), p.TenantID, p.Subject)
+		user, err := h.Store.Users().Get(r.Context(), p.Home(), p.Subject)
 		if err != nil {
 			writeStoreErr(w, r, "auth me: load user", err)
 			return
 		}
-		slug, err := h.tenantSlug(r.Context(), p.TenantID)
+		slug, err := h.tenantSlug(r.Context(), p.Home())
 		if err != nil {
 			writeStoreErr(w, r, "auth me: load tenant", err)
 			return
@@ -412,19 +490,14 @@ func (h Auth) Me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, view)
 }
 
-// tenantSlug maps a tenant id to its slug. TenantStore has no lookup by id
-// (tenants are few: listing is cheap), so this scans the list.
+// tenantSlug maps a tenant id to its slug (store.ErrNotFound when there is
+// no such tenant).
 func (d Deps) tenantSlug(ctx context.Context, tenantID string) (string, error) {
-	tenants, err := d.Store.Tenants().List(ctx)
+	t, err := d.Store.Tenants().GetByID(ctx, tenantID)
 	if err != nil {
 		return "", err
 	}
-	for _, t := range tenants {
-		if t.ID == tenantID {
-			return t.Slug, nil
-		}
-	}
-	return "", store.ErrNotFound
+	return t.Slug, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -441,7 +514,9 @@ type changePasswordRequest struct {
 // one counts toward the account's login lockout, since a stolen session
 // must not become an unlimited password oracle), the new one must satisfy
 // the policy and differ from the current one. Every OTHER session of the
-// user is revoked and must_change_password is cleared.
+// user is revoked and must_change_password is cleared. The account is
+// always the caller's own, in its home tenant: an acting-tenant override
+// never redirects a password change.
 func (h Auth) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	p, ok := pkgauth.PrincipalFrom(r.Context())
 	if !ok || p == nil || !p.IsUser() {
@@ -458,7 +533,7 @@ func (h Auth) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	user, err := h.Store.Users().Get(ctx, p.TenantID, p.Subject)
+	user, err := h.Store.Users().Get(ctx, p.Home(), p.Subject)
 	if err != nil {
 		writeStoreErr(w, r, "change password: load user", err)
 		return

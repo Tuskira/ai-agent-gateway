@@ -222,6 +222,110 @@ describe('LoginPage', () => {
     expect(sessionStorage.length).toBe(0)
   })
 
+  describe('optional tenant', () => {
+    const OPTIONAL = { ...AUTH_CONFIG, tenant_optional: true }
+
+    it('hides the tenant field and sends no tenant', async () => {
+      const calls = stubApi({
+        'GET /health': () => jsonResponse(HEALTH),
+        'GET /auth/config': () => jsonResponse(OPTIONAL),
+        'GET /auth/me': () => errorResponse(401, 'authentication_error', 'no session'),
+        'POST /auth/login': () => errorResponse(401, 'authentication_error', 'nope'),
+      })
+      const user = userEvent.setup()
+      renderLogin()
+
+      await screen.findByLabelText('Username')
+      expect(screen.queryByLabelText('Tenant')).not.toBeInTheDocument()
+      await user.type(screen.getByLabelText('Username'), 'jane@acme.test')
+      await user.type(screen.getByLabelText('Password'), 'pw')
+      await user.click(screen.getByRole('button', { name: /^sign in$/i }))
+      await screen.findByRole('alert')
+
+      const login = calls.find((c) => c.path === '/auth/login')!
+      expect(JSON.parse(login.body!)).toEqual({
+        username: 'jane@acme.test',
+        password: 'pw',
+      })
+    })
+
+    it('reveals the tenant field on 409 tenant_required and retries with it', async () => {
+      let signedIn = false
+      const calls = stubApi({
+        'GET /health': () => jsonResponse(HEALTH),
+        'GET /auth/config': () => jsonResponse(OPTIONAL),
+        'GET /auth/me': () =>
+          signedIn
+            ? jsonResponse(SESSION_ADMIN)
+            : errorResponse(401, 'authentication_error', 'no session'),
+        'POST /auth/login': (call) => {
+          const body = JSON.parse(call.body!) as { tenant?: string }
+          if (!body.tenant) {
+            return errorResponse(
+              409,
+              'tenant_required',
+              'username exists in several tenants',
+            )
+          }
+          signedIn = true
+          return jsonResponse({
+            user: SESSION_ADMIN.user,
+            must_change_password: false,
+            csrf_token: CSRF,
+          })
+        },
+      })
+      const user = userEvent.setup()
+      const router = renderLogin()
+
+      await user.type(await screen.findByLabelText('Username'), 'jane')
+      await user.type(screen.getByLabelText('Password'), 'correct horse battery')
+      await user.click(screen.getByRole('button', { name: /^sign in$/i }))
+
+      // Not an error: the field appears, empty, with an explanation, and the
+      // password is kept for the retry.
+      const tenantField = await screen.findByLabelText('Tenant')
+      expect(tenantField).toHaveValue('')
+      expect(screen.getByTestId('tenant-required-notice')).toHaveTextContent(
+        'This username exists in more than one tenant.',
+      )
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Password')).toHaveValue('correct horse battery')
+
+      // Submitting without a tenant is caught client-side.
+      await user.click(screen.getByRole('button', { name: /^sign in$/i }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Enter your tenant.')
+      expect(calls.filter((c) => c.path === '/auth/login')).toHaveLength(1)
+
+      await user.type(tenantField, 'globex')
+      await user.click(screen.getByRole('button', { name: /^sign in$/i }))
+
+      await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+      const logins = calls.filter((c) => c.path === '/auth/login')
+      expect(logins).toHaveLength(2)
+      expect(JSON.parse(logins[0]!.body!)).toEqual({
+        username: 'jane',
+        password: 'correct horse battery',
+      })
+      expect(JSON.parse(logins[1]!.body!)).toEqual({
+        tenant: 'globex',
+        username: 'jane',
+        password: 'correct horse battery',
+      })
+    })
+
+    it('still shows the prefilled tenant field when the gateway requires one', async () => {
+      stubApi({
+        'GET /health': () => jsonResponse(HEALTH),
+        'GET /auth/config': () =>
+          jsonResponse({ ...AUTH_CONFIG, tenant_optional: false }),
+        'GET /auth/me': () => errorResponse(401, 'authentication_error', 'no session'),
+      })
+      renderLogin()
+      expect(await screen.findByLabelText('Tenant')).toHaveValue('acme')
+    })
+  })
+
   describe('first run (no console users yet)', () => {
     const FIRST_RUN = {
       ...AUTH_CONFIG,

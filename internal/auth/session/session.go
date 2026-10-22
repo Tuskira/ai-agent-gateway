@@ -174,10 +174,12 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*aut
 		}
 	}
 
+	// Expanded exactly like an API key's stored role: a platform-admin
+	// user is [admin, platform-admin], every other role maps to itself.
 	p := &auth.Principal{
 		Subject:            user.ID,
 		TenantID:           user.TenantID,
-		Roles:              []string{user.Role},
+		Roles:              auth.RolesForKey(user.Role),
 		AuthMethod:         auth.AuthMethodSession,
 		Username:           user.Username,
 		SessionID:          sess.ID,

@@ -194,6 +194,43 @@ func TestAuthenticate_MustChangePasswordFlag(t *testing.T) {
 	}
 }
 
+// A platform-admin user's session principal carries [admin, platform-admin],
+// exactly like a platform-admin API key (auth.RolesForKey); viewer and
+// admin users keep their single role.
+func TestAuthenticate_PlatformAdminRoles(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.user.Role = store.UserRolePlatformAdmin
+	if err := f.st.Users().Update(ctx, f.user); err != nil {
+		t.Fatal(err)
+	}
+	p, err := f.auth.Authenticate(ctx, f.req(f.raw))
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if len(p.Roles) != 2 || p.Roles[0] != "admin" || p.Roles[1] != auth.RolePlatformAdmin {
+		t.Errorf("Roles = %v, want [admin platform-admin]", p.Roles)
+	}
+	if !p.HasRole(auth.RolePlatformAdmin) || p.TenantID != "tenant-1" || p.HomeTenantID != "" || p.Home() != "tenant-1" {
+		t.Errorf("principal = %+v; want platform-admin role, home tenant-1, no override", p)
+	}
+	if !auth.NewRoleAuthorizer().Allow(ctx, p, auth.PermPlatformAdmin) {
+		t.Error("platform-admin session principal is denied platform.admin")
+	}
+
+	f.user.Role = store.UserRoleViewer
+	if err := f.st.Users().Update(ctx, f.user); err != nil {
+		t.Fatal(err)
+	}
+	p, err = f.auth.Authenticate(ctx, f.req(f.raw))
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if len(p.Roles) != 1 || p.Roles[0] != store.UserRoleViewer {
+		t.Errorf("Roles = %v, want [viewer]", p.Roles)
+	}
+}
+
 func TestSecureCookie(t *testing.T) {
 	plain := httptest.NewRequest(http.MethodGet, "/", nil)
 	fwd := httptest.NewRequest(http.MethodGet, "/", nil)

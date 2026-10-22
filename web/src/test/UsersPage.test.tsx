@@ -8,6 +8,7 @@ import { chooseRowAction } from './rowActions'
 import {
   CSRF,
   SESSION_ADMIN,
+  SESSION_PLATFORM_ADMIN,
   errorResponse,
   jsonResponse,
   renderWithAuth,
@@ -320,6 +321,109 @@ describe('UsersPage', () => {
 
     expect(await screen.findByText('Admin required')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /create user/i })).not.toBeInTheDocument()
+  })
+
+  describe('platform-admin role option', () => {
+    const WITH_PLATFORM_ADMIN = {
+      items: [
+        ...USERS.items,
+        {
+          id: 'u-ops',
+          username: 'ops',
+          display_name: 'Ops',
+          role: 'platform-admin',
+          disabled: false,
+          last_login_at: null,
+        },
+      ],
+      total: 3,
+    }
+
+    it('is not offered to a tenant admin, on create or edit', async () => {
+      stubApi({
+        'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
+        'GET /users': () => jsonResponse(WITH_PLATFORM_ADMIN),
+      })
+      const user = userEvent.setup()
+      renderPage()
+
+      await screen.findByText('ops')
+      await user.click(screen.getByRole('button', { name: /create user/i }))
+      await user.click(await screen.findByRole('combobox', { name: 'Role' }))
+      expect(await screen.findByRole('option', { name: 'viewer' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'admin' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'platform-admin' })).toBeNull()
+      expect(screen.queryByText(/act in every tenant/i)).toBeNull()
+      await user.keyboard('{Escape}')
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+      // Editing bob (a viewer): still only the two tenant roles.
+      await chooseRowAction(user, 'bob', 'Edit')
+      await user.click(await screen.findByRole('combobox', { name: 'Role' }))
+      expect(await screen.findByRole('option', { name: 'admin' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'platform-admin' })).toBeNull()
+    })
+
+    it("keeps a platform admin's current role visible but not pickable for a tenant admin", async () => {
+      stubApi({
+        'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
+        'GET /users': () => jsonResponse(WITH_PLATFORM_ADMIN),
+      })
+      const user = userEvent.setup()
+      renderPage()
+
+      await screen.findByText('ops')
+      await chooseRowAction(user, 'ops', 'Edit')
+      const picker = await screen.findByRole('combobox', { name: 'Role' })
+      expect(picker).toHaveTextContent('platform-admin')
+      await user.click(picker)
+      expect(
+        await screen.findByRole('option', { name: 'platform-admin' }),
+      ).toHaveAttribute('aria-disabled', 'true')
+    })
+
+    it('is offered to a platform admin and sent on create', async () => {
+      const calls = stubApi({
+        'GET /auth/me': () => jsonResponse(SESSION_PLATFORM_ADMIN),
+        'GET /users': () => jsonResponse(WITH_PLATFORM_ADMIN),
+        'POST /users': () =>
+          jsonResponse(
+            {
+              user: {
+                id: 'u-new',
+                username: 'root2',
+                display_name: '',
+                role: 'platform-admin',
+                disabled: false,
+              },
+              temporary_password: 'Tmp-Pass-2345-xyz',
+            },
+            201,
+          ),
+      })
+      const user = userEvent.setup()
+      renderPage()
+
+      await screen.findByText('ops')
+      // The badge gets its own colour.
+      expect(screen.getByText('platform-admin')).toHaveClass('bg-sev-medium-bg')
+      await user.click(screen.getByRole('button', { name: /create user/i }))
+      await user.type(await screen.findByLabelText('Username'), 'root2')
+      await user.click(screen.getByRole('combobox', { name: 'Role' }))
+      await user.click(await screen.findByRole('option', { name: 'platform-admin' }))
+      expect(screen.getByText(/act in every tenant/i)).toBeInTheDocument()
+      await user.click(
+        within(screen.getByRole('dialog')).getByRole('button', { name: /create user/i }),
+      )
+
+      await screen.findByTestId('temporary-password')
+      const post = calls.find((c) => c.method === 'POST' && c.path === '/users')!
+      expect(JSON.parse(post.body!)).toEqual({
+        username: 'root2',
+        role: 'platform-admin',
+      })
+    })
   })
 
   describe('no-admin lockout warning', () => {

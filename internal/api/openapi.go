@@ -53,6 +53,16 @@ func buildOpenAPI(routes []routeSpec, version string) []byte {
 		"info": map[string]any{
 			"title":   "Tusk AI Secured Gateway - Control Plane API",
 			"version": version,
+			"description": "Every tenant-scoped route acts in the caller's own tenant. " +
+				"A caller holding platform.admin (a platform-admin API key or a console user with role platform-admin) " +
+				"may act in another tenant for one request by sending X-Gateway-Acting-Tenant: <tenant UUID>. " +
+				"Without platform.admin the header is refused with 403 permission_error (never silently ignored); " +
+				"a value that is not a UUID is 400 validation_error and an unknown tenant is 404 not_found. " +
+				"The /auth/me, /auth/password and /auth/logout routes always act on the caller's own account; " +
+				"/auth/me reports tenant_id (the acting tenant) and home_tenant_id. " +
+				"Audit rows written while acting carry actor_tenant_id. " +
+				"POST /auth/login takes an optional tenant: without one the username is resolved across tenants " +
+				"(one match logs in, no match is the usual 401, several matches are 409 tenant_required).",
 		},
 		"servers": []map[string]string{{"url": "/api/v1"}},
 		"paths":   paths,

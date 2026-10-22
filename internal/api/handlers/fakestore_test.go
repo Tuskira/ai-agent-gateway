@@ -114,6 +114,16 @@ func (s *fakeTenantStore) Create(_ context.Context, t *store.Tenant) error {
 	return nil
 }
 
+func (s *fakeTenantStore) GetByID(_ context.Context, id string) (*store.Tenant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.byID[id]; ok {
+		cp := *t
+		return &cp, nil
+	}
+	return nil, store.ErrNotFound
+}
+
 func (s *fakeTenantStore) GetBySlug(_ context.Context, slug string) (*store.Tenant, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

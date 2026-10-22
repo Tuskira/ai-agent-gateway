@@ -71,6 +71,15 @@ var keyProfilesMigration string
 //go:embed migrations/000009_live_slugs.up.sql
 var liveSlugsMigration string
 
+// platformAdminMigration lets console users hold the platform-admin role
+// (users.role CHECK) and adds auth_audit.actor_tenant_id, the acting
+// principal's own tenant when it acted in another. Its sibling
+// 000010_platform_admin.down.sql is for a hand rollback only and fails
+// while platform-admin users exist (see its header).
+//
+//go:embed migrations/000010_platform_admin.up.sql
+var platformAdminMigration string
+
 // migrations are applied in version order; each is recorded in
 // schema_migrations once applied. Append new migrations here (with the next
 // version) — never edit one that has already shipped.
@@ -87,6 +96,7 @@ var migrations = []struct {
 	{7, mcpCatalogMigration},
 	{8, keyProfilesMigration},
 	{9, liveSlugsMigration},
+	{10, platformAdminMigration},
 }
 
 // migrationLockKey is an arbitrary constant used as a Postgres advisory

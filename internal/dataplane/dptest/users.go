@@ -64,6 +64,21 @@ func (u *userStore) GetByUsername(_ context.Context, tenantID, username string) 
 	return nil, store.ErrNotFound
 }
 
+func (u *userStore) FindByUsername(_ context.Context, username string) ([]*store.User, error) {
+	s := (*Store)(u)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []*store.User{}
+	for _, e := range s.users {
+		if e.DeletedAt == nil && e.Username == username {
+			cp := *e
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TenantID < out[j].TenantID })
+	return out, nil
+}
+
 func (u *userStore) List(_ context.Context, tenantID string, opts store.UserListOptions) ([]*store.User, error) {
 	s := (*Store)(u)
 	s.mu.Lock()
@@ -159,6 +174,19 @@ func (u *userStore) CountActiveAdmins(_ context.Context, tenantID string) (int, 
 	n := 0
 	for _, e := range s.users {
 		if e.DeletedAt == nil && e.TenantID == tenantID && e.Role == store.UserRoleAdmin && !e.Disabled {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (u *userStore) CountActivePlatformAdmins(_ context.Context) (int, error) {
+	s := (*Store)(u)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, e := range s.users {
+		if e.DeletedAt == nil && e.Role == store.UserRolePlatformAdmin && !e.Disabled {
 			n++
 		}
 	}

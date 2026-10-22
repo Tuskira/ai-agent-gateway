@@ -25,23 +25,43 @@ import {
 interface EditUserDialogProps {
   user: User | null
   onOpenChange: (open: boolean) => void
+  /** Offer the `platform-admin` role (platform sessions only; the API
+   * answers 403 to anyone else). */
+  allowPlatformAdmin?: boolean
 }
 
 /** Outer shell: the form is keyed by user id so its draft state starts fresh
  * for each user without an effect. */
-export function EditUserDialog({ user, onOpenChange }: EditUserDialogProps) {
+export function EditUserDialog({
+  user,
+  onOpenChange,
+  allowPlatformAdmin = false,
+}: EditUserDialogProps) {
   return (
     <Dialog open={user !== null} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         {user ? (
-          <EditUserForm key={user.id} user={user} onClose={() => onOpenChange(false)} />
+          <EditUserForm
+            key={user.id}
+            user={user}
+            allowPlatformAdmin={allowPlatformAdmin}
+            onClose={() => onOpenChange(false)}
+          />
         ) : null}
       </DialogContent>
     </Dialog>
   )
 }
 
-function EditUserForm({ user, onClose }: { user: User; onClose: () => void }) {
+function EditUserForm({
+  user,
+  allowPlatformAdmin,
+  onClose,
+}: {
+  user: User
+  allowPlatformAdmin: boolean
+  onClose: () => void
+}) {
   const updateUser = useUpdateUser()
   const [displayName, setDisplayName] = useState(user.display_name)
   const [role, setRole] = useState<UserRole>(user.role)
@@ -103,6 +123,14 @@ function EditUserForm({ user, onClose }: { user: User; onClose: () => void }) {
             <SelectContent>
               <SelectItem value="admin">admin</SelectItem>
               <SelectItem value="viewer">viewer</SelectItem>
+              {/* A tenant admin cannot grant or revoke platform-admin, but
+                  the current role must stay selectable so the picker is
+                  not blank when they open a platform admin's row. */}
+              {allowPlatformAdmin || user.role === 'platform-admin' ? (
+                <SelectItem value="platform-admin" disabled={!allowPlatformAdmin}>
+                  platform-admin
+                </SelectItem>
+              ) : null}
             </SelectContent>
           </Select>
         </div>

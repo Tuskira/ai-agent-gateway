@@ -58,6 +58,9 @@ func newAuthEnv(t *testing.T) *authEnv {
 	t.Helper()
 	deps := newTestDeps()
 	deps.Console = ConsoleConfig{APIKeyLogin: true, DefaultTenant: "acme", CookieSecure: "auto"}
+	// The users routes' platform-admin gates ask the Authorizer, as the
+	// router wires it in production.
+	deps.Authorizer = pkgauth.NewRoleAuthorizer()
 	fs := deps.Store.(*fakeStore)
 	env := &authEnv{deps: deps, fs: fs}
 	env.tenantA = &store.Tenant{Slug: "acme", Name: "Acme"}
@@ -92,11 +95,23 @@ func (e *authEnv) session(t *testing.T, u *store.User) (raw string, s *store.Use
 	return raw, s
 }
 
-// asUser attaches the Principal the session Authenticator would produce.
+// asUser attaches the Principal the session Authenticator would produce
+// (roles expanded like internal/auth/session does: a platform-admin user
+// is [admin, platform-admin]).
 func asUser(r *http.Request, u *store.User, s *store.UserSession) *http.Request {
+	return asActingUser(r, u, s, "")
+}
+
+// asActingUser is asUser after internalauth.TenantOverride redirected the
+// principal into actingTenantID (its home stays u.TenantID). An empty
+// actingTenantID is plain asUser.
+func asActingUser(r *http.Request, u *store.User, s *store.UserSession, actingTenantID string) *http.Request {
 	p := &pkgauth.Principal{
-		Subject: u.ID, TenantID: u.TenantID, Roles: []string{u.Role}, AuthMethod: pkgauth.AuthMethodSession,
+		Subject: u.ID, TenantID: u.TenantID, Roles: pkgauth.RolesForKey(u.Role), AuthMethod: pkgauth.AuthMethodSession,
 		Username: u.Username, MustChangePassword: u.MustChangePassword,
+	}
+	if actingTenantID != "" && actingTenantID != u.TenantID {
+		p.TenantID, p.HomeTenantID = actingTenantID, u.TenantID
 	}
 	if s != nil {
 		p.SessionID, p.CSRFToken = s.ID, s.CSRFToken
@@ -166,7 +181,7 @@ func TestAuthConfig_SingleTenant(t *testing.T) {
 	}
 	var got map[string]any
 	decodeInto(t, w, &got)
-	want := map[string]any{"password_login": true, "api_key_login": true, "single_tenant": true, "default_tenant": "only", "has_users": false}
+	want := map[string]any{"password_login": true, "api_key_login": true, "single_tenant": true, "default_tenant": "only", "has_users": false, "tenant_optional": true}
 	if len(got) != len(want) {
 		t.Errorf("config = %v, want exactly the keys %v", got, want)
 	}
@@ -449,8 +464,8 @@ func TestLogin_Validation(t *testing.T) {
 	}
 }
 
-func TestLogin_TenantDefaults(t *testing.T) {
-	// One tenant: the tenant field may be omitted.
+func TestLogin_WithoutTenant_SingleMatchLogsIn(t *testing.T) {
+	// One tenant: the tenant field may be omitted, as before.
 	deps := newTestDeps()
 	env := &authEnv{deps: deps, fs: deps.Store.(*fakeStore)}
 	env.tenantA = &store.Tenant{Slug: "solo", Name: "Solo"}
@@ -460,12 +475,132 @@ func TestLogin_TenantDefaults(t *testing.T) {
 		t.Errorf("single-tenant login without tenant: status = %d, body = %s", w.Code, w.Body.String())
 	}
 
-	// Several tenants and no configured default: omitting it cannot work.
+	// Several tenants, no configured default, the username in exactly one
+	// of them (not the first): the server finds the account itself.
 	multi := newAuthEnv(t)
 	multi.deps.Console.DefaultTenant = ""
 	multi.user(t, multi.tenantA.ID, "alice", store.UserRoleAdmin, pwAlice, false)
-	if w := login(Auth{Deps: multi.deps}, `{"username":"alice","password":"`+pwAlice+`"}`); w.Code != http.StatusUnauthorized {
-		t.Errorf("multi-tenant login without tenant or default: status = %d, want 401", w.Code)
+	gary := multi.user(t, multi.tenantB.ID, "gary", store.UserRoleViewer, pwBob, false)
+	w := login(Auth{Deps: multi.deps}, `{"username":"Gary","password":"`+pwBob+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("multi-tenant login without tenant: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got loginResponse
+	decodeInto(t, w, &got)
+	if got.User.ID != gary.ID || got.User.Tenant != "globex" {
+		t.Errorf("response = %+v, want gary in globex", got)
+	}
+	sess, err := multi.fs.UserSessions().Get(context.Background(), session.HashToken(w.Result().Cookies()[0].Value))
+	if err != nil || sess.TenantID != multi.tenantB.ID || sess.UserID != gary.ID {
+		t.Errorf("session = %+v, %v; want gary's, in tenant B", sess, err)
+	}
+	if e := hasAudit(multi.audit(t, multi.tenantB.ID), "login_ok"); e == nil || e.ActorID != gary.ID {
+		t.Errorf("login_ok audit in tenant B = %+v", e)
+	}
+	// An explicit tenant still works and still has to be the right one.
+	if w := login(Auth{Deps: multi.deps}, `{"tenant":"globex","username":"gary","password":"`+pwBob+`"}`); w.Code != http.StatusOK {
+		t.Errorf("login with tenant: status = %d", w.Code)
+	}
+	if w := login(Auth{Deps: multi.deps}, `{"tenant":"acme","username":"gary","password":"`+pwBob+`"}`); w.Code != http.StatusUnauthorized {
+		t.Errorf("login with the wrong tenant: status = %d, want 401", w.Code)
+	}
+}
+
+func TestLogin_WithoutTenant_DuplicateUsernameNeedsTenant(t *testing.T) {
+	env := newAuthEnv(t)
+	spy := &throttleSpy{}
+	env.deps.LoginThrottle = spy
+	a := env.user(t, env.tenantA.ID, "sam@example.com", store.UserRoleAdmin, pwAlice, false)
+	b := env.user(t, env.tenantB.ID, "sam@example.com", store.UserRoleViewer, pwBob, false)
+	h := Auth{Deps: env.deps}
+
+	w := login(h, `{"username":"sam@example.com","password":"`+pwAlice+`"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body = %s", w.Code, w.Body.String())
+	}
+	assertErrorType(t, w, "tenant_required")
+	body := w.Body.String()
+	for _, leak := range []string{"acme", "globex", env.tenantA.ID, env.tenantB.ID, "Acme", "Globex"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("409 body names a tenant (%q): %s", leak, body)
+		}
+	}
+	if !strings.Contains(body, "choose a tenant") {
+		t.Errorf("body = %s, want the generic choose-a-tenant message", body)
+	}
+	if len(w.Result().Cookies()) != 0 {
+		t.Error("an ambiguous login set a cookie")
+	}
+	// Same answer with the password empty-handed: the 409 is not a
+	// password oracle (no hash is checked before the tenant is known).
+	if w := login(h, `{"username":"sam@example.com","password":"not-anyones-password"}`); w.Code != http.StatusConflict {
+		t.Errorf("ambiguous login with a wrong password: status = %d, want 409", w.Code)
+	}
+	// Probing for 409s is priced like guessing passwords: each attempt is
+	// a throttle strike and a login_fail row, filed under no tenant (the
+	// body names none, so neither does the trail).
+	if spy.failures != 2 || spy.success != 0 {
+		t.Errorf("throttle saw %d failures, %d successes; want 2 and 0", spy.failures, spy.success)
+	}
+	for _, tn := range []string{env.tenantA.ID, env.tenantB.ID} {
+		if n := len(env.audit(t, tn)); n != 0 {
+			t.Errorf("tenant %s got %d audit rows from an ambiguous login, want 0", tn, n)
+		}
+	}
+	rows := 0
+	for _, e := range env.audit(t, "") {
+		if e.Action == "login_fail" && e.Detail == "tenant_required" && e.ActorID == "sam@example.com" && e.TargetUserID == "" {
+			rows++
+		}
+	}
+	if rows != 2 {
+		t.Errorf("login_fail/tenant_required audit rows = %d, want 2", rows)
+	}
+
+	// Naming the tenant picks the account.
+	for _, c := range []struct {
+		tenant, pw string
+		want       *store.User
+	}{{"acme", pwAlice, a}, {"globex", pwBob, b}} {
+		w := login(h, `{"tenant":"`+c.tenant+`","username":"sam@example.com","password":"`+c.pw+`"}`)
+		var got loginResponse
+		decodeInto(t, w, &got)
+		if w.Code != http.StatusOK || got.User.ID != c.want.ID || got.User.Tenant != c.tenant {
+			t.Errorf("login in %s: status = %d, user = %+v; want %s", c.tenant, w.Code, got.User, c.want.ID)
+		}
+	}
+}
+
+func TestLogin_WithoutTenant_UnknownIsTheGeneric401(t *testing.T) {
+	env := newAuthEnv(t)
+	spy := &throttleSpy{}
+	env.deps.LoginThrottle = spy
+	env.user(t, env.tenantA.ID, "alice", store.UserRoleAdmin, pwAlice, false)
+	h := Auth{Deps: env.deps}
+
+	wrongPW := login(h, `{"tenant":"acme","username":"alice","password":"not-the-password"}`)
+	unknown := login(h, `{"username":"nobody","password":"`+pwAlice+`"}`)
+	if wrongPW.Code != http.StatusUnauthorized || unknown.Code != http.StatusUnauthorized {
+		t.Fatalf("status: wrong password %d, unknown user without tenant %d; want 401 and 401", wrongPW.Code, unknown.Code)
+	}
+	if unknown.Body.String() != wrongPW.Body.String() {
+		t.Errorf("unknown-user body %q differs from wrong-password body %q", unknown.Body.String(), wrongPW.Body.String())
+	}
+	if len(unknown.Result().Cookies()) != 0 {
+		t.Error("a failed login set a cookie")
+	}
+	if spy.failures != 2 {
+		t.Errorf("throttle saw %d failures, want 2", spy.failures)
+	}
+	// The reason is recorded for admins (no tenant to file it under).
+	found := false
+	for _, e := range env.audit(t, "") {
+		if e.Action == "login_fail" && e.Detail == "unknown_user" && e.ActorID == "nobody" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no login_fail/unknown_user audit row for the tenant-less attempt")
 	}
 }
 
@@ -485,7 +620,7 @@ func TestMe_User(t *testing.T) {
 	}
 	var got meView
 	decodeInto(t, w, &got)
-	if got.Kind != "user" || got.Subject != alice.ID || got.TenantID != env.tenantA.ID || got.AuthMethod != "session" ||
+	if got.Kind != "user" || got.Subject != alice.ID || got.TenantID != env.tenantA.ID || got.HomeTenantID != env.tenantA.ID || got.AuthMethod != "session" ||
 		got.User == nil || got.User.Username != "alice@example.com" || got.User.Tenant != "acme" || got.User.Role != "admin" ||
 		got.MustChangePassword == nil || !*got.MustChangePassword || got.CSRFToken != sess.CSRFToken || got.KeyID != "" {
 		t.Errorf("me = %+v (user %+v)", got, got.User)
@@ -504,6 +639,30 @@ func TestMe_APIKeyKeepsLegacyShape(t *testing.T) {
 		if _, ok := raw[k]; ok {
 			t.Errorf("an API-key /auth/me carries %q", k)
 		}
+	}
+}
+
+func TestMe_PlatformAdminActingShowsHomeTenant(t *testing.T) {
+	env := newAuthEnv(t)
+	root := env.user(t, env.tenantA.ID, "root", store.UserRolePlatformAdmin, pwAlice, false)
+	_, sess := env.session(t, root)
+	h := Auth{Deps: env.deps}
+
+	w := serve(http.MethodGet, "/auth/me", h.Me, asActingUser(httptest.NewRequest(http.MethodGet, "/auth/me", nil), root, sess, env.tenantB.ID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got meView
+	decodeInto(t, w, &got)
+	if got.TenantID != env.tenantB.ID || got.HomeTenantID != env.tenantA.ID {
+		t.Errorf("tenant_id = %s, home_tenant_id = %s; want acting %s, home %s", got.TenantID, got.HomeTenantID, env.tenantB.ID, env.tenantA.ID)
+	}
+	// The account shown is the real one, in its home tenant.
+	if got.Kind != "user" || got.User == nil || got.User.ID != root.ID || got.User.Tenant != "acme" || got.User.Role != "platform-admin" {
+		t.Errorf("me.user = %+v, want root in acme", got.User)
+	}
+	if !strings.Contains(strings.Join(got.Roles, ","), "platform-admin") || !strings.Contains(strings.Join(got.Roles, ","), "admin") {
+		t.Errorf("roles = %v, want admin and platform-admin", got.Roles)
 	}
 }
 
@@ -535,6 +694,27 @@ func TestLogout_RevokesSessionAndClearsCookie(t *testing.T) {
 	}
 	if hasAudit(env.audit(t, env.tenantA.ID), "logout") == nil {
 		t.Error("no logout audit row")
+	}
+}
+
+func TestLogout_WhileActingAuditsTheHomeTenant(t *testing.T) {
+	env := newAuthEnv(t)
+	root := env.user(t, env.tenantA.ID, "root", store.UserRolePlatformAdmin, pwAlice, false)
+	_, s := env.session(t, root)
+	h := Auth{Deps: env.deps}
+
+	w := serve(http.MethodPost, "/auth/logout", h.Logout, asActingUser(httptest.NewRequest(http.MethodPost, "/auth/logout", nil), root, s, env.tenantB.ID))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if got, _ := env.fs.UserSessions().Get(context.Background(), s.ID); got.RevokedAt == nil {
+		t.Error("the calling session was not revoked")
+	}
+	if e := hasAudit(env.audit(t, env.tenantA.ID), "logout"); e == nil || e.ActorTenantID != "" {
+		t.Errorf("home-tenant logout audit = %+v, want a local row", e)
+	}
+	if hasAudit(env.audit(t, env.tenantB.ID), "logout") != nil {
+		t.Error("logout was audited in the acting tenant")
 	}
 }
 
@@ -581,6 +761,27 @@ func TestChangePassword_Success(t *testing.T) {
 	}
 	if hasAudit(env.audit(t, env.tenantA.ID), "password_change") == nil {
 		t.Error("no password_change audit row")
+	}
+}
+
+func TestChangePassword_WhileActingTargetsTheHomeAccount(t *testing.T) {
+	env := newAuthEnv(t)
+	root := env.user(t, env.tenantA.ID, "root", store.UserRolePlatformAdmin, pwAlice, true)
+	_, s := env.session(t, root)
+	const newPW = "a-brand-new-password"
+	h := Auth{Deps: env.deps}
+
+	req := asActingUser(jsonReq(http.MethodPost, "/auth/password", `{"current_password":"`+pwAlice+`","new_password":"`+newPW+`"}`), root, s, env.tenantB.ID)
+	w := serve(http.MethodPost, "/auth/password", h.ChangePassword, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	u, _ := env.fs.Users().Get(context.Background(), env.tenantA.ID, root.ID)
+	if ok, _ := password.Verify(newPW, u.PasswordHash); !ok || u.MustChangePassword {
+		t.Errorf("home account after change: verifies = %v, must_change = %v", ok, u.MustChangePassword)
+	}
+	if hasAudit(env.audit(t, env.tenantA.ID), "password_change") == nil || hasAudit(env.audit(t, env.tenantB.ID), "password_change") != nil {
+		t.Error("password_change must be audited in the home tenant only")
 	}
 }
 

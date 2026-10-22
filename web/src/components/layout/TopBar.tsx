@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
 import { findNavItem, OVERVIEW_PATH } from '@/lib/nav'
+import { TenantSwitcher } from '@/components/layout/TenantSwitcher'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -32,7 +33,7 @@ interface TopBarProps {
 }
 
 export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBarProps) {
-  const { principal, signOut } = useAuth()
+  const { principal, signOut, isPlatformAdmin, actingTenantId } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [copied, setCopied] = useState(false)
@@ -45,12 +46,15 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
     ? `${sessionUser.role} · ${sessionUser.tenant}`
     : 'API key'
   const initials = (accountName || '?').slice(0, 2).toUpperCase()
-  const tenantIdShort = principal ? principal.tenant_id.slice(0, 8) : ''
+  // Platform sessions show (and copy) the tenant they act in, which may
+  // differ from the account's own; everyone else sees their one tenant.
+  const shownTenantId = principal ? (actingTenantId ?? principal.tenant_id) : ''
+  const tenantIdShort = shownTenantId.slice(0, 8)
 
   async function copyTenantId() {
-    if (!principal) return
+    if (!shownTenantId) return
     try {
-      await navigator.clipboard.writeText(principal.tenant_id)
+      await navigator.clipboard.writeText(shownTenantId)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -91,12 +95,18 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
         aria-label="Breadcrumb"
         className="flex min-w-0 items-center gap-1.5 truncate text-[13px] whitespace-nowrap"
       >
-        <span className="hidden text-text-subtle md:inline">Tenant</span>
+        {isPlatformAdmin ? (
+          <TenantSwitcher />
+        ) : (
+          <span className="hidden text-text-subtle md:inline">Tenant</span>
+        )}
         <ChevronRight
           className="hidden size-3.5 shrink-0 text-text-subtle md:inline"
           aria-hidden="true"
         />
-        <span className="hidden font-semibold text-foreground md:inline">AI Agent Gateway</span>
+        <span className="hidden font-semibold text-foreground md:inline">
+          AI Agent Gateway
+        </span>
         <ChevronRight
           className="hidden size-3.5 shrink-0 text-text-subtle md:inline"
           aria-hidden="true"
@@ -137,13 +147,17 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
             <span className="truncate font-mono text-[13px] text-foreground lg:hidden">
               {tenantIdShort}&hellip;
             </span>
-            <span className="hidden truncate text-[13px] text-foreground lg:inline">
-              {principal?.tenant_id}
+            <span
+              className="hidden truncate text-[13px] text-foreground lg:inline"
+              data-testid="tenant-id-pill"
+            >
+              {shownTenantId}
             </span>
             <button
               type="button"
               onClick={copyTenantId}
               title={copied ? 'Copied' : 'Copy tenant ID'}
+              aria-label="Copy tenant ID"
               className="flex size-[26px] shrink-0 items-center justify-center rounded-r-2 text-text-subtle transition-colors hover:bg-muted hover:text-foreground"
             >
               <Copy className="size-3.5" aria-hidden="true" />

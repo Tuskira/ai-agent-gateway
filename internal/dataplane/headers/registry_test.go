@@ -192,6 +192,7 @@ func TestRegistry_IncomingField_Denylist(t *testing.T) {
 	req.Header.Set("X-Tenant-Id", "tenant-a")
 	req.Header.Set("Tenantid", "tenant-a")
 	req.Header.Set("X-Gateway-Key", "gk_x")
+	req.Header.Set("X-Gateway-Acting-Tenant", "11111111-1111-1111-1111-111111111111")
 	req.Header.Set("Mcp-Session-Id", "sess-1")
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Transfer-Encoding", "chunked")
@@ -201,6 +202,7 @@ func TestRegistry_IncomingField_Denylist(t *testing.T) {
 		"X-Tenant-Id", "x-tenant-id",
 		"TenantId", "tenantid",
 		"X-Gateway-Key",
+		"X-Gateway-Acting-Tenant", "x-gateway-acting-tenant",
 		"mcp-session-id", "Mcp-Session-Id", "MCP-Foo",
 		"Connection", "Transfer-Encoding",
 	}

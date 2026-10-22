@@ -44,6 +44,49 @@ export const SESSION_VIEWER = {
   user: { ...SESSION_ADMIN.user, id: 'u-vic', username: 'vic', role: 'viewer' },
 }
 
+/** A platform administrator's cookie session. `roles` carries both `admin`
+ * and `platform-admin`; `home_tenant_id` is the account's own tenant and
+ * `tenant_id` the one the request acted in (the same here: no header yet). */
+export const SESSION_PLATFORM_ADMIN = {
+  ...SESSION_ADMIN,
+  subject: 'ops',
+  tenant_id: 'tenant-uuid-1',
+  home_tenant_id: 'tenant-uuid-1',
+  roles: ['admin', 'platform-admin'],
+  user: {
+    ...SESSION_ADMIN.user,
+    id: 'u-ops',
+    username: 'ops',
+    display_name: 'Ops',
+    role: 'platform-admin',
+  },
+}
+
+/** `GET /tenants?limit=200` as the platform routes return it. */
+export const TENANTS = {
+  items: [
+    {
+      id: 'tenant-uuid-1',
+      slug: 'acme',
+      name: 'Acme',
+      created_at: '2026-01-05T10:00:00Z',
+    },
+    {
+      id: 'tenant-uuid-2',
+      slug: 'globex',
+      name: 'Globex',
+      created_at: '2026-02-11T09:30:00Z',
+    },
+    {
+      id: 'tenant-uuid-3',
+      slug: 'initech',
+      name: 'Initech',
+      created_at: '2026-03-20T15:45:00Z',
+    },
+  ],
+  total: 3,
+}
+
 export const AUTH_CONFIG = {
   password_login: true,
   api_key_login: true,

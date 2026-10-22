@@ -26,22 +26,50 @@ import (
 // does not -- so a read-only user cannot even list users, and an agent key
 // gets 403. Admin-role API keys pass, so automation can create users and
 // reset passwords; those calls are audited with actor_kind "api_key".
-// Everything is scoped to the caller's tenant; another tenant's user id is
-// a 404.
+// Everything is scoped to the caller's tenant -- the acting tenant while a
+// platform-admin sends X-Gateway-Acting-Tenant -- and another tenant's
+// user id is a 404.
+//
+// The platform-admin role is special: giving it to a user (create, or a
+// PATCH of role), and disabling, deleting, editing, resetting or logging
+// out a user who holds it, needs the caller to hold platform.admin itself
+// (403 otherwise), so a tenant admin can neither mint a platform-admin nor
+// touch one that lives in its tenant. The last active platform-admin
+// across all tenants cannot be disabled, deleted or demoted (409
+// last_platform_admin); `gateway create-user -role platform-admin` is the
+// recovery path.
 type Users struct{ Deps }
 
-// Error types of the two guards (HTTP 409).
+// Error types of the guards (HTTP 409).
 const (
-	typeLastAdmin  = "last_admin"
-	typeSelfAction = "self_action"
+	typeLastAdmin         = "last_admin"
+	typeLastPlatformAdmin = "last_platform_admin"
+	typeSelfAction        = "self_action"
 )
 
 func validateUserRole(role string) error {
-	if role != store.UserRoleAdmin && role != store.UserRoleViewer {
-		return errors.New("role must be one of: admin, viewer")
+	switch role {
+	case store.UserRoleAdmin, store.UserRoleViewer, store.UserRolePlatformAdmin:
+		return nil
 	}
-	return nil
+	return errors.New("role must be one of: admin, viewer, platform-admin")
 }
+
+// requirePlatformAdmin writes a 403 and returns false unless the caller
+// holds platform.admin. It is the gate on everything that creates or
+// touches a platform-admin user; like APIKeys.checkPlatformRole a nil
+// Authorizer denies rather than trusting anyone.
+func (h Users) requirePlatformAdmin(w http.ResponseWriter, r *http.Request, what string) bool {
+	p, _ := pkgauth.PrincipalFrom(r.Context())
+	if h.Authorizer != nil && h.Authorizer.Allow(r.Context(), p, pkgauth.PermPlatformAdmin) {
+		return true
+	}
+	httpx.WriteError(w, http.StatusForbidden, httpx.TypePermission, what+" requires platform.admin")
+	return false
+}
+
+// isPlatformAdmin reports whether u holds the platform-admin role.
+func isPlatformAdmin(u *store.User) bool { return u.Role == store.UserRolePlatformAdmin }
 
 func validateDisplayName(s string) error {
 	if len([]rune(s)) > 128 {
@@ -124,6 +152,9 @@ func (h Users) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.ValidationError(w, err.Error())
 		return
 	}
+	if req.Role == store.UserRolePlatformAdmin && !h.requirePlatformAdmin(w, r, "creating a user with role platform-admin") {
+		return
+	}
 
 	plain, temporary := "", false
 	if req.Password != nil {
@@ -164,7 +195,7 @@ func (h Users) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
-// List handles GET /api/v1/users (optional ?role=admin|viewer).
+// List handles GET /api/v1/users (optional ?role=admin|viewer|platform-admin).
 func (h Users) List(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -228,15 +259,38 @@ func (h Users) guardLastAdmin(w http.ResponseWriter, r *http.Request, u *store.U
 	return true
 }
 
+// guardLastPlatformAdmin is guardLastAdmin's platform-wide twin: it writes
+// the 409 and returns false when u is an enabled platform-admin and the
+// only active one in the whole deployment.
+func (h Users) guardLastPlatformAdmin(w http.ResponseWriter, r *http.Request, u *store.User) bool {
+	if !isPlatformAdmin(u) || u.Disabled {
+		return true
+	}
+	n, err := h.Store.Users().CountActivePlatformAdmins(r.Context())
+	if err != nil {
+		writeStoreErr(w, r, "count active platform admins", err)
+		return false
+	}
+	if n <= 1 {
+		httpx.WriteError(w, http.StatusConflict, typeLastPlatformAdmin, "cannot disable, delete or demote the last active platform-admin")
+		return false
+	}
+	return true
+}
+
 func selfActionConflict(w http.ResponseWriter) {
 	httpx.WriteError(w, http.StatusConflict, typeSelfAction, "you cannot disable, delete or demote your own account")
 }
 
 // Update handles PATCH /api/v1/users/{id}: display_name, role and
 // disabled. The username is immutable (an unknown field, so a 400). You
-// cannot disable or demote yourself (409 self_action), and nobody can
-// disable or demote a tenant's last active admin (409 last_admin).
-// Disabling revokes the user's sessions.
+// cannot disable or demote yourself (409 self_action), nobody can disable
+// or demote a tenant's last active admin (409 last_admin) or the
+// deployment's last active platform-admin (409 last_platform_admin), and
+// a patch that gives or touches the platform-admin role needs
+// platform.admin (403). Promoting a tenant's only admin to platform-admin
+// is allowed: it keeps the admin grants. Disabling revokes the user's
+// sessions.
 func (h Users) Update(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -269,6 +323,13 @@ func (h Users) Update(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, r, "update user", err)
 		return
 	}
+	if isPlatformAdmin(u) && !h.requirePlatformAdmin(w, r, "editing a platform-admin user") {
+		return
+	}
+	if req.Role != nil && *req.Role == store.UserRolePlatformAdmin && !isPlatformAdmin(u) &&
+		!h.requirePlatformAdmin(w, r, "assigning role platform-admin") {
+		return
+	}
 
 	newDisabled := u.Disabled
 	if req.Disabled != nil {
@@ -279,13 +340,19 @@ func (h Users) Update(w http.ResponseWriter, r *http.Request) {
 		newRole = *req.Role
 	}
 	disabling := newDisabled && !u.Disabled
-	demoting := u.Role == store.UserRoleAdmin && newRole != store.UserRoleAdmin
+	// "demoting" is a role change that takes admin grants away: admin ->
+	// viewer, or platform-admin -> anything else. admin -> platform-admin
+	// is not one: the user keeps every admin grant, so a tenant whose only
+	// admin is promoted still has an admin-capable user, even though
+	// CountActiveAdmins (role admin only) then reads zero for it.
+	demoting := (u.Role == store.UserRoleAdmin && newRole != store.UserRoleAdmin && newRole != store.UserRolePlatformAdmin) ||
+		(isPlatformAdmin(u) && newRole != u.Role)
 	if disabling || demoting {
 		if id == selfID(r) {
 			selfActionConflict(w)
 			return
 		}
-		if !h.guardLastAdmin(w, r, u) {
+		if !h.guardLastAdmin(w, r, u) || !h.guardLastPlatformAdmin(w, r, u) {
 			return
 		}
 	}
@@ -321,8 +388,9 @@ func (h Users) Update(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, newUserView(u))
 }
 
-// Delete handles DELETE /api/v1/users/{id} (soft). Same self and last-admin
-// guards as Update; revokes the user's sessions.
+// Delete handles DELETE /api/v1/users/{id} (soft). Same self, last-admin,
+// last-platform-admin and platform.admin guards as Update; revokes the
+// user's sessions.
 func (h Users) Delete(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -334,11 +402,14 @@ func (h Users) Delete(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, r, "delete user", err)
 		return
 	}
+	if isPlatformAdmin(u) && !h.requirePlatformAdmin(w, r, "deleting a platform-admin user") {
+		return
+	}
 	if id == selfID(r) {
 		selfActionConflict(w)
 		return
 	}
-	if !h.guardLastAdmin(w, r, u) {
+	if !h.guardLastAdmin(w, r, u) || !h.guardLastPlatformAdmin(w, r, u) {
 		return
 	}
 	if err := h.Store.Users().SoftDelete(r.Context(), tid, id); err != nil {
@@ -359,7 +430,8 @@ type resetPasswordResponse struct {
 // ResetPassword handles POST /api/v1/users/{id}/reset-password: sets a new
 // random temporary password (returned once), forces a change at next
 // login, and revokes all of the user's sessions. There is no email
-// reset: this, or `gateway reset-password`, is the only way.
+// reset: this, or `gateway reset-password`, is the only way. Resetting a
+// platform-admin needs platform.admin.
 func (h Users) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -369,6 +441,9 @@ func (h Users) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	u, err := h.Store.Users().Get(r.Context(), tid, id)
 	if err != nil {
 		writeStoreErr(w, r, "reset password", err)
+		return
+	}
+	if isPlatformAdmin(u) && !h.requirePlatformAdmin(w, r, "resetting a platform-admin user's password") {
 		return
 	}
 	temp, err := password.GenerateTemporary()
@@ -397,15 +472,20 @@ func (h Users) ResetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // RevokeSessions handles POST /api/v1/users/{id}/revoke-sessions: logs the
-// user out everywhere.
+// user out everywhere. Revoking a platform-admin's sessions needs
+// platform.admin.
 func (h Users) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if _, err := h.Store.Users().Get(r.Context(), tid, id); err != nil {
+	u, err := h.Store.Users().Get(r.Context(), tid, id)
+	if err != nil {
 		writeStoreErr(w, r, "revoke sessions", err)
+		return
+	}
+	if isPlatformAdmin(u) && !h.requirePlatformAdmin(w, r, "revoking a platform-admin user's sessions") {
 		return
 	}
 	n, err := h.Store.UserSessions().RevokeAllForUser(r.Context(), id, "")
@@ -420,14 +500,17 @@ func (h Users) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type auditEntryView struct {
-	ID           int64  `json:"id"`
-	ActorKind    string `json:"actor_kind"`
-	ActorID      string `json:"actor_id"`
-	Action       string `json:"action"`
-	TargetUserID string `json:"target_user_id,omitempty"`
-	IP           string `json:"ip,omitempty"`
-	Detail       string `json:"detail,omitempty"`
-	At           string `json:"at"`
+	ID        int64  `json:"id"`
+	ActorKind string `json:"actor_kind"`
+	ActorID   string `json:"actor_id"`
+	// ActorTenantID is set when the actor belonged to another tenant (a
+	// platform-admin acting here); empty for a local actor.
+	ActorTenantID string `json:"actor_tenant_id,omitempty"`
+	Action        string `json:"action"`
+	TargetUserID  string `json:"target_user_id,omitempty"`
+	IP            string `json:"ip,omitempty"`
+	Detail        string `json:"detail,omitempty"`
+	At            string `json:"at"`
 }
 
 // Audit handles GET /api/v1/auth/audit: the tenant's authentication audit
@@ -457,7 +540,7 @@ func (h Users) Audit(w http.ResponseWriter, r *http.Request) {
 	views := make([]auditEntryView, 0, len(entries))
 	for _, e := range entries {
 		views = append(views, auditEntryView{
-			ID: e.ID, ActorKind: e.ActorKind, ActorID: e.ActorID, Action: e.Action,
+			ID: e.ID, ActorKind: e.ActorKind, ActorID: e.ActorID, ActorTenantID: e.ActorTenantID, Action: e.Action,
 			TargetUserID: e.TargetUserID, IP: e.IP, Detail: e.Detail, At: formatTime(e.At),
 		})
 	}

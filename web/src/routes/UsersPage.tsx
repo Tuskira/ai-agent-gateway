@@ -43,6 +43,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 const ROLE_CLASS: Record<string, string> = {
   admin: 'bg-status-open-bg text-status-open',
   viewer: 'bg-bg-muted text-text-muted',
+  'platform-admin': 'bg-sev-medium-bg text-sev-medium-fg',
 }
 
 function RoleBadge({ role }: { role: string }) {
@@ -56,7 +57,7 @@ function RoleBadge({ role }: { role: string }) {
 }
 
 export default function UsersPage() {
-  const { mode } = useAuth()
+  const { mode, isPlatformAdmin } = useAuth()
   const usersQuery = useUsersList()
   const updateUser = useUpdateUser()
   const deleteUser = useDeleteUser()
@@ -79,7 +80,7 @@ export default function UsersPage() {
   const noAdminUser =
     mode === 'api_key' &&
     usersQuery.isSuccess &&
-    !items.some((u) => u.role === 'admin' && !u.disabled)
+    !items.some((u) => (u.role === 'admin' || u.role === 'platform-admin') && !u.disabled)
 
   function fail(err: unknown, fallback: string) {
     setActionError(describeUserError(err, fallback))
@@ -322,10 +323,12 @@ export default function UsersPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         onTemporaryPassword={setRevealed}
+        allowPlatformAdmin={isPlatformAdmin}
       />
       <EditUserDialog
         user={editTarget}
         onOpenChange={(open) => !open && setEditTarget(null)}
+        allowPlatformAdmin={isPlatformAdmin}
       />
       <RevealPasswordDialog revealed={revealed} onOpenChange={() => setRevealed(null)} />
       <ConfirmDialog

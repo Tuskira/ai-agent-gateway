@@ -50,8 +50,11 @@ func platformRouter(t *testing.T, logger *slog.Logger) http.Handler {
 			"viewer":      {Subject: "viewer-key", TenantID: "t", Roles: []string{"viewer"}, AuthMethod: "apikey"},
 			"interceptor": {Subject: "icp-key", TenantID: "t", Roles: []string{"interceptor"}, AuthMethod: "apikey"},
 			"ops":         {Subject: "ops-key", TenantID: "t", Roles: []string{"ops"}, AuthMethod: "apikey"},
-			"console":     {Subject: "user-1", TenantID: "t", Roles: []string{"admin", "platform-admin"}, AuthMethod: pkgauth.AuthMethodSession, CSRFToken: "csrf"},
+			"console":     {Subject: "user-1", TenantID: "t", Roles: []string{"admin"}, AuthMethod: pkgauth.AuthMethodSession, CSRFToken: "csrf"},
 			"platform":    {Subject: "platform-key", TenantID: "home", Roles: pkgauth.RolesForKey(pkgauth.RolePlatformAdmin), AuthMethod: "apikey"},
+			// A console user with store role platform-admin: the session
+			// authenticator expands it exactly like a platform-admin key.
+			"console-platform": {Subject: "user-2", TenantID: "home", Roles: pkgauth.RolesForKey(pkgauth.RolePlatformAdmin), AuthMethod: pkgauth.AuthMethodSession, CSRFToken: "csrf"},
 		}},
 	})
 }
@@ -66,11 +69,11 @@ func doPlatform(h http.Handler, c platformCall, token string) *httptest.Response
 	return w
 }
 
-// Every platform route refuses everyone but a platform-admin key: tenant
-// admins (even for their own tenant), agents, viewers, interceptors, a
-// custom role holding a different platform.* permission, and a console
-// session (even one whose roles include platform-admin). The denial must
-// come from the permission layer, not from CSRF or validation.
+// Every platform route refuses everyone but a platform-admin -- key or
+// console user: tenant admins (even for their own tenant), agents,
+// viewers, interceptors, a custom role holding a different platform.*
+// permission, and a console admin session. The denial must come from the
+// permission layer, not from CSRF or validation.
 func TestPlatformRoutes_RefuseEveryoneButPlatformAdmin(t *testing.T) {
 	h := platformRouter(t, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
 	for _, c := range platformRoutes {
@@ -80,8 +83,10 @@ func TestPlatformRoutes_RefuseEveryoneButPlatformAdmin(t *testing.T) {
 				t.Errorf("%s %s %s %s = %d %s, want 403 permission_error", who, c.method, c.path, c.body, w.Code, w.Body.String())
 			}
 		}
-		if w := doPlatform(h, c, "platform"); w.Code == http.StatusForbidden || w.Code == http.StatusUnauthorized {
-			t.Errorf("platform %s %s = %d, want the permission to pass", c.method, c.path, w.Code)
+		for _, who := range []string{"platform", "console-platform"} {
+			if w := doPlatform(h, c, who); w.Code == http.StatusForbidden || w.Code == http.StatusUnauthorized {
+				t.Errorf("%s %s %s = %d, want the permission to pass", who, c.method, c.path, w.Code)
+			}
 		}
 	}
 }

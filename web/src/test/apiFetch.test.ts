@@ -142,7 +142,7 @@ describe('apiFetch session auth', () => {
     expect(calls.find((c) => c.method === 'POST')!.headers['X-CSRF-Token']).toBe('tok')
   })
 
-  it('never sends the acting-tenant header to the self-service /auth/* routes', async () => {
+  it('never sends the acting-tenant header to the self-service /auth routes', async () => {
     setActingTenant('tenant-uuid-2')
     const calls = stubApi({
       'GET /auth/me': ok,
@@ -150,7 +150,7 @@ describe('apiFetch session auth', () => {
       'POST /auth/logout': ok,
       'POST /auth/password': ok,
       'GET /auth/config': ok,
-      'GET /authors': ok,
+      'GET /auth/config?x=1': ok,
     })
 
     await apiFetch('/auth/me')
@@ -158,15 +158,31 @@ describe('apiFetch session auth', () => {
     await apiFetch('/auth/logout', { method: 'POST' })
     await apiFetch('/auth/password', { method: 'POST' })
     await apiFetch('/auth/config')
-    // Only the `/auth/` prefix is exempt, not every path starting with "auth".
-    await apiFetch('/authors')
+    await apiFetch('/auth/config?x=1')
 
-    for (const call of calls.filter((c) => c.path.startsWith('/auth/'))) {
+    expect(calls).toHaveLength(6)
+    for (const call of calls) {
       expect(call.headers[ACTING_TENANT_HEADER]).toBeUndefined()
     }
-    expect(calls.find((c) => c.path === '/authors')!.headers[ACTING_TENANT_HEADER]).toBe(
-      'tenant-uuid-2',
-    )
+  })
+
+  it('sends the acting-tenant header to /auth/audit: the trail is tenant-scoped, not self-service', async () => {
+    setActingTenant('tenant-uuid-2')
+    const calls = stubApi({
+      'GET /auth/audit': ok,
+      'GET /auth/audit?limit=50&offset=0': ok,
+      'GET /authors': ok,
+    })
+
+    await apiFetch('/auth/audit')
+    await apiFetch('/auth/audit?limit=50&offset=0')
+    // An exact list is exempt, not every path starting with "/auth".
+    await apiFetch('/authors')
+
+    expect(calls).toHaveLength(3)
+    for (const call of calls) {
+      expect(call.headers[ACTING_TENANT_HEADER]).toBe('tenant-uuid-2')
+    }
   })
 
   it('clearing the selection stops the header on the next call', async () => {

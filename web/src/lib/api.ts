@@ -101,10 +101,23 @@ export function getActingTenant(): string | null {
   return actingTenantId
 }
 
-/** Self-service routes (login, me, logout, password change) must always hit
- * the account's own tenant, so the acting header is never sent to them. */
+/** The routes that act on the signed-in account itself (and the public
+ * login config). An exact list, not the `/auth/` prefix: `GET /auth/audit`
+ * is the acting tenant's trail and must carry the header like any other
+ * tenant-scoped route. */
+const SELF_SERVICE_PATHS: ReadonlySet<string> = new Set([
+  '/auth/me',
+  '/auth/login',
+  '/auth/logout',
+  '/auth/password',
+  '/auth/config',
+])
+
+/** Self-service routes must always hit the account's own tenant, so the
+ * acting header is never sent to them. Ignores any query string. */
 export function isSelfServicePath(path: string): boolean {
-  return path.startsWith('/auth/')
+  const q = path.indexOf('?')
+  return SELF_SERVICE_PATHS.has(q === -1 ? path : path.slice(0, q))
 }
 
 function actingTenantStorageKey(subject: string): string {
@@ -160,8 +173,9 @@ interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
  * travels automatically (`same-origin`) and mutating requests carry the
  * `X-CSRF-Token` header. The bearer token is sent only in the emergency
  * API-key mode, which is exempt from CSRF. When a platform session has
- * selected a tenant, every call except the self-service `/auth/*` routes
- * carries `X-Gateway-Acting-Tenant`. A 401 signs the user out to `/login`;
+ * selected a tenant, every call except the self-service routes (`/auth/me`,
+ * `/auth/login`, `/auth/logout`, `/auth/password`, `/auth/config`) carries
+ * `X-Gateway-Acting-Tenant`. A 401 signs the user out to `/login`;
  * a 403 `password_change_required` notifies the auth layer so it can route
  * to the change-password page.
  */

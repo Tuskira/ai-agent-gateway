@@ -397,6 +397,7 @@ func buildRoutes(deps Deps) []routeSpec {
 		// why an ordinary "*.read"/"*" grant must not satisfy this.
 		{Method: http.MethodPost, Pattern: "/tenants", Tag: "tenants", Summary: "Create a tenant", Permission: "platform.admin", Handler: tenants.Create},
 		{Method: http.MethodGet, Pattern: "/tenants", Tag: "tenants", Summary: "List tenants", Permission: "platform.admin", Handler: tenants.List},
+		{Method: http.MethodPatch, Pattern: "/tenants/{tenant_id}", Tag: "tenants", Summary: "Rename a tenant (the slug is immutable)", Permission: "platform.admin", Handler: tenants.Update},
 		// A platform-admin key manages API keys in a named tenant (same
 		// bodies and rules as /api-keys, scoped to {tenant_id}). Gated on
 		// platform.admin, so a tenant admin gets 403 even for its own tenant.

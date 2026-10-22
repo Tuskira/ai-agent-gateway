@@ -527,6 +527,10 @@ type TenantStore interface {
 	GetByID(ctx context.Context, id string) (*Tenant, error)
 	GetBySlug(ctx context.Context, slug string) (*Tenant, error)
 	List(ctx context.Context) ([]*Tenant, error)
+	// UpdateName sets the display name of the tenant with id and returns
+	// the updated row; ErrNotFound if unknown. The slug and id never
+	// change.
+	UpdateName(ctx context.Context, id, name string) (*Tenant, error)
 }
 
 // APIKeyStore manages APIKey rows.

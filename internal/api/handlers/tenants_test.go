@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -144,5 +145,54 @@ func TestTenants_Create_WithID(t *testing.T) {
 		if code, _ := create(`{"id":"` + bad + `","slug":"bad-` + bad[:4] + `","name":"x"}`); code != http.StatusBadRequest {
 			t.Errorf("id %q = %d, want 400", bad, code)
 		}
+	}
+}
+
+func TestTenants_Update(t *testing.T) {
+	deps := newTestDeps()
+	h := Tenants{Deps: deps}
+
+	create := withPrincipal(httptest.NewRequest(http.MethodPost, "/tenants", strings.NewReader(`{"slug":"acme","name":"Acme"}`)), "t", "admin")
+	w := serve(http.MethodPost, "/tenants", h.Create, create)
+	var created tenantView
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	patch := func(id, body string) *httptest.ResponseRecorder {
+		req := withPrincipal(httptest.NewRequest(http.MethodPatch, "/tenants/"+id, strings.NewReader(body)), "t", "admin")
+		return serve(http.MethodPatch, "/tenants/{tenant_id}", h.Update, req)
+	}
+
+	w = patch(created.ID, `{"name":"Acme Corp"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got tenantView
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ID != created.ID || got.Slug != "acme" || got.Name != "Acme Corp" {
+		t.Errorf("got = %+v", got)
+	}
+
+	for _, body := range []string{`{"name":""}`, `{"name":"` + strings.Repeat("x", 121) + `"}`, `{}`, `{"name":"a","slug":"b"}`} {
+		w = patch(created.ID, body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %.30s: status = %d, want 400", body, w.Code)
+			continue
+		}
+		assertErrorType(t, w, "validation_error")
+	}
+
+	w = patch("00000000-0000-4000-8000-000000000000", `{"name":"x"}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown tenant status = %d, want 404", w.Code)
+	}
+	assertErrorType(t, w, "not_found")
+
+	// The failed attempts left the name alone.
+	if tn, _ := deps.Store.Tenants().GetByID(context.Background(), created.ID); tn.Name != "Acme Corp" {
+		t.Errorf("name after rejected patches = %q", tn.Name)
 	}
 }

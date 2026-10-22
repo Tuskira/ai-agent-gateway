@@ -57,6 +57,13 @@ func (s *tenantStore) List(ctx context.Context) ([]*store.Tenant, error) {
 	return out, rows.Err()
 }
 
+func (s *tenantStore) UpdateName(ctx context.Context, id, name string) (*store.Tenant, error) {
+	// id::text so a malformed id is a miss (ErrNotFound), as in GetByID.
+	const q = `UPDATE tenants SET name = $2 WHERE id::text = $1
+		RETURNING id, slug, name, settings, created_at`
+	return scanTenant(s.db.QueryRowContext(ctx, q, id, name))
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

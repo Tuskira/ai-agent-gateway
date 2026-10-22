@@ -152,6 +152,24 @@ func testTenants(t *testing.T, s store.Store) {
 	if err := s.Tenants().Create(ctx, dupID); !errors.Is(err, store.ErrConflict) {
 		t.Errorf("Create(duplicate id) error = %v, want ErrConflict", err)
 	}
+
+	// UpdateName changes only the name; slug, id and settings stay.
+	renamed, err := s.Tenants().UpdateName(ctx, a.ID, "Renamed "+a.Slug)
+	if err != nil {
+		t.Fatalf("UpdateName: %v", err)
+	}
+	if renamed.ID != a.ID || renamed.Slug != a.Slug || renamed.Name != "Renamed "+a.Slug || renamed.CreatedAt.IsZero() {
+		t.Errorf("UpdateName = %+v, want id/slug kept and the new name", renamed)
+	}
+	if got, err := s.Tenants().GetByID(ctx, a.ID); err != nil || got.Name != "Renamed "+a.Slug || got.Settings["seeded"] != true {
+		t.Errorf("GetByID after UpdateName = %+v, %v", got, err)
+	}
+	if _, err := s.Tenants().UpdateName(ctx, uuid.NewString(), "x"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("UpdateName(missing) error = %v, want ErrNotFound", err)
+	}
+	if _, err := s.Tenants().UpdateName(ctx, "not-a-uuid", "x"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("UpdateName(malformed) error = %v, want ErrNotFound", err)
+	}
 }
 
 func containsTenant(list []*store.Tenant, id string) bool {

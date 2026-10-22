@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/httpx"
@@ -87,6 +88,33 @@ func (h Tenants) Create(w http.ResponseWriter, r *http.Request) {
 
 	AuditNote(r.Context(), "created_tenant_id", t.ID, "created_tenant_slug", t.Slug, "id_supplied", id != "")
 	httpx.WriteJSON(w, http.StatusCreated, newTenantView(t))
+}
+
+type updateTenantRequest struct {
+	Name string `json:"name"`
+}
+
+// Update handles PATCH /api/v1/tenants/{tenant_id}: rename a tenant. Only
+// the display name changes; the slug and id are immutable. An id that is
+// not a tenant, including a malformed one, is 404.
+func (h Tenants) Update(w http.ResponseWriter, r *http.Request) {
+	var req updateTenantRequest
+	if !httpx.Decode(w, r, &req) {
+		return
+	}
+	if err := validateName("name", req.Name); err != nil {
+		httpx.ValidationError(w, err.Error())
+		return
+	}
+
+	t, err := h.Store.Tenants().UpdateName(r.Context(), chi.URLParam(r, "tenant_id"), req.Name)
+	if err != nil {
+		writeStoreErr(w, r, "rename tenant", err)
+		return
+	}
+
+	AuditNote(r.Context(), "renamed_tenant_id", t.ID, "new_name", t.Name)
+	httpx.WriteJSON(w, http.StatusOK, newTenantView(t))
 }
 
 // List handles GET /api/v1/tenants.

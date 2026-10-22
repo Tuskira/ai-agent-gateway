@@ -8,7 +8,6 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
-  Search,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
 import { findNavItem, OVERVIEW_PATH } from '@/lib/nav'
@@ -94,11 +93,7 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
         aria-label="Breadcrumb"
         className="flex min-w-0 items-center gap-1.5 truncate text-[13px] whitespace-nowrap"
       >
-        {isPlatformAdmin ? (
-          <TenantSwitcher />
-        ) : (
-          <span className="hidden text-text-subtle md:inline">Tenant</span>
-        )}
+        <span className="hidden text-text-subtle md:inline">Tenant</span>
         <ChevronRight
           className="hidden size-3.5 shrink-0 text-text-subtle md:inline"
           aria-hidden="true"
@@ -115,33 +110,11 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
         </span>
       </nav>
 
-      {/* Below md: a compact search icon button replaces the search field. */}
-      <div className="hidden min-w-0 flex-1 justify-center md:flex">
-        <label className="flex h-9 w-full max-w-[420px] items-center gap-2 rounded-r-4 border border-border bg-background px-2.5 text-text-subtle">
-          <Search className="size-4 shrink-0" aria-hidden="true" />
-          <input
-            type="text"
-            placeholder="Search tools, MCPs, sessions&hellip;"
-            className="min-w-0 flex-1 border-0 bg-transparent text-[13px] text-foreground outline-none placeholder:text-text-subtle"
-          />
-          <span className="rounded-r-2 border border-border bg-card px-1.5 py-px font-mono text-[11px] text-text-muted">
-            &#8984;K
-          </span>
-        </label>
-      </div>
-
       <div className="ml-auto flex items-center gap-1.5 sm:gap-2.5">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-text-muted md:hidden"
-          aria-label="Search"
-        >
-          <Search className="size-[18px]" aria-hidden="true" />
-        </Button>
-
-        {/* Platform sessions get the id and copy button inside the switcher. */}
-        {principal && !isPlatformAdmin ? (
+        {/* Right cluster, left to right: tenant (switcher or static pill), theme, avatar. */}
+        {isPlatformAdmin ? (
+          <TenantSwitcher />
+        ) : principal ? (
           <div className="hidden items-center gap-2.5 rounded-r-5 border border-border bg-card py-1 pr-1.5 pl-3 sm:flex">
             <span
               className="truncate font-mono text-[13px] text-foreground"

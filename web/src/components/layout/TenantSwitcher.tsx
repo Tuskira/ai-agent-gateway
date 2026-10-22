@@ -95,7 +95,7 @@ export function TenantSwitcher({ className }: { className?: string }) {
         />
       </div>
       <PopoverContent
-        align="start"
+        align="end"
         className="w-[min(340px,calc(100vw-1.5rem))] gap-0 p-0"
       >
         {/* cmdk names its input from this label (aria-labelledby). */}

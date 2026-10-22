@@ -84,7 +84,7 @@ describe('TenantSwitcher', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
-  it('is not rendered for a plain admin, who keeps the static Tenant label', async () => {
+  it('is not rendered for a plain admin, who keeps the static tenant id pill on the right', async () => {
     const calls = stubApi({
       'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
       'GET /users': () => jsonResponse({ items: [] }),
@@ -92,7 +92,6 @@ describe('TenantSwitcher', () => {
     renderTopBar()
 
     await screen.findByText('empty')
-    expect(screen.getByText('Tenant')).toBeInTheDocument()
     expect(screen.queryByTestId('tenant-switcher')).not.toBeInTheDocument()
     expect(calls.some((c) => c.path.startsWith('/tenants'))).toBe(false)
     expect(screen.getByTestId('tenant-id-pill')).toHaveTextContent('tenant-uuid-1')
@@ -106,7 +105,6 @@ describe('TenantSwitcher', () => {
     const trigger = await screen.findByTestId('tenant-switcher')
     await waitFor(() => expect(trigger).toHaveTextContent('Acme'))
     expect(trigger).toHaveTextContent('tenant-uuid-1')
-    expect(screen.queryByText('Tenant')).not.toBeInTheDocument()
     // The platform session's id lives in the switcher, not a second pill.
     expect(screen.queryByTestId('tenant-id-pill')).not.toBeInTheDocument()
 
@@ -121,6 +119,41 @@ describe('TenantSwitcher', () => {
       'true',
     )
     expect(screen.getByTestId('tenant-switcher-footer')).toHaveTextContent('3 tenants')
+  })
+
+  it('places the switcher in the right cluster before the theme toggle and avatar, with no left-side switcher or search box', async () => {
+    stubPlatform()
+    renderTopBar()
+
+    const trigger = await screen.findByTestId('tenant-switcher')
+    const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' })
+    expect(breadcrumb).not.toContainElement(trigger)
+
+    const avatar = screen.getByRole('button', { name: 'Account menu' })
+    const cluster = avatar.parentElement as HTMLElement
+    expect(cluster).toContainElement(trigger)
+    const order = Array.from(cluster.querySelectorAll('[data-testid="tenant-switcher"], button'))
+    expect(order[0]).toBe(trigger)
+    expect(order[order.length - 1]).toBe(avatar)
+
+    expect(screen.queryByRole('textbox', { name: /search/i })).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/search tools/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Search' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the static tenant pill in the right cluster for a plain admin', async () => {
+    const calls = stubApi({
+      'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
+      'GET /users': () => jsonResponse({ items: [] }),
+    })
+    renderTopBar()
+
+    await screen.findByText('empty')
+    expect(calls.length).toBeGreaterThan(0)
+    const pill = screen.getByTestId('tenant-id-pill')
+    const avatar = screen.getByRole('button', { name: 'Account menu' })
+    expect(avatar.parentElement).toContainElement(pill)
+    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).not.toContainElement(pill)
   })
 
   it('filters by name and by id', async () => {

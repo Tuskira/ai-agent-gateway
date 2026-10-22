@@ -26,6 +26,13 @@ func (s *tenantStore) Create(ctx context.Context, t *store.Tenant) error {
 	return mapWriteErr(err)
 }
 
+func (s *tenantStore) GetByID(ctx context.Context, id string) (*store.Tenant, error) {
+	// $1::text so a malformed id is a lookup miss (ErrNotFound), not a
+	// uuid cast error; callers validate the shape before asking.
+	const q = `SELECT id, slug, name, settings, created_at FROM tenants WHERE id::text = $1`
+	return scanTenant(s.db.QueryRowContext(ctx, q, id))
+}
+
 func (s *tenantStore) GetBySlug(ctx context.Context, slug string) (*store.Tenant, error) {
 	const q = `SELECT id, slug, name, settings, created_at FROM tenants WHERE slug = $1`
 	return scanTenant(s.db.QueryRowContext(ctx, q, slug))

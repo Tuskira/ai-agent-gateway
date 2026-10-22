@@ -104,6 +104,23 @@ func testTenants(t *testing.T, s store.Store) {
 		t.Errorf("GetBySlug(missing) error = %v, want ErrNotFound", err)
 	}
 
+	byID, err := s.Tenants().GetByID(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("GetByID(%q): %v", b.ID, err)
+	}
+	if byID.ID != b.ID || byID.Slug != b.Slug || byID.Name != b.Name || byID.CreatedAt.IsZero() {
+		t.Errorf("GetByID(%q) = %+v, want tenant b", b.ID, byID)
+	}
+	if v, ok := byID.Settings["seeded"]; !ok || v != true {
+		t.Errorf("GetByID: Settings = %v, want seeded=true round-tripped", byID.Settings)
+	}
+	if _, err := s.Tenants().GetByID(ctx, uuid.NewString()); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetByID(missing) error = %v, want ErrNotFound", err)
+	}
+	if _, err := s.Tenants().GetByID(ctx, "not-a-uuid"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetByID(malformed) error = %v, want ErrNotFound", err)
+	}
+
 	list, err := s.Tenants().List(ctx)
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -2106,6 +2123,62 @@ func testUsers(t *testing.T, s store.Store) {
 		t.Errorf("CountActiveAdmins(tenant B, viewer only) = %d, want 0", n)
 	}
 
+	// platform-admin is a valid stored role (the users.role CHECK admits
+	// it), round-trips through Create/Get/List/Update, and is counted
+	// platform-wide by CountActivePlatformAdmins -- never by the
+	// tenant-local CountActiveAdmins.
+	if n, err := users.CountActivePlatformAdmins(ctx); err != nil || n != 0 {
+		t.Errorf("CountActivePlatformAdmins (none yet) = %d, %v; want 0", n, err)
+	}
+	root := newUser(tenantA.ID, unique("root"), store.UserRolePlatformAdmin)
+	if err := users.Create(ctx, root); err != nil {
+		t.Fatalf("Create(platform-admin): %v", err)
+	}
+	if g, err := users.Get(ctx, tenantA.ID, root.ID); err != nil || g.Role != store.UserRolePlatformAdmin {
+		t.Errorf("Get(platform-admin) = %+v, %v; want role %q", g, err, store.UserRolePlatformAdmin)
+	}
+	if list, err := users.List(ctx, tenantA.ID, store.UserListOptions{Role: store.UserRolePlatformAdmin}); err != nil || len(list) != 1 || list[0].ID != root.ID {
+		t.Errorf("List(role=platform-admin) = %v, %v; want [root]", list, err)
+	}
+	if n, _ := users.CountActiveAdmins(ctx, tenantA.ID); n != 2 {
+		t.Errorf("CountActiveAdmins with a platform-admin present = %d, want 2 (alice, bob only)", n)
+	}
+	rootB := newUser(tenantB.ID, unique("root-b"), store.UserRolePlatformAdmin)
+	if err := users.Create(ctx, rootB); err != nil {
+		t.Fatalf("Create(platform-admin, tenant B): %v", err)
+	}
+	if n, err := users.CountActivePlatformAdmins(ctx); err != nil || n != 2 {
+		t.Errorf("CountActivePlatformAdmins across tenants = %d, %v; want 2", n, err)
+	}
+	rootB.Disabled = true
+	if err := users.Update(ctx, rootB); err != nil {
+		t.Fatalf("Update disable rootB: %v", err)
+	}
+	if n, _ := users.CountActivePlatformAdmins(ctx); n != 1 {
+		t.Errorf("CountActivePlatformAdmins after disabling one = %d, want 1", n)
+	}
+	// Update may move a user into and out of the role.
+	bob.Role = store.UserRolePlatformAdmin
+	if err := users.Update(ctx, bob); err != nil {
+		t.Fatalf("Update promote bob: %v", err)
+	}
+	if g, _ := users.Get(ctx, tenantA.ID, bob.ID); g.Role != store.UserRolePlatformAdmin {
+		t.Errorf("after promoting bob: role = %q", g.Role)
+	}
+	if n, _ := users.CountActivePlatformAdmins(ctx); n != 2 {
+		t.Errorf("CountActivePlatformAdmins after promoting bob = %d, want 2", n)
+	}
+	bob.Role = store.UserRoleAdmin
+	if err := users.Update(ctx, bob); err != nil {
+		t.Fatalf("Update demote bob: %v", err)
+	}
+	if err := users.SoftDelete(ctx, tenantA.ID, root.ID); err != nil {
+		t.Fatalf("SoftDelete(root): %v", err)
+	}
+	if n, _ := users.CountActivePlatformAdmins(ctx); n != 0 {
+		t.Errorf("CountActivePlatformAdmins after demote + delete = %d, want 0 (rootB is disabled)", n)
+	}
+
 	// Login bookkeeping: failures lock at the threshold and reset the counter.
 	at := time.Now().UTC().Truncate(time.Microsecond)
 	for i := 1; i <= 2; i++ {
@@ -2330,19 +2403,44 @@ func testAuthAudit(t *testing.T, s store.Store) {
 	if got[1].TargetUserID != target.ID || got[0].TargetUserID != "" || got[1].ActorKind != "user" || got[1].IP != "198.51.100.7" || got[1].Detail != "d-user_create" {
 		t.Errorf("List row fields wrong: %+v / %+v", got[1], got[0])
 	}
+	for _, e := range got {
+		if e.ActorTenantID != "" {
+			t.Errorf("ActorTenantID = %q on a same-tenant row, want empty", e.ActorTenantID)
+		}
+	}
+
+	// A platform-admin from tenant B acting in tenant A: the row is listed
+	// under A (the acted-on tenant) and carries B as the actor's tenant.
+	cross := &store.AuthAuditEntry{
+		TenantID: tenantA.ID, ActorTenantID: tenantB.ID, ActorKind: "user", ActorID: "root-b",
+		Action: "user_create", TargetUserID: target.ID, At: base.Add(6 * time.Minute),
+	}
+	if err := audit.Append(ctx, cross); err != nil {
+		t.Fatalf("Append(cross-tenant): %v", err)
+	}
+	got, total, err = audit.List(ctx, tenantA.ID, store.AuthAuditListOptions{Limit: 1})
+	if err != nil || total != 4 || len(got) != 1 {
+		t.Fatalf("List after cross-tenant append = %d/%d, %v; want 1/4", len(got), total, err)
+	}
+	if got[0].ID != cross.ID || got[0].ActorTenantID != tenantB.ID || got[0].TenantID != tenantA.ID {
+		t.Errorf("cross-tenant row = %+v; want ActorTenantID %q under TenantID %q", got[0], tenantB.ID, tenantA.ID)
+	}
+	if _, totalB, _ := audit.List(ctx, tenantB.ID, store.AuthAuditListOptions{}); totalB != 1 {
+		t.Errorf("List(tenant B) total = %d, want 1: an actor's tenant must not list rows it acted on elsewhere", totalB)
+	}
 
 	page, total, err := audit.List(ctx, tenantA.ID, store.AuthAuditListOptions{Limit: 1, Offset: 1})
-	if err != nil || total != 3 || len(page) != 1 || page[0].Action != "user_create" {
-		t.Errorf("List(limit 1, offset 1) = %v, total %d, err %v; want [user_create]/3", page, total, err)
+	if err != nil || total != 4 || len(page) != 1 || page[0].Action != "login_fail" {
+		t.Errorf("List(limit 1, offset 1) = %v, total %d, err %v; want [login_fail]/4", page, total, err)
 	}
 	if filtered, total, _ := audit.List(ctx, tenantA.ID, store.AuthAuditListOptions{Action: "login_ok"}); total != 1 || len(filtered) != 1 {
 		t.Errorf("List(action=login_ok) = %d/%d, want 1/1", len(filtered), total)
 	}
-	if filtered, total, _ := audit.List(ctx, tenantA.ID, store.AuthAuditListOptions{TargetUserID: target.ID}); total != 1 || len(filtered) != 1 || filtered[0].Action != "user_create" {
-		t.Errorf("List(target user) = %v/%d, want [user_create]", filtered, total)
+	if filtered, total, _ := audit.List(ctx, tenantA.ID, store.AuthAuditListOptions{TargetUserID: target.ID}); total != 2 || len(filtered) != 2 || filtered[0].Action != "user_create" || filtered[1].Action != "user_create" {
+		t.Errorf("List(target user) = %v/%d, want two user_create rows", filtered, total)
 	}
-	if none, total, err := audit.List(ctx, tenantA.ID, store.AuthAuditListOptions{Offset: 99}); err != nil || total != 3 || len(none) != 0 {
-		t.Errorf("List(offset past end) = %d entries, total %d, err %v; want 0/3", len(none), total, err)
+	if none, total, err := audit.List(ctx, tenantA.ID, store.AuthAuditListOptions{Offset: 99}); err != nil || total != 4 || len(none) != 0 {
+		t.Errorf("List(offset past end) = %d entries, total %d, err %v; want 0/4", len(none), total, err)
 	}
 }
 

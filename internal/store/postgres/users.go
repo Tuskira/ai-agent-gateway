@@ -129,6 +129,15 @@ func (s *userStore) CountActiveAdmins(ctx context.Context, tenantID string) (int
 	return n, nil
 }
 
+func (s *userStore) CountActivePlatformAdmins(ctx context.Context) (int, error) {
+	const q = `SELECT count(*) FROM users WHERE role = 'platform-admin' AND NOT disabled AND deleted_at IS NULL`
+	var n int
+	if err := s.db.QueryRowContext(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("postgres: count active platform admins: %w", err)
+	}
+	return n, nil
+}
+
 // ---------------------------------------------------------------------------
 // sessions
 // ---------------------------------------------------------------------------
@@ -198,10 +207,10 @@ func (s *authAuditStore) Append(ctx context.Context, e *store.AuthAuditEntry) er
 		at = time.Now()
 	}
 	const q = `
-		INSERT INTO auth_audit (tenant_id, actor_kind, actor_id, action, target_user_id, ip, detail, at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO auth_audit (tenant_id, actor_tenant_id, actor_kind, actor_id, action, target_user_id, ip, detail, at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, at`
-	err := s.db.QueryRowContext(ctx, q, nullableTenant(e.TenantID), e.ActorKind, e.ActorID, e.Action, nullableTenant(e.TargetUserID), e.IP, e.Detail, at).
+	err := s.db.QueryRowContext(ctx, q, nullableTenant(e.TenantID), nullableTenant(e.ActorTenantID), e.ActorKind, e.ActorID, e.Action, nullableTenant(e.TargetUserID), e.IP, e.Detail, at).
 		Scan(&e.ID, &e.At)
 	return mapWriteErr(err)
 }
@@ -228,7 +237,7 @@ func (s *authAuditStore) List(ctx context.Context, tenantID string, opts store.A
 	}
 
 	args = append(args, limit, max(opts.Offset, 0))
-	q := `SELECT id, COALESCE(tenant_id::text, ''), actor_kind, actor_id, action, COALESCE(target_user_id::text, ''), ip, detail, at
+	q := `SELECT id, COALESCE(tenant_id::text, ''), COALESCE(actor_tenant_id::text, ''), actor_kind, actor_id, action, COALESCE(target_user_id::text, ''), ip, detail, at
 		FROM auth_audit` + where + fmt.Sprintf(` ORDER BY at DESC, id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -239,7 +248,7 @@ func (s *authAuditStore) List(ctx context.Context, tenantID string, opts store.A
 	out := []*store.AuthAuditEntry{}
 	for rows.Next() {
 		var e store.AuthAuditEntry
-		if err := rows.Scan(&e.ID, &e.TenantID, &e.ActorKind, &e.ActorID, &e.Action, &e.TargetUserID, &e.IP, &e.Detail, &e.At); err != nil {
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.ActorTenantID, &e.ActorKind, &e.ActorID, &e.Action, &e.TargetUserID, &e.IP, &e.Detail, &e.At); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, &e)

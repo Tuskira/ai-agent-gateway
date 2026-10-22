@@ -128,6 +128,16 @@ func (t *tenantStore) Create(_ context.Context, tn *store.Tenant) error {
 	return nil
 }
 
+func (t *tenantStore) GetByID(_ context.Context, id string) (*store.Tenant, error) {
+	s := (*Store)(t)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if tn, ok := s.tenants[id]; ok {
+		return tn, nil
+	}
+	return nil, store.ErrNotFound
+}
+
 func (t *tenantStore) GetBySlug(_ context.Context, slug string) (*store.Tenant, error) {
 	s := (*Store)(t)
 	s.mu.Lock()

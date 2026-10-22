@@ -165,6 +165,19 @@ func (u *userStore) CountActiveAdmins(_ context.Context, tenantID string) (int, 
 	return n, nil
 }
 
+func (u *userStore) CountActivePlatformAdmins(_ context.Context) (int, error) {
+	s := (*Store)(u)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, e := range s.users {
+		if e.DeletedAt == nil && e.Role == store.UserRolePlatformAdmin && !e.Disabled {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // ---------------------------------------------------------------------------
 
 type userSessionStore Store

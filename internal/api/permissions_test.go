@@ -227,6 +227,9 @@ func (nopStore) Close() error                         { return nil }
 type nopTenants struct{}
 
 func (nopTenants) Create(context.Context, *store.Tenant) error { return nil }
+func (nopTenants) GetByID(context.Context, string) (*store.Tenant, error) {
+	return nil, store.ErrNotFound
+}
 func (nopTenants) GetBySlug(context.Context, string) (*store.Tenant, error) {
 	return nil, store.ErrNotFound
 }

@@ -96,11 +96,17 @@ func (l *Limits) Empty() bool {
 
 // User roles a console user may hold. They are deliberately a closed set
 // (the users.role CHECK constraint mirrors it): a user's role maps onto
-// the gateway's role->permission table in pkg/auth (RoleAdmin gets every
-// permission except platform.admin, RoleViewer gets "*.read" only).
+// the gateway's role->permission table in pkg/auth (UserRoleAdmin gets
+// every tenant-scoped permission and nothing in the "platform."
+// namespace, UserRoleViewer gets "*.read" only). UserRolePlatformAdmin is
+// a tenant admin that also holds every "platform." permission -- the same
+// expansion a platform-admin API key gets (pkg/auth.RolesForKey) -- and
+// may act in any tenant from the console; it can only be assigned by a
+// caller who already holds platform.admin.
 const (
-	UserRoleAdmin  = "admin"
-	UserRoleViewer = "viewer"
+	UserRoleAdmin         = "admin"
+	UserRoleViewer        = "viewer"
+	UserRolePlatformAdmin = "platform-admin"
 )
 
 // User is a human console account. A user belongs to exactly one tenant.
@@ -115,7 +121,7 @@ type User struct {
 	DisplayName string
 
 	PasswordHash string
-	Role         string // UserRoleAdmin | UserRoleViewer
+	Role         string // UserRoleAdmin | UserRoleViewer | UserRolePlatformAdmin
 
 	MustChangePassword bool
 	Disabled           bool
@@ -158,8 +164,14 @@ type UserSession struct {
 // and TargetUserID are "" when not applicable (e.g. a login attempt
 // against an unknown tenant).
 type AuthAuditEntry struct {
-	ID       int64
+	ID int64
+	// TenantID is the tenant the action happened in (the acted-on tenant).
 	TenantID string
+	// ActorTenantID is the actor's own (home) tenant when it differs from
+	// TenantID -- a platform-admin acting in another tenant -- and ""
+	// otherwise, so a tenant admin reading its trail can see the actor
+	// came from elsewhere.
+	ActorTenantID string
 	// ActorKind is "user", "api_key", "cli" or "anonymous".
 	ActorKind string
 	ActorID   string
@@ -510,6 +522,9 @@ type TenantStore interface {
 	// canonical UUID) is used as the tenant id; empty means the store
 	// generates one. ErrConflict on a duplicate slug or id.
 	Create(ctx context.Context, t *Tenant) error
+	// GetByID returns the tenant with id; ErrNotFound if unknown. id is
+	// a canonical UUID string (the store does not validate its shape).
+	GetByID(ctx context.Context, id string) (*Tenant, error)
 	GetBySlug(ctx context.Context, slug string) (*Tenant, error)
 	List(ctx context.Context) ([]*Tenant, error)
 }
@@ -987,9 +1002,9 @@ type UserListOptions struct {
 	Role string
 }
 
-// UserStore manages User rows. Every method is tenant-scoped: a user of
-// tenant A is never visible through a call that names tenant B, and a
-// soft-deleted user is invisible to every read.
+// UserStore manages User rows. Every method but CountActivePlatformAdmins
+// is tenant-scoped: a user of tenant A is never visible through a call
+// that names tenant B, and a soft-deleted user is invisible to every read.
 type UserStore interface {
 	// Create persists u, setting ID, PasswordChangedAt, CreatedAt and
 	// UpdatedAt. ErrConflict when a live user with the same (tenant,
@@ -1014,8 +1029,13 @@ type UserStore interface {
 	// RecordLoginSuccess clears FailedLogins/LockedUntil and sets
 	// LastLoginAt = at.
 	RecordLoginSuccess(ctx context.Context, tenantID, id string, at time.Time) error
-	// CountActiveAdmins counts the tenant's live, non-disabled admins.
+	// CountActiveAdmins counts the tenant's live, non-disabled users
+	// with role UserRoleAdmin (a platform-admin is not counted).
 	CountActiveAdmins(ctx context.Context, tenantID string) (int, error)
+	// CountActivePlatformAdmins counts the live, non-disabled users with
+	// role UserRolePlatformAdmin across every tenant: the role is
+	// platform-wide, so the last-one guard is too.
+	CountActivePlatformAdmins(ctx context.Context) (int, error)
 }
 
 // UserSessionStore manages UserSession rows. Get returns a session even

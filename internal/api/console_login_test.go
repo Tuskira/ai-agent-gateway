@@ -63,8 +63,10 @@ func newConsoleEnv(t *testing.T) *consoleEnv {
 	ctx := context.Background()
 	st := dptest.New()
 	e := &consoleEnv{t: t, st: st}
-	e.tenantA = &store.Tenant{Slug: "acme", Name: "Acme"}
-	e.tenantB = &store.Tenant{Slug: "globex", Name: "Globex"}
+	// Real UUIDs, as Postgres would assign: X-Gateway-Acting-Tenant is
+	// validated as one before the tenant is looked up.
+	e.tenantA = &store.Tenant{ID: "3b9d1c2e-4f5a-4b6c-8d7e-9f0a1b2c3d4e", Slug: "acme", Name: "Acme"}
+	e.tenantB = &store.Tenant{ID: "7c8d9e0f-1a2b-4c3d-9e5f-6a7b8c9d0e1f", Slug: "globex", Name: "Globex"}
 	for _, tn := range []*store.Tenant{e.tenantA, e.tenantB} {
 		if err := st.Tenants().Create(ctx, tn); err != nil {
 			t.Fatal(err)
@@ -134,7 +136,17 @@ func (c *client) write(method, path, body string) *httptest.ResponseRecorder {
 }
 
 func (c *client) login(tenant, username, pw string) *httptest.ResponseRecorder {
-	w := c.do(http.MethodPost, "/api/v1/auth/login", `{"tenant":"`+tenant+`","username":"`+username+`","password":"`+pw+`"}`, nil)
+	return c.loginBody(`{"tenant":"` + tenant + `","username":"` + username + `","password":"` + pw + `"}`)
+}
+
+// loginWithoutTenant posts a login body that names no tenant: the server
+// resolves the account by username across tenants.
+func (c *client) loginWithoutTenant(username, pw string) *httptest.ResponseRecorder {
+	return c.loginBody(`{"username":"` + username + `","password":"` + pw + `"}`)
+}
+
+func (c *client) loginBody(body string) *httptest.ResponseRecorder {
+	w := c.do(http.MethodPost, "/api/v1/auth/login", body, nil)
 	if w.Code == http.StatusOK {
 		var resp struct {
 			CSRFToken string `json:"csrf_token"`
@@ -152,6 +164,28 @@ func (c *client) login(tenant, username, pw string) *httptest.ResponseRecorder {
 
 func key(token string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + token}
+}
+
+// acting is the header a platform-admin console sends to act in tenantID.
+func acting(tenantID string) map[string]string {
+	return map[string]string{internalauth.ActingTenantHeader: tenantID}
+}
+
+// actingWrite is acting() plus the session's CSRF token.
+func (c *client) actingWrite(tenantID string) map[string]string {
+	return map[string]string{internalauth.ActingTenantHeader: tenantID, session.CSRFHeader: c.csrf}
+}
+
+// page decodes a {"items": [...], "total": n} body into items.
+func page(t *testing.T, w *httptest.ResponseRecorder) []map[string]any {
+	t.Helper()
+	var p struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatalf("decode page %q: %v", w.Body.String(), err)
+	}
+	return p.Items
 }
 
 func errType(t *testing.T, w *httptest.ResponseRecorder) string {
@@ -346,7 +380,7 @@ func TestConsole_AdminUserLacksPlatformAdmin(t *testing.T) {
 	c.login("acme", "alice", cpwAdmin)
 
 	if w := c.do(http.MethodGet, "/api/v1/tenants", "", nil); w.Code != http.StatusForbidden {
-		t.Errorf("admin user GET /tenants = %d, want 403 (platform.admin is API-key only)", w.Code)
+		t.Errorf("admin user GET /tenants = %d, want 403 (a tenant admin never holds platform.admin)", w.Code)
 	}
 	if w := c.write(http.MethodPost, "/api/v1/tenants", `{"slug":"new","name":"New"}`); w.Code != http.StatusForbidden {
 		t.Errorf("admin user POST /tenants = %d, want 403", w.Code)
@@ -560,5 +594,344 @@ func TestConsole_OpenAPIListsNewRoutes(t *testing.T) {
 	}
 	if doc.Paths["/api/v1/auth/login"]["post"].(map[string]any)["security"] != nil {
 		t.Error("login is documented as requiring authentication")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Platform-admin console users and the acting-tenant header.
+
+const cpwRoot = "root-password-789"
+
+// A console user with role platform-admin logs in like anyone else, holds
+// platform.admin (tenant listing), and acts in another tenant for one
+// request by sending X-Gateway-Acting-Tenant. The write lands in that
+// tenant and its audit row names the actor's home tenant.
+func TestConsole_PlatformAdminUser_ListsTenantsAndActsInAnother(t *testing.T) {
+	e := newConsoleEnv(t)
+	root := e.user(e.tenantA.ID, "root", store.UserRolePlatformAdmin, cpwRoot, false)
+	c := e.browser()
+	if w := c.login("acme", "root", cpwRoot); w.Code != http.StatusOK {
+		t.Fatalf("login = %d %s", w.Code, w.Body.String())
+	}
+
+	// /auth/me at home: both tenant ids are the home tenant and the
+	// session role expanded to admin + platform-admin.
+	var me struct {
+		TenantID     string   `json:"tenant_id"`
+		HomeTenantID string   `json:"home_tenant_id"`
+		Roles        []string `json:"roles"`
+		User         struct {
+			ID     string `json:"id"`
+			Role   string `json:"role"`
+			Tenant string `json:"tenant"`
+		} `json:"user"`
+	}
+	w := c.do(http.MethodGet, "/api/v1/auth/me", "", nil)
+	_ = json.Unmarshal(w.Body.Bytes(), &me)
+	if w.Code != http.StatusOK || me.TenantID != e.tenantA.ID || me.HomeTenantID != e.tenantA.ID ||
+		me.User.ID != root.ID || me.User.Role != store.UserRolePlatformAdmin || me.User.Tenant != "acme" ||
+		strings.Join(me.Roles, ",") != "admin,platform-admin" {
+		t.Fatalf("/auth/me = %d %s", w.Code, w.Body.String())
+	}
+
+	// platform.admin: the tenant list is readable (a plain admin user gets 403, see above).
+	w = c.do(http.MethodGet, "/api/v1/tenants", "", nil)
+	if w.Code != http.StatusOK || len(page(t, w)) != 2 {
+		t.Fatalf("GET /tenants = %d %s, want 200 with both tenants", w.Code, w.Body.String())
+	}
+
+	// Act in Globex: the created user belongs to Globex, not Acme.
+	w = c.do(http.MethodPost, "/api/v1/users", `{"username":"gina","role":"viewer"}`, c.actingWrite(e.tenantB.ID))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("POST /users acting in globex = %d %s", w.Code, w.Body.String())
+	}
+	gina, err := e.st.Users().GetByUsername(context.Background(), e.tenantB.ID, "gina")
+	if err != nil {
+		t.Fatalf("gina was not created in globex: %v", err)
+	}
+	if _, err := e.st.Users().GetByUsername(context.Background(), e.tenantA.ID, "gina"); err == nil {
+		t.Error("gina was also created in acme")
+	}
+
+	// Reads are scoped the same way: with the header the list is Globex's,
+	// without it the home tenant's.
+	names := func(w *httptest.ResponseRecorder) string {
+		var out []string
+		for _, u := range page(t, w) {
+			out = append(out, u["username"].(string))
+		}
+		return strings.Join(out, ",")
+	}
+	if w := c.do(http.MethodGet, "/api/v1/users", "", acting(e.tenantB.ID)); w.Code != http.StatusOK || names(w) != "gina" {
+		t.Errorf("GET /users acting in globex = %d %s, want gina only", w.Code, w.Body.String())
+	}
+	if w := c.do(http.MethodGet, "/api/v1/users", "", nil); w.Code != http.StatusOK || names(w) != "root" {
+		t.Errorf("GET /users at home = %d %s, want root only", w.Code, w.Body.String())
+	}
+
+	// Globex's audit trail shows the create, blamed on an actor from Acme.
+	w = c.do(http.MethodGet, "/api/v1/auth/audit", "", acting(e.tenantB.ID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /auth/audit acting in globex = %d %s", w.Code, w.Body.String())
+	}
+	var found bool
+	for _, row := range page(t, w) {
+		if row["action"] == "user_create" && row["target_user_id"] == gina.ID {
+			found = true
+			if row["actor_tenant_id"] != e.tenantA.ID || row["actor_id"] != root.ID || row["actor_kind"] != "user" {
+				t.Errorf("globex user_create audit row = %v, want actor_tenant_id %s", row, e.tenantA.ID)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no user_create row for gina in globex's audit: %s", w.Body.String())
+	}
+	// Acme's own trail did not record it (the acted-on tenant owns the row).
+	w = c.do(http.MethodGet, "/api/v1/auth/audit", "", nil)
+	for _, row := range page(t, w) {
+		if row["action"] == "user_create" {
+			t.Errorf("acme's audit has the globex create: %v", row)
+		}
+	}
+
+	// /auth/me while acting: tenant_id is the acting tenant, the account
+	// and home_tenant_id stay the real ones.
+	w = c.do(http.MethodGet, "/api/v1/auth/me", "", acting(e.tenantB.ID))
+	_ = json.Unmarshal(w.Body.Bytes(), &me)
+	if w.Code != http.StatusOK || me.TenantID != e.tenantB.ID || me.HomeTenantID != e.tenantA.ID || me.User.ID != root.ID || me.User.Tenant != "acme" {
+		t.Errorf("/auth/me acting in globex = %d %s", w.Code, w.Body.String())
+	}
+
+	// A platform-admin API key is honoured the same way.
+	if w := e.browser().do(http.MethodGet, "/api/v1/users", "", mergeHeaders(key("platform-key"), acting(e.tenantB.ID))); w.Code != http.StatusOK || names(w) != "gina" {
+		t.Errorf("platform key GET /users acting in globex = %d %s, want gina only", w.Code, w.Body.String())
+	}
+}
+
+func mergeHeaders(ms ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range ms {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// The header is inert without platform.admin: a tenant admin (session or
+// key), a viewer and an agent key all get 403 permission_error, even when
+// the header names their own tenant. CSRF still runs first on a session
+// write, so a forged request is refused as csrf_error, not as a permission
+// problem.
+func TestConsole_ActingHeader_403ForTenantAdmin(t *testing.T) {
+	e := newConsoleEnv(t)
+	e.user(e.tenantA.ID, "alice", "admin", cpwAdmin, false)
+	e.user(e.tenantA.ID, "vera", "viewer", cpwViewer, false)
+	alice, vera := e.browser(), e.browser()
+	alice.login("acme", "alice", cpwAdmin)
+	vera.login("acme", "vera", cpwViewer)
+
+	for _, target := range []string{e.tenantB.ID, e.tenantA.ID} {
+		for name, w := range map[string]*httptest.ResponseRecorder{
+			"admin session GET /users":   alice.do(http.MethodGet, "/api/v1/users", "", acting(target)),
+			"admin session GET /auth/me": alice.do(http.MethodGet, "/api/v1/auth/me", "", acting(target)),
+			"admin session POST /users":  alice.do(http.MethodPost, "/api/v1/users", `{"username":"x","role":"viewer"}`, alice.actingWrite(target)),
+			"viewer session GET /models": vera.do(http.MethodGet, "/api/v1/models", "", acting(target)),
+			"admin key GET /users":       e.browser().do(http.MethodGet, "/api/v1/users", "", mergeHeaders(key("admin-key-a"), acting(target))),
+			"agent key GET /connectors":  e.browser().do(http.MethodGet, "/api/v1/connectors", "", mergeHeaders(key("agent-key-a"), acting(target))),
+			"admin key POST /connectors": e.browser().do(http.MethodPost, "/api/v1/connectors", `{}`, mergeHeaders(key("admin-key-a"), acting(target))),
+		} {
+			if w.Code != http.StatusForbidden || errType(t, w) != "permission_error" {
+				t.Errorf("%s with acting tenant %s = %d %s, want 403 permission_error", name, target, w.Code, w.Body.String())
+			}
+		}
+	}
+	// Nothing was written to either tenant.
+	for _, tid := range []string{e.tenantA.ID, e.tenantB.ID} {
+		if _, err := e.st.Users().GetByUsername(context.Background(), tid, "x"); err == nil {
+			t.Errorf("user x was created in %s despite the 403", tid)
+		}
+	}
+
+	// A session write without the CSRF token fails the CSRF gate before
+	// the tenant override has its say.
+	if w := alice.do(http.MethodPost, "/api/v1/users", `{"username":"x","role":"viewer"}`, acting(e.tenantB.ID)); w.Code != http.StatusForbidden || errType(t, w) != "csrf_error" {
+		t.Errorf("admin session POST /users without CSRF but with the header = %d %s, want 403 csrf_error", w.Code, w.Body.String())
+	}
+	// Likewise for a platform-admin: CSRF first, then the override.
+	e.user(e.tenantA.ID, "root", store.UserRolePlatformAdmin, cpwRoot, false)
+	root := e.browser()
+	root.login("acme", "root", cpwRoot)
+	if w := root.do(http.MethodPost, "/api/v1/users", `{"username":"x","role":"viewer"}`, acting(e.tenantB.ID)); w.Code != http.StatusForbidden || errType(t, w) != "csrf_error" {
+		t.Errorf("platform-admin POST /users without CSRF = %d %s, want 403 csrf_error", w.Code, w.Body.String())
+	}
+	// And the must-change gate too: a fresh platform-admin cannot act
+	// anywhere until it has changed its password.
+	e.user(e.tenantA.ID, "newroot", store.UserRolePlatformAdmin, cpwRoot, true)
+	nr := e.browser()
+	nr.login("acme", "newroot", cpwRoot)
+	if w := nr.do(http.MethodGet, "/api/v1/users", "", acting(e.tenantB.ID)); w.Code != http.StatusForbidden || errType(t, w) != "password_change_required" {
+		t.Errorf("must-change platform-admin GET /users acting = %d %s, want 403 password_change_required", w.Code, w.Body.String())
+	}
+}
+
+// A permitted caller naming a tenant that does not exist gets 404, and a
+// value that is not a UUID gets 400; neither touches any tenant.
+func TestConsole_ActingHeader_404UnknownTenant(t *testing.T) {
+	e := newConsoleEnv(t)
+	e.user(e.tenantA.ID, "root", store.UserRolePlatformAdmin, cpwRoot, false)
+	c := e.browser()
+	c.login("acme", "root", cpwRoot)
+
+	const ghost = "6f1b7c2e-0d4a-4e8b-9f3c-2a5d7e9b1c04"
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"session GET /users":   c.do(http.MethodGet, "/api/v1/users", "", acting(ghost)),
+		"session POST /users":  c.do(http.MethodPost, "/api/v1/users", `{"username":"x","role":"viewer"}`, c.actingWrite(ghost)),
+		"session GET /auth/me": c.do(http.MethodGet, "/api/v1/auth/me", "", acting(ghost)),
+		"platform key GET":     e.browser().do(http.MethodGet, "/api/v1/users", "", mergeHeaders(key("platform-key"), acting(ghost))),
+	} {
+		if w.Code != http.StatusNotFound || errType(t, w) != "not_found" {
+			t.Errorf("%s with an unknown acting tenant = %d %s, want 404 not_found", name, w.Code, w.Body.String())
+		}
+	}
+	for _, bad := range []string{"globex", "not-a-uuid", " "} {
+		if w := c.do(http.MethodGet, "/api/v1/users", "", acting(bad)); w.Code != http.StatusBadRequest || errType(t, w) != "validation_error" {
+			t.Errorf("acting tenant %q = %d %s, want 400 validation_error", bad, w.Code, w.Body.String())
+		}
+	}
+	for _, tid := range []string{e.tenantA.ID, e.tenantB.ID} {
+		if _, err := e.st.Users().GetByUsername(context.Background(), tid, "x"); err == nil {
+			t.Errorf("user x was created in %s despite the 404", tid)
+		}
+	}
+	// The session itself is unharmed: the next plain request works.
+	if w := c.do(http.MethodGet, "/api/v1/users", "", nil); w.Code != http.StatusOK {
+		t.Errorf("GET /users after the 404s = %d, want 200", w.Code)
+	}
+}
+
+// Self-service routes act on the real account even while the header
+// selects another tenant: a password change and a logout sent with the
+// header hit the home account and are audited in the home tenant.
+func TestConsole_ActingHeader_SelfRoutesStayHome(t *testing.T) {
+	e := newConsoleEnv(t)
+	root := e.user(e.tenantA.ID, "root", store.UserRolePlatformAdmin, cpwRoot, false)
+	c := e.browser()
+	c.login("acme", "root", cpwRoot)
+
+	const newPW = "root-new-password-000"
+	if w := c.do(http.MethodPost, "/api/v1/auth/password", `{"current_password":"`+cpwRoot+`","new_password":"`+newPW+`"}`, c.actingWrite(e.tenantB.ID)); w.Code != http.StatusNoContent {
+		t.Fatalf("change password while acting = %d %s", w.Code, w.Body.String())
+	}
+	if w := e.browser().login("acme", "root", newPW); w.Code != http.StatusOK {
+		t.Errorf("login with the new password at home = %d, want 200", w.Code)
+	}
+	if w := e.browser().login("acme", "root", cpwRoot); w.Code != http.StatusUnauthorized {
+		t.Errorf("login with the old password = %d, want 401", w.Code)
+	}
+
+	if w := c.do(http.MethodPost, "/api/v1/auth/logout", "", c.actingWrite(e.tenantB.ID)); w.Code != http.StatusNoContent {
+		t.Fatalf("logout while acting = %d %s", w.Code, w.Body.String())
+	}
+	if w := c.do(http.MethodGet, "/api/v1/auth/me", "", nil); w.Code != http.StatusUnauthorized {
+		t.Errorf("/auth/me after the logout = %d, want 401", w.Code)
+	}
+
+	// Both self-service actions were audited in Acme (the home tenant) as
+	// local actions -- no actor_tenant_id -- and nothing landed in Globex.
+	ctx := context.Background()
+	home, _, err := e.st.AuthAudit().List(ctx, e.tenantA.ID, store.AuthAuditListOptions{TargetUserID: root.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, row := range home {
+		seen[row.Action] = true
+		if row.ActorTenantID != "" {
+			t.Errorf("home audit row %s has actor_tenant_id %q, want none", row.Action, row.ActorTenantID)
+		}
+	}
+	if !seen["password_change"] || !seen["logout"] {
+		t.Errorf("home audit actions = %v, want password_change and logout", seen)
+	}
+	other, _, err := e.st.AuthAudit().List(ctx, e.tenantB.ID, store.AuthAuditListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other) != 0 {
+		t.Errorf("globex got %d audit rows from self-service routes: %+v", len(other), other[0])
+	}
+}
+
+// A login body without a tenant finds the account by username when it
+// exists in exactly one tenant; an unknown username is the same 401 as a
+// wrong password.
+func TestConsole_LoginWithoutTenant_SingleMatch(t *testing.T) {
+	e := newConsoleEnv(t)
+	gary := e.user(e.tenantB.ID, "gary", "admin", cpwAdmin, false)
+
+	w := e.browser().do(http.MethodGet, "/api/v1/auth/config", "", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"tenant_optional":true`) {
+		t.Errorf("GET /auth/config = %d %s, want tenant_optional true", w.Code, w.Body.String())
+	}
+
+	c := e.browser()
+	w = c.loginWithoutTenant("gary", cpwAdmin)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"tenant":"globex"`) {
+		t.Fatalf("login without tenant = %d %s, want 200 in globex", w.Code, w.Body.String())
+	}
+	var me struct {
+		TenantID string `json:"tenant_id"`
+		User     struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	w = c.do(http.MethodGet, "/api/v1/auth/me", "", nil)
+	_ = json.Unmarshal(w.Body.Bytes(), &me)
+	if w.Code != http.StatusOK || me.TenantID != e.tenantB.ID || me.User.ID != gary.ID {
+		t.Errorf("/auth/me = %d %s, want gary in globex", w.Code, w.Body.String())
+	}
+
+	wrong := e.browser().loginWithoutTenant("gary", "not-the-password")
+	unknown := e.browser().loginWithoutTenant("nobody", cpwAdmin)
+	if wrong.Code != http.StatusUnauthorized || unknown.Code != http.StatusUnauthorized || wrong.Body.String() != unknown.Body.String() {
+		t.Errorf("wrong password = %d %s, unknown user = %d %s; want identical 401s", wrong.Code, wrong.Body.String(), unknown.Code, unknown.Body.String())
+	}
+}
+
+// A username that exists in several tenants cannot log in without naming
+// one: 409 tenant_required, with a body that lists no tenant. Naming the
+// tenant then works as before.
+func TestConsole_LoginWithoutTenant_DuplicateUsername409(t *testing.T) {
+	e := newConsoleEnv(t)
+	e.user(e.tenantA.ID, "sam", "admin", cpwAdmin, false)
+	samB := e.user(e.tenantB.ID, "sam", "viewer", cpwViewer, false)
+
+	c := e.browser()
+	w := c.loginWithoutTenant("sam", cpwAdmin)
+	if w.Code != http.StatusConflict || errType(t, w) != "tenant_required" {
+		t.Fatalf("login without tenant for a duplicated username = %d %s, want 409 tenant_required", w.Code, w.Body.String())
+	}
+	body := strings.ToLower(w.Body.String())
+	for _, leak := range []string{"acme", "globex", e.tenantA.ID, e.tenantB.ID} {
+		if strings.Contains(body, strings.ToLower(leak)) {
+			t.Errorf("409 body names a tenant (%q): %s", leak, w.Body.String())
+		}
+	}
+	if c.cookie != nil {
+		t.Error("a 409 set a session cookie")
+	}
+	// The 409 happens before any password check, so it does not count as
+	// a failed login for either account.
+	for _, tid := range []string{e.tenantA.ID, e.tenantB.ID} {
+		rows, _, _ := e.st.AuthAudit().List(context.Background(), tid, store.AuthAuditListOptions{Action: "login_fail"})
+		if len(rows) != 0 {
+			t.Errorf("tenant %s has %d login_fail rows after the 409", tid, len(rows))
+		}
+	}
+
+	w = c.login("globex", "sam", cpwViewer)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"`+samB.ID+`"`) {
+		t.Errorf("login naming globex = %d %s, want sam@globex", w.Code, w.Body.String())
 	}
 }

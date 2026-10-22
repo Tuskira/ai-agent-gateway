@@ -56,7 +56,7 @@ shape:
 | `conflict` | 409 |
 | `last_admin` (cannot disable, delete or demote a tenant's last active admin) | 409 |
 | `last_platform_admin` (cannot disable, delete or demote the deployment's last active `platform-admin`) | 409 |
-| `tenant_required` (`POST /auth/login` without `tenant` and the username exists in several tenants) | 409 |
+| `tenant_required` (`POST /auth/login` without `tenant` and the username exists in several tenants; counts as a failed login for the lockout and the audit trail) | 409 |
 | `self_action` (cannot disable, delete or demote yourself) | 409 |
 | `already_added` (MCP catalog entry already added) | 409 |
 | `oauth_not_supported` (MCP catalog add) | 422 |

@@ -109,11 +109,14 @@ the ordinary `401` below, after the same hashing work; more than one is
 `409` `tenant_required` with a body that names no tenant, and the caller
 retries with `tenant` set. That `409` does reveal that the username exists
 in several tenants, the accepted trade-off for not typing a tenant on every
-login. `GET /api/v1/auth/config` reports `tenant_optional: true`, so the
-console hides the tenant field and shows it only after a `409` (an older
-gateway lacks the flag and the console then shows the field, prefilled from
-`default_tenant` and hidden when `single_tenant` is true). Clients that
-always send `tenant` keep working.
+login; it costs the caller the same as a failed login (a strike against the
+per-IP lockout, the same hashing work, and a `login_fail` audit row with
+detail `tenant_required`, filed under no tenant), so probing for it is no
+cheaper than guessing passwords. `GET /api/v1/auth/config` reports
+`tenant_optional: true`, so the console hides the tenant field and shows it
+only after a `409` (an older gateway lacks the flag and the console then
+shows the field, prefilled from `default_tenant` and hidden when
+`single_tenant` is true). Clients that always send `tenant` keep working.
 
 A successful login returns the user, whether a password change is pending,
 and the session's CSRF token, and sets the session cookie:
@@ -160,9 +163,10 @@ and `POST /auth/logout` always act on the caller's own account, and
 
 In the console a `platform-admin` session shows a tenant switcher in the top
 bar and a **Tenants** page (list and create). Switching sends the header on
-every call except `/auth/*`, drops every cached answer of the previous
-tenant, and remembers the choice per account in the browser. Other sessions
-never send it.
+every call except the self-service routes above and `/auth/login` and
+`/auth/config` (so `GET /auth/audit` shows the acting tenant's trail), resets
+every cached answer of the previous tenant, and remembers the choice per
+account in the browser. Other sessions never send it.
 
 ## Sessions, cookies and CSRF
 
@@ -250,7 +254,9 @@ user:
 - You cannot disable, delete or demote **yourself** (`409`, error type
   `self_action`).
 - Nobody can disable, delete or demote a tenant's **last active admin**
-  (`409`, `last_admin`). An admin API key is held to this too.
+  (`409`, `last_admin`). An admin API key is held to this too. Promoting
+  that admin to `platform-admin` is not a demotion and is allowed: the user
+  keeps every admin grant.
 - Nobody can disable, delete or demote the deployment's **last active
   `platform-admin`**, in any tenant (`409`, `last_platform_admin`).
   `gateway create-user -role platform-admin` is the recovery path.

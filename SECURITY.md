@@ -7,6 +7,7 @@ minor line; there is no long-term-support branch yet.
 
 | Version | Supported |
 |---|---|
+| 0.6.x | yes |
 | 0.3.x | yes |
 | 0.2.x | best effort until 0.4.0 ships, then unsupported |
 | < 0.2.0 | no |

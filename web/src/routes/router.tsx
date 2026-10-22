@@ -15,6 +15,7 @@ import ProfileToolsPage from '@/routes/ProfileToolsPage'
 import SkillsPage from '@/routes/SkillsPage'
 import ToolSearchPage from '@/routes/ToolSearchPage'
 import UsersPage from '@/routes/UsersPage'
+import TenantsPage from '@/routes/TenantsPage'
 import ChangePasswordPage from '@/routes/ChangePasswordPage'
 import CachePage from '@/routes/CachePage'
 import ApiKeysPage from '@/routes/ApiKeysPage'
@@ -34,6 +35,7 @@ const builtPages: Record<string, ComponentType> = {
   '/profiles': ProfilesPage,
   '/skills': SkillsPage,
   '/users': UsersPage,
+  '/tenants': TenantsPage,
   '/tool-search': ToolSearchPage,
   '/cache': CachePage,
   '/api-keys': ApiKeysPage,

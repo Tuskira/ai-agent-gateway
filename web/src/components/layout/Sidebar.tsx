@@ -13,12 +13,14 @@ interface SidebarProps {
 
 /** Coloured by the `--sidebar-*` tokens in src/index.css, so it follows the theme. */
 export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
-  const { principal } = useAuth()
+  const { principal, isPlatformAdmin } = useAuth()
   const isAdmin = Boolean(principal?.roles.includes('admin'))
   const groups = navGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !item.adminOnly || isAdmin),
+      items: group.items.filter(
+        (item) => (!item.adminOnly || isAdmin) && (!item.platformOnly || isPlatformAdmin),
+      ),
     }))
     .filter((group) => group.items.length > 0)
 

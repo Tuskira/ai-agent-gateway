@@ -1,5 +1,6 @@
 import {
   Bot,
+  Building2,
   Clock,
   Coins,
   Database,
@@ -26,6 +27,9 @@ export interface NavItem {
   /** Hide from the nav unless the principal has the `admin` role. The API
    * still enforces permissions; this only avoids showing a dead link. */
   adminOnly?: boolean
+  /** Hide from the nav unless the principal holds `platform-admin`. These
+   * pages are platform-wide: they do not follow the acting tenant. */
+  platformOnly?: boolean
 }
 
 export interface NavGroup {
@@ -151,6 +155,18 @@ export const navGroups: NavGroup[] = [
         path: '/credentials',
         icon: ShieldCheck,
         description: 'Manage credentials used by upstream MCPs.',
+      },
+    ],
+  },
+  {
+    label: 'Platform',
+    items: [
+      {
+        label: 'Tenants',
+        path: '/tenants',
+        icon: Building2,
+        description: 'Every tenant on this gateway; create new ones.',
+        platformOnly: true,
       },
     ],
   },

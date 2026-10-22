@@ -93,7 +93,6 @@ func TestUsers_Create_Validation(t *testing.T) {
 	for name, body := range map[string]string{
 		"role missing":          `{"username":"dave"}`,
 		"role not allowed":      `{"username":"dave","role":"agent"}`,
-		"role platform admin":   `{"username":"dave","role":"platform-admin"}`,
 		"username too short":    `{"username":"ab","role":"viewer"}`,
 		"username with spaces":  `{"username":"da ve","role":"viewer"}`,
 		"username leading dash": `{"username":"-dave","role":"viewer"}`,
@@ -135,6 +134,60 @@ func TestUsers_Create_ByAdminAPIKeyIsAuditedAsAPIKey(t *testing.T) {
 	}
 }
 
+// platformAdmin creates a platform-admin console user in tenantID with a
+// session, and returns a wrapper that performs requests as that user.
+func (e *usersEnv) platformAdmin(t *testing.T, tenantID, username string) (*store.User, func(*http.Request) *http.Request) {
+	t.Helper()
+	u := e.user(t, tenantID, username, store.UserRolePlatformAdmin, pwBob, false)
+	_, s := e.session(t, u)
+	return u, func(r *http.Request) *http.Request { return asUser(r, u, s) }
+}
+
+func TestUsers_Create_PlatformAdminNeedsPlatformPermission(t *testing.T) {
+	e := newUsersEnv(t)
+	body := `{"username":"root@example.com","role":"platform-admin"}`
+	asAdminKey := func(r *http.Request) *http.Request { return asAPIKey(r, e.tenantA.ID, "admin") }
+
+	// A tenant admin -- user or key -- cannot mint a platform-admin.
+	for name, wrap := range map[string]func(*http.Request) *http.Request{"admin user": e.asAdmin, "admin key": asAdminKey} {
+		w := e.do(http.MethodPost, "/users", "/users", body, e.h.Create, wrap)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403, body = %s", name, w.Code, w.Body.String())
+			continue
+		}
+		assertErrorType(t, w, "permission_error")
+	}
+	if _, err := e.fs.Users().GetByUsername(context.Background(), e.tenantA.ID, "root@example.com"); err == nil {
+		t.Fatal("a refused create stored the user")
+	}
+	// A nil Authorizer fails closed.
+	noAuthz := e.h
+	noAuthz.Authorizer = nil
+	if w := e.do(http.MethodPost, "/users", "/users", body, noAuthz.Create, e.asAdmin); w.Code != http.StatusForbidden {
+		t.Errorf("nil authorizer: status = %d, want 403", w.Code)
+	}
+
+	// A platform-admin user may.
+	_, asRoot := e.platformAdmin(t, e.tenantA.ID, "root")
+	w := e.do(http.MethodPost, "/users", "/users", body, e.h.Create, asRoot)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("platform-admin user: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got createUserResponse
+	decodeInto(t, w, &got)
+	if got.User.Role != "platform-admin" {
+		t.Errorf("created role = %q", got.User.Role)
+	}
+	if a := hasAudit(e.audit(t, e.tenantA.ID), "user_create"); a == nil || a.Detail != "role=platform-admin" || a.ActorTenantID != "" {
+		t.Errorf("user_create audit = %+v", a)
+	}
+	// So may a platform-admin API key.
+	asPlatformKey := func(r *http.Request) *http.Request { return asAPIKey(r, e.tenantA.ID, "platform-admin") }
+	if w := e.do(http.MethodPost, "/users", "/users", `{"username":"root2@example.com","role":"platform-admin"}`, e.h.Create, asPlatformKey); w.Code != http.StatusCreated {
+		t.Errorf("platform-admin key: status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GET /users, GET /users/{id}
 // ---------------------------------------------------------------------------
@@ -167,6 +220,71 @@ func TestUsers_List_IsTenantScoped(t *testing.T) {
 	}
 	if w := e.do(http.MethodGet, "/users", "/users?role=root", "", e.h.List, e.asAdmin); w.Code != http.StatusBadRequest {
 		t.Errorf("?role=root status = %d, want 400", w.Code)
+	}
+	root, _ := e.platformAdmin(t, e.tenantA.ID, "root")
+	w = e.do(http.MethodGet, "/users", "/users?role=platform-admin", "", e.h.List, e.asAdmin)
+	decodeInto(t, w, &page)
+	if w.Code != http.StatusOK || page.Total != 1 || page.Items[0].ID != root.ID {
+		t.Errorf("list ?role=platform-admin = %d %+v, want only root", w.Code, page)
+	}
+}
+
+func TestUsers_List_ActingTenantScopesRows(t *testing.T) {
+	e := newUsersEnv(t)
+	root, _ := e.platformAdmin(t, e.tenantA.ID, "root")
+	_, rootSess := e.session(t, root)
+	gary := e.user(t, e.tenantB.ID, "gary", store.UserRoleAdmin, pwBob, false)
+	acting := func(r *http.Request) *http.Request { return asActingUser(r, root, rootSess, e.tenantB.ID) }
+
+	// Every read and write goes to the acting tenant...
+	w := e.do(http.MethodGet, "/users", "/users", "", e.h.List, acting)
+	var page struct {
+		Items []userView `json:"items"`
+		Total int        `json:"total"`
+	}
+	decodeInto(t, w, &page)
+	if w.Code != http.StatusOK || page.Total != 1 || page.Items[0].ID != gary.ID {
+		t.Errorf("acting list = %d %+v, want only tenant B's gary", w.Code, page)
+	}
+	if w := e.do(http.MethodGet, "/users/{id}", "/users/"+e.admin.ID, "", e.h.Get, acting); w.Code != http.StatusNotFound {
+		t.Errorf("home-tenant user while acting elsewhere: status = %d, want 404", w.Code)
+	}
+	w = e.do(http.MethodPost, "/users", "/users", `{"username":"newbie","role":"viewer"}`, e.h.Create, acting)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("acting create: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if _, err := e.fs.Users().GetByUsername(context.Background(), e.tenantB.ID, "newbie"); err != nil {
+		t.Errorf("acting create did not land in tenant B: %v", err)
+	}
+	if _, err := e.fs.Users().GetByUsername(context.Background(), e.tenantA.ID, "newbie"); err == nil {
+		t.Error("acting create landed in the home tenant")
+	}
+
+	// ...and the acted-on tenant's audit trail records where the actor came from.
+	a := hasAudit(e.audit(t, e.tenantB.ID), "user_create")
+	if a == nil || a.ActorKind != "user" || a.ActorID != root.ID || a.ActorTenantID != e.tenantA.ID {
+		t.Fatalf("tenant B user_create audit = %+v, want actor root from tenant A", a)
+	}
+	if hasAudit(e.audit(t, e.tenantA.ID), "user_create") != nil {
+		t.Error("an acting write was audited in the home tenant")
+	}
+	w = e.do(http.MethodGet, "/auth/audit", "/auth/audit", "", e.h.Audit, acting)
+	var trail struct {
+		Items []auditEntryView `json:"items"`
+	}
+	decodeInto(t, w, &trail)
+	if w.Code != http.StatusOK || len(trail.Items) != 1 || trail.Items[0].ActorTenantID != e.tenantA.ID {
+		t.Errorf("GET /auth/audit while acting = %d %+v, want actor_tenant_id %s", w.Code, trail.Items, e.tenantA.ID)
+	}
+	// A local actor's row carries no actor_tenant_id.
+	e.do(http.MethodPost, "/users", "/users", `{"username":"local","role":"viewer"}`, e.h.Create, e.asAdmin)
+	w = e.do(http.MethodGet, "/auth/audit", "/auth/audit", "", e.h.Audit, e.asAdmin)
+	var local struct {
+		Items []auditEntryView `json:"items"`
+	}
+	decodeInto(t, w, &local)
+	if len(local.Items) != 1 || local.Items[0].ActorTenantID != "" || strings.Contains(w.Body.String(), "actor_tenant_id") {
+		t.Errorf("home-tenant audit = %+v, want no actor_tenant_id", local.Items)
 	}
 }
 
@@ -316,6 +434,93 @@ func TestUsers_Update_LastAdminGuard(t *testing.T) {
 	}
 }
 
+func TestUsers_Update_PlatformAdminNeedsPlatformPermission(t *testing.T) {
+	e := newUsersEnv(t)
+	root, asRoot := e.platformAdmin(t, e.tenantA.ID, "root")
+	bob := e.user(t, e.tenantA.ID, "bob", store.UserRoleViewer, pwBob, false)
+
+	// A tenant admin cannot touch a platform-admin in its tenant, nor hand
+	// out the role.
+	for name, c := range map[string]struct{ id, body string }{
+		"rename root":  {root.ID, `{"display_name":"R"}`},
+		"disable root": {root.ID, `{"disabled":true}`},
+		"demote root":  {root.ID, `{"role":"admin"}`},
+		"promote bob":  {bob.ID, `{"role":"platform-admin"}`},
+	} {
+		w := e.do(http.MethodPatch, "/users/{id}", "/users/"+c.id, c.body, e.h.Update, e.asAdmin)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403, body = %s", name, w.Code, w.Body.String())
+			continue
+		}
+		assertErrorType(t, w, "permission_error")
+	}
+	if u, _ := e.fs.Users().Get(context.Background(), e.tenantA.ID, root.ID); u.Disabled || u.Role != store.UserRolePlatformAdmin || u.DisplayName != "Root" {
+		t.Errorf("a refused patch changed root: %+v", u)
+	}
+	if u, _ := e.fs.Users().Get(context.Background(), e.tenantA.ID, bob.ID); u.Role != store.UserRoleViewer {
+		t.Errorf("a refused patch changed bob: %+v", u)
+	}
+
+	// A platform-admin may do all of it (self-guard aside).
+	if w := e.do(http.MethodPatch, "/users/{id}", "/users/"+bob.ID, `{"role":"platform-admin"}`, e.h.Update, asRoot); w.Code != http.StatusOK {
+		t.Fatalf("root promotes bob: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if a := hasAudit(e.audit(t, e.tenantA.ID), "user_update"); a == nil || !strings.Contains(a.Detail, "role:viewer->platform-admin") {
+		t.Errorf("user_update audit = %+v", a)
+	}
+	w := e.do(http.MethodPatch, "/users/{id}", "/users/"+root.ID, `{"role":"admin"}`, e.h.Update, asRoot)
+	if w.Code != http.StatusConflict {
+		t.Errorf("root demotes self: status = %d, want 409", w.Code)
+	} else {
+		assertErrorType(t, w, "self_action")
+	}
+	if w := e.do(http.MethodPatch, "/users/{id}", "/users/"+bob.ID, `{"display_name":"Robert","role":"admin"}`, e.h.Update, asRoot); w.Code != http.StatusOK {
+		t.Errorf("root demotes bob (root remains): status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUsers_Update_LastPlatformAdminGuard(t *testing.T) {
+	e := newUsersEnv(t)
+	root, _ := e.platformAdmin(t, e.tenantA.ID, "root")
+	asPlatformKey := func(r *http.Request) *http.Request { return asAPIKey(r, e.tenantA.ID, "platform-admin") }
+
+	// root is the only platform-admin anywhere: nobody can remove it.
+	for name, body := range map[string]string{"disable": `{"disabled":true}`, "demote": `{"role":"admin"}`} {
+		w := e.do(http.MethodPatch, "/users/{id}", "/users/"+root.ID, body, e.h.Update, asPlatformKey)
+		if w.Code != http.StatusConflict {
+			t.Errorf("%s last platform-admin: status = %d, want 409, body = %s", name, w.Code, w.Body.String())
+			continue
+		}
+		assertErrorType(t, w, "last_platform_admin")
+	}
+	// A rename is not a removal.
+	if w := e.do(http.MethodPatch, "/users/{id}", "/users/"+root.ID, `{"display_name":"Root of all"}`, e.h.Update, asPlatformKey); w.Code != http.StatusOK {
+		t.Errorf("rename the last platform-admin: status = %d, want 200", w.Code)
+	}
+	// A second one in ANOTHER tenant counts: the guard is platform-wide.
+	rootB, _ := e.platformAdmin(t, e.tenantB.ID, "root-b")
+	if w := e.do(http.MethodPatch, "/users/{id}", "/users/"+root.ID, `{"role":"admin"}`, e.h.Update, asPlatformKey); w.Code != http.StatusOK {
+		t.Fatalf("demote with a second platform-admin present: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	// Now rootB is the last; the tenant-local last-admin guard does not
+	// apply to it (alice is tenant B's... no: tenant A's; tenant B has
+	// no admin at all and that is fine for a platform-admin).
+	asPlatformKeyB := func(r *http.Request) *http.Request { return asAPIKey(r, e.tenantB.ID, "platform-admin") }
+	w := e.do(http.MethodPatch, "/users/{id}", "/users/"+rootB.ID, `{"disabled":true}`, e.h.Update, asPlatformKeyB)
+	if w.Code != http.StatusConflict {
+		t.Errorf("disable the now-last platform-admin: status = %d, want 409", w.Code)
+	} else {
+		assertErrorType(t, w, "last_platform_admin")
+	}
+	// A disabled platform-admin is not "the last active one".
+	rootC := e.user(t, e.tenantB.ID, "root-c", store.UserRolePlatformAdmin, pwBob, false)
+	rootC.Disabled = true
+	_ = e.fs.Users().Update(context.Background(), rootC)
+	if w := e.do(http.MethodPatch, "/users/{id}", "/users/"+rootC.ID, `{"role":"viewer"}`, e.h.Update, asPlatformKeyB); w.Code != http.StatusOK {
+		t.Errorf("demote a disabled platform-admin: status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // DELETE /users/{id}
 // ---------------------------------------------------------------------------
@@ -371,9 +576,75 @@ func TestUsers_Delete_Guards(t *testing.T) {
 	assertErrorType(t, w, "last_admin")
 }
 
+func TestUsers_Delete_PlatformAdmin(t *testing.T) {
+	e := newUsersEnv(t)
+	root, asRoot := e.platformAdmin(t, e.tenantA.ID, "root")
+	asPlatformKey := func(r *http.Request) *http.Request { return asAPIKey(r, e.tenantA.ID, "platform-admin") }
+
+	w := e.do(http.MethodDelete, "/users/{id}", "/users/"+root.ID, "", e.h.Delete, e.asAdmin)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("tenant admin deletes a platform-admin: status = %d, want 403", w.Code)
+	} else {
+		assertErrorType(t, w, "permission_error")
+	}
+	w = e.do(http.MethodDelete, "/users/{id}", "/users/"+root.ID, "", e.h.Delete, asPlatformKey)
+	if w.Code != http.StatusConflict {
+		t.Errorf("delete the last platform-admin: status = %d, want 409", w.Code)
+	} else {
+		assertErrorType(t, w, "last_platform_admin")
+	}
+	root2, _ := e.platformAdmin(t, e.tenantA.ID, "root2")
+	if w := e.do(http.MethodDelete, "/users/{id}", "/users/"+root2.ID, "", e.h.Delete, asRoot); w.Code != http.StatusNoContent {
+		t.Errorf("platform-admin deletes the other platform-admin: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if _, err := e.fs.Users().Get(context.Background(), e.tenantA.ID, root2.ID); err != store.ErrNotFound {
+		t.Errorf("root2 after delete: %v, want ErrNotFound", err)
+	}
+	if u, _ := e.fs.Users().Get(context.Background(), e.tenantA.ID, root.ID); u == nil || u.DeletedAt != nil {
+		t.Error("a refused delete removed root")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // POST /users/{id}/reset-password, /revoke-sessions
 // ---------------------------------------------------------------------------
+
+func TestUsers_ResetAndRevoke_PlatformAdminNeedPlatformPermission(t *testing.T) {
+	e := newUsersEnv(t)
+	root, _ := e.platformAdmin(t, e.tenantA.ID, "root")
+	_, rootSess := e.session(t, root)
+	asPlatformKey := func(r *http.Request) *http.Request { return asAPIKey(r, e.tenantA.ID, "platform-admin") }
+
+	reset := func(wrap func(*http.Request) *http.Request) *httptest.ResponseRecorder {
+		return e.do(http.MethodPost, "/users/{id}/reset-password", "/users/"+root.ID+"/reset-password", "", e.h.ResetPassword, wrap)
+	}
+	revoke := func(wrap func(*http.Request) *http.Request) *httptest.ResponseRecorder {
+		return e.do(http.MethodPost, "/users/{id}/revoke-sessions", "/users/"+root.ID+"/revoke-sessions", "", e.h.RevokeSessions, wrap)
+	}
+	for name, run := range map[string]func(func(*http.Request) *http.Request) *httptest.ResponseRecorder{"reset-password": reset, "revoke-sessions": revoke} {
+		w := run(e.asAdmin)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("tenant admin %s on a platform-admin: status = %d, want 403, body = %s", name, w.Code, w.Body.String())
+		} else {
+			assertErrorType(t, w, "permission_error")
+		}
+	}
+	if s, _ := e.fs.UserSessions().Get(context.Background(), rootSess.ID); s.RevokedAt != nil {
+		t.Error("a refused call revoked root's session")
+	}
+	if u, _ := e.fs.Users().Get(context.Background(), e.tenantA.ID, root.ID); u.MustChangePassword {
+		t.Error("a refused reset changed root's password state")
+	}
+	if w := revoke(asPlatformKey); w.Code != http.StatusNoContent {
+		t.Errorf("platform key revokes: status = %d", w.Code)
+	}
+	if s, _ := e.fs.UserSessions().Get(context.Background(), rootSess.ID); s.RevokedAt == nil {
+		t.Error("session not revoked")
+	}
+	if w := reset(asPlatformKey); w.Code != http.StatusOK {
+		t.Errorf("platform key resets: status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
 
 func TestUsers_ResetPassword(t *testing.T) {
 	e := newUsersEnv(t)

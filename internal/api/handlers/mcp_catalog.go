@@ -147,7 +147,8 @@ func (h MCPCatalog) canWriteCatalog(r *http.Request) bool {
 }
 
 // canWritePlatformCatalog reports whether the caller may write PLATFORM
-// entries: the platform.admin grant, which is API-key only.
+// entries: the platform.admin grant, held by platform-admin API keys and
+// platform-admin console users (never by a plain admin user).
 func (h MCPCatalog) canWritePlatformCatalog(r *http.Request) bool {
 	if h.Authorizer == nil {
 		return false

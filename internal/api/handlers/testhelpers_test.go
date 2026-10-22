@@ -50,6 +50,16 @@ func withPrincipal(r *http.Request, tenantID string, roles ...string) *http.Requ
 	return r.WithContext(pkgauth.WithPrincipal(r.Context(), p))
 }
 
+// withActingPrincipal is withPrincipal for a principal that
+// internalauth.TenantOverride has redirected: it belongs to homeTenantID
+// and acts in actingTenantID for this request.
+func withActingPrincipal(r *http.Request, homeTenantID, actingTenantID string, roles ...string) *http.Request {
+	p := &pkgauth.Principal{
+		Subject: "test-principal", TenantID: actingTenantID, HomeTenantID: homeTenantID, Roles: roles, AuthMethod: "test",
+	}
+	return r.WithContext(pkgauth.WithPrincipal(r.Context(), p))
+}
+
 // serve mounts h at pattern/method on a fresh chi router (so
 // chi.URLParam works inside the handler) and returns the recorded
 // response for one request.

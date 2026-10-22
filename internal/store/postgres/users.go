@@ -55,6 +55,25 @@ func (s *userStore) GetByUsername(ctx context.Context, tenantID, username string
 	return u, nil
 }
 
+func (s *userStore) FindByUsername(ctx context.Context, username string) ([]*store.User, error) {
+	const q = `SELECT ` + userColumns + ` FROM users WHERE username = $1 AND deleted_at IS NULL ORDER BY tenant_id`
+	rows, err := s.db.QueryContext(ctx, q, username)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: find users by username: %w", err)
+	}
+	defer rows.Close()
+
+	out := []*store.User{}
+	for rows.Next() {
+		u, err := scanUserRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 func (s *userStore) List(ctx context.Context, tenantID string, opts store.UserListOptions) ([]*store.User, error) {
 	q := `SELECT ` + userColumns + ` FROM users WHERE tenant_id = $1 AND deleted_at IS NULL`
 	args := []any{tenantID}

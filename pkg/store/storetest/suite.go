@@ -2058,6 +2058,34 @@ func testUsers(t *testing.T, s store.Store) {
 	if _, err := users.Get(ctx, tenantB.ID, alice.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Get(other tenant) error = %v, want ErrNotFound", err)
 	}
+
+	// FindByUsername is the one cross-tenant lookup: every live user with
+	// the name, in tenant-id order, disabled ones included; an unknown
+	// name is an empty list, not an error.
+	if found, err := users.FindByUsername(ctx, alice.Username); err != nil || len(found) != 1 || found[0].ID != alice.ID {
+		t.Errorf("FindByUsername(alice) = %v, %v; want [alice]", found, err)
+	}
+	if found, err := users.FindByUsername(ctx, unique("nobody")); err != nil || found == nil || len(found) != 0 {
+		t.Errorf("FindByUsername(unknown) = %v, %v; want an empty, non-nil list", found, err)
+	}
+	aliceB := newUser(tenantB.ID, alice.Username, store.UserRoleViewer)
+	aliceB.Disabled = true
+	if err := users.Create(ctx, aliceB); err != nil {
+		t.Fatalf("Create(alice in tenant B): %v", err)
+	}
+	found, err := users.FindByUsername(ctx, alice.Username)
+	if err != nil || len(found) != 2 {
+		t.Fatalf("FindByUsername(alice in two tenants) = %v, %v; want both", found, err)
+	}
+	if found[0].TenantID > found[1].TenantID {
+		t.Errorf("FindByUsername order = %q, %q; want ascending tenant id", found[0].TenantID, found[1].TenantID)
+	}
+	if err := users.SoftDelete(ctx, tenantB.ID, aliceB.ID); err != nil {
+		t.Fatal(err)
+	}
+	if found, _ := users.FindByUsername(ctx, alice.Username); len(found) != 1 || found[0].ID != alice.ID {
+		t.Errorf("FindByUsername after deleting the tenant-B twin = %v; want [alice]", found)
+	}
 	if _, err := users.GetByUsername(ctx, tenantB.ID, alice.Username); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetByUsername(other tenant) error = %v, want ErrNotFound", err)
 	}

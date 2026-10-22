@@ -1003,8 +1003,9 @@ type UserListOptions struct {
 }
 
 // UserStore manages User rows. Every method but CountActivePlatformAdmins
-// is tenant-scoped: a user of tenant A is never visible through a call
-// that names tenant B, and a soft-deleted user is invisible to every read.
+// and FindByUsername is tenant-scoped: a user of tenant A is never visible
+// through a call that names tenant B, and a soft-deleted user is invisible
+// to every read.
 type UserStore interface {
 	// Create persists u, setting ID, PasswordChangedAt, CreatedAt and
 	// UpdatedAt. ErrConflict when a live user with the same (tenant,
@@ -1012,6 +1013,13 @@ type UserStore interface {
 	Create(ctx context.Context, u *User) error
 	Get(ctx context.Context, tenantID, id string) (*User, error)
 	GetByUsername(ctx context.Context, tenantID, username string) (*User, error)
+	// FindByUsername returns every live user with that username across
+	// all tenants (disabled ones included; a soft-deleted one is not
+	// live), ordered by tenant id. Usernames are unique only per tenant,
+	// so a login that names no tenant uses it to find the one account --
+	// or to learn that the name is ambiguous. An unknown username is an
+	// empty list, not an error.
+	FindByUsername(ctx context.Context, username string) ([]*User, error)
 	// List returns the tenant's live users ordered by username.
 	List(ctx context.Context, tenantID string, opts UserListOptions) ([]*User, error)
 	// Update rewrites DisplayName, Role and Disabled only (Username is

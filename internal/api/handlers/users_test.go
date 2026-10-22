@@ -434,6 +434,33 @@ func TestUsers_Update_LastAdminGuard(t *testing.T) {
 	}
 }
 
+func TestUsers_Update_PromoteOnlyAdminToPlatformAdmin(t *testing.T) {
+	e := newUsersEnv(t)
+	asPlatformKey := func(r *http.Request) *http.Request { return asAPIKey(r, e.tenantA.ID, "platform-admin") }
+
+	// alice is the tenant's only admin. Making her a platform-admin is not
+	// a demotion: she keeps every admin grant, so last_admin does not fire.
+	w := e.do(http.MethodPatch, "/users/{id}", "/users/"+e.admin.ID, `{"role":"platform-admin"}`, e.h.Update, asPlatformKey)
+	var got userView
+	decodeInto(t, w, &got)
+	if w.Code != http.StatusOK || got.Role != "platform-admin" {
+		t.Fatalf("promote the only admin: status = %d, body = %s; want 200 platform-admin", w.Code, w.Body.String())
+	}
+	if a := hasAudit(e.audit(t, e.tenantA.ID), "user_update"); a == nil || !strings.Contains(a.Detail, "role:admin->platform-admin") {
+		t.Errorf("user_update audit = %+v", a)
+	}
+	// From there the platform-wide guard takes over: she is now the only
+	// platform-admin anywhere, so moving her out of that role is refused.
+	for name, body := range map[string]string{"back to admin": `{"role":"admin"}`, "to viewer": `{"role":"viewer"}`} {
+		w := e.do(http.MethodPatch, "/users/{id}", "/users/"+e.admin.ID, body, e.h.Update, asPlatformKey)
+		if w.Code != http.StatusConflict {
+			t.Errorf("%s: status = %d, want 409, body = %s", name, w.Code, w.Body.String())
+			continue
+		}
+		assertErrorType(t, w, "last_platform_admin")
+	}
+}
+
 func TestUsers_Update_PlatformAdminNeedsPlatformPermission(t *testing.T) {
 	e := newUsersEnv(t)
 	root, asRoot := e.platformAdmin(t, e.tenantA.ID, "root")

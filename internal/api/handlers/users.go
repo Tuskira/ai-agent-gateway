@@ -288,7 +288,9 @@ func selfActionConflict(w http.ResponseWriter) {
 // or demote a tenant's last active admin (409 last_admin) or the
 // deployment's last active platform-admin (409 last_platform_admin), and
 // a patch that gives or touches the platform-admin role needs
-// platform.admin (403). Disabling revokes the user's sessions.
+// platform.admin (403). Promoting a tenant's only admin to platform-admin
+// is allowed: it keeps the admin grants. Disabling revokes the user's
+// sessions.
 func (h Users) Update(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -338,11 +340,13 @@ func (h Users) Update(w http.ResponseWriter, r *http.Request) {
 		newRole = *req.Role
 	}
 	disabling := newDisabled && !u.Disabled
-	// "demoting" is any role change away from admin or platform-admin --
-	// including admin -> platform-admin, since CountActiveAdmins counts
-	// role admin only, so the tenant's last admin cannot be moved out of
-	// that role either way (as before this role existed).
-	demoting := (u.Role == store.UserRoleAdmin || isPlatformAdmin(u)) && newRole != u.Role
+	// "demoting" is a role change that takes admin grants away: admin ->
+	// viewer, or platform-admin -> anything else. admin -> platform-admin
+	// is not one: the user keeps every admin grant, so a tenant whose only
+	// admin is promoted still has an admin-capable user, even though
+	// CountActiveAdmins (role admin only) then reads zero for it.
+	demoting := (u.Role == store.UserRoleAdmin && newRole != store.UserRoleAdmin && newRole != store.UserRolePlatformAdmin) ||
+		(isPlatformAdmin(u) && newRole != u.Role)
 	if disabling || demoting {
 		if id == selfID(r) {
 			selfActionConflict(w)

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -37,11 +38,27 @@ function UsersProbe() {
   )
 }
 
-function renderTopBar() {
+/** A tenant-scoped query that never reads useAuth, like most route pages
+ * (profiles, connectors, logs...). Nothing re-renders it on a switch, so it
+ * only shows the new tenant's rows if the switch itself makes it refetch. */
+function ConnectorsProbe() {
+  const connectors = useQuery({
+    queryKey: ['connectors', 'list'],
+    queryFn: () => apiFetch<{ items: { id: string }[] }>('/connectors'),
+    retry: false,
+  })
+  return (
+    <div data-testid="connectors">
+      {connectors.isSuccess ? connectors.data.items.map((c) => c.id).join(',') : 'pending'}
+    </div>
+  )
+}
+
+function renderTopBar(probe: ReactNode = <UsersProbe />) {
   return renderWithAuth(
     <MemoryRouter initialEntries={['/users']}>
       <TopBar collapsed={false} onToggleCollapsed={() => {}} onOpenMobileNav={() => {}} />
-      <UsersProbe />
+      {probe}
     </MemoryRouter>,
   )
 }
@@ -155,6 +172,30 @@ describe('TenantSwitcher', () => {
     expect(screen.getByTestId('tenant-id-pill')).toHaveTextContent('tenant-uuid-2')
     expect(localStorage.getItem('gateway.acting_tenant.ops')).toBe('tenant-uuid-2')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('refetches a mounted query that does not read useAuth, so no page keeps the old tenant', async () => {
+    const calls = stubApi({
+      'GET /auth/me': () => jsonResponse(SESSION_PLATFORM_ADMIN),
+      'GET /tenants?limit=200': () => jsonResponse(TENANTS),
+      'GET /connectors': (call) =>
+        jsonResponse({ items: [{ id: `c-of-${call.headers[ACTING_TENANT_HEADER] ?? 'none'}` }] }),
+    })
+    const user = userEvent.setup()
+    renderTopBar(<ConnectorsProbe />)
+
+    // The probe fetches as soon as it mounts, like a page would.
+    await screen.findByText(/^c-of-/)
+    await screen.findByTestId('tenant-switcher')
+    await user.click(screen.getByTestId('tenant-switcher'))
+    await user.click(await screen.findByRole('option', { name: /globex/i }))
+
+    // Nothing re-rendered the probe, yet the switch reset its query and the
+    // refetch carried the new tenant's header.
+    expect(await screen.findByText('c-of-tenant-uuid-2')).toBeInTheDocument()
+    const connectorCalls = calls.filter((c) => c.path === '/connectors')
+    expect(connectorCalls).toHaveLength(2)
+    expect(connectorCalls[1]!.headers[ACTING_TENANT_HEADER]).toBe('tenant-uuid-2')
   })
 
   it('shows the short id when the acting tenant is not in the list', async () => {

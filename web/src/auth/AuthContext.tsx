@@ -83,8 +83,9 @@ interface AuthContextValue {
    * it picks another). `null` for every other session: no header is sent. */
   actingTenantId: string | null
   /** Platform sessions only: act in `tenantId` from now on. Remembers the
-   * choice per subject and drops every cached answer except the session's
-   * own, so no data of the previous tenant lingers. */
+   * choice per subject and resets every cached answer except the session's
+   * own (refetching those on screen), so no data of the previous tenant
+   * lingers. */
   switchTenant: (tenantId: string) => void
 }
 
@@ -258,7 +259,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setActingTenant(tenantId)
       setStoredActingTenant(subject, tenantId)
       queryClient.setQueryData(actingTenantQueryKey(subject), tenantId)
-      queryClient.removeQueries({ predicate: (q) => !isSessionQueryKey(q.queryKey) })
+      // Reset, not remove: removing only empties the cache, and a mounted
+      // query that is not re-rendered by this switch (most pages do not read
+      // useAuth) would keep showing the old tenant's rows. Reset wipes the
+      // state and refetches every query that is on screen, under the header
+      // set above.
+      void queryClient.resetQueries({ predicate: (q) => !isSessionQueryKey(q.queryKey) })
     },
     [isPlatformAdmin, subject, queryClient],
   )

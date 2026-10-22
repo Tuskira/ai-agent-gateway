@@ -133,12 +133,63 @@ describe('TenantsPage', () => {
       expect(lists.at(-1)?.headers[ACTING_TENANT_HEADER]).toBe('tenant-uuid-2')
     })
     expect(localStorage.getItem('gateway.acting_tenant.ops')).toBe('tenant-uuid-2')
-    // Once the list is back, the acting row is marked and has no actions
-    // menu (its only action does not apply), while the others still do.
+    // Once the list is back, the acting row is marked and no longer offers
+    // "Act in this tenant", while the others still do.
     await screen.findByRole('button', { name: 'Actions for Acme' })
-    expect(screen.queryByRole('button', { name: 'Actions for Globex' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Actions for Globex' }))
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Act in this tenant' })).toBeNull()
+    await user.keyboard('{Escape}')
     const globexRow = screen.getByText('Globex').closest('tr')!
     expect(within(globexRow).getByText('Acting')).toBeInTheDocument()
+  })
+
+  it('renames a tenant with PATCH and refreshes the list', async () => {
+    const calls = stubApi({
+      'GET /auth/me': () => jsonResponse(SESSION_PLATFORM_ADMIN),
+      'GET /tenants?limit=200': () => jsonResponse(TENANTS),
+      'PATCH /tenants/tenant-uuid-2': () =>
+        jsonResponse({ ...TENANTS.items[1], name: 'Globex Inc' }),
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await screen.findByText('Globex')
+    await chooseRowAction(user, 'Globex', 'Rename')
+    const dialog = await screen.findByRole('dialog')
+    const input = within(dialog).getByLabelText('Name')
+    expect(input).toHaveValue('Globex')
+    await user.clear(input)
+    await user.type(input, 'Globex Inc')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true))
+    const patch = calls.find((c) => c.method === 'PATCH')!
+    expect(patch.path).toBe('/tenants/tenant-uuid-2')
+    expect(JSON.parse(patch.body!)).toEqual({ name: 'Globex Inc' })
+    expect(patch.headers['X-CSRF-Token']).toBe(CSRF)
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(calls.filter((c) => c.path === '/tenants?limit=200').length).toBeGreaterThan(1)
+  })
+
+  it('shows the server error when a rename fails', async () => {
+    stubApi({
+      'GET /auth/me': () => jsonResponse(SESSION_PLATFORM_ADMIN),
+      'GET /tenants?limit=200': () => jsonResponse(TENANTS),
+      'PATCH /tenants/tenant-uuid-2': () =>
+        jsonResponse({ error: { type: 'not_found', message: 'tenant not found' } }, 404),
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await screen.findByText('Globex')
+    await chooseRowAction(user, 'Globex', 'Rename')
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText('Name'), ' 2')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'This tenant no longer exists.',
+    )
   })
 
   it('shows the platform-admin-required state to a tenant admin without calling /tenants', async () => {

@@ -8,7 +8,6 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
-  Search,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
 import { findNavItem, OVERVIEW_PATH } from '@/lib/nav'
@@ -46,10 +45,9 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
     ? `${sessionUser.role} · ${sessionUser.tenant}`
     : 'API key'
   const initials = (accountName || '?').slice(0, 2).toUpperCase()
-  // Platform sessions show (and copy) the tenant they act in, which may
-  // differ from the account's own; everyone else sees their one tenant.
+  // The pill is for non-platform sessions, which see their one tenant;
+  // platform sessions get the acting tenant's id from the switcher.
   const shownTenantId = principal ? (actingTenantId ?? principal.tenant_id) : ''
-  const tenantIdShort = shownTenantId.slice(0, 8)
 
   async function copyTenantId() {
     if (!shownTenantId) return
@@ -95,11 +93,7 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
         aria-label="Breadcrumb"
         className="flex min-w-0 items-center gap-1.5 truncate text-[13px] whitespace-nowrap"
       >
-        {isPlatformAdmin ? (
-          <TenantSwitcher />
-        ) : (
-          <span className="hidden text-text-subtle md:inline">Tenant</span>
-        )}
+        <span className="hidden text-text-subtle md:inline">Tenant</span>
         <ChevronRight
           className="hidden size-3.5 shrink-0 text-text-subtle md:inline"
           aria-hidden="true"
@@ -116,39 +110,14 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
         </span>
       </nav>
 
-      {/* Below md: a compact search icon button replaces the search field. */}
-      <div className="hidden min-w-0 flex-1 justify-center md:flex">
-        <label className="flex h-9 w-full max-w-[420px] items-center gap-2 rounded-r-4 border border-border bg-background px-2.5 text-text-subtle">
-          <Search className="size-4 shrink-0" aria-hidden="true" />
-          <input
-            type="text"
-            placeholder="Search tools, MCPs, sessions&hellip;"
-            className="min-w-0 flex-1 border-0 bg-transparent text-[13px] text-foreground outline-none placeholder:text-text-subtle"
-          />
-          <span className="rounded-r-2 border border-border bg-card px-1.5 py-px font-mono text-[11px] text-text-muted">
-            &#8984;K
-          </span>
-        </label>
-      </div>
-
       <div className="ml-auto flex items-center gap-1.5 sm:gap-2.5">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-text-muted md:hidden"
-          aria-label="Search"
-        >
-          <Search className="size-[18px]" aria-hidden="true" />
-        </Button>
-
-        {principal ? (
+        {/* Right cluster, left to right: tenant (switcher or static pill), theme, avatar. */}
+        {isPlatformAdmin ? (
+          <TenantSwitcher />
+        ) : principal ? (
           <div className="hidden items-center gap-2.5 rounded-r-5 border border-border bg-card py-1 pr-1.5 pl-3 sm:flex">
-            {/* Below lg: id truncated to 8 characters. */}
-            <span className="truncate font-mono text-[13px] text-foreground lg:hidden">
-              {tenantIdShort}&hellip;
-            </span>
             <span
-              className="hidden truncate text-[13px] text-foreground lg:inline"
+              className="truncate font-mono text-[13px] text-foreground"
               data-testid="tenant-id-pill"
             >
               {shownTenantId}

@@ -150,6 +150,19 @@ func (t *tenantStore) GetBySlug(_ context.Context, slug string) (*store.Tenant, 
 	return nil, store.ErrNotFound
 }
 
+func (t *tenantStore) UpdateName(_ context.Context, id, name string) (*store.Tenant, error) {
+	s := (*Store)(t)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tn, ok := s.tenants[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	tn.Name = name
+	cp := *tn
+	return &cp, nil
+}
+
 func (t *tenantStore) List(context.Context) ([]*store.Tenant, error) {
 	s := (*Store)(t)
 	s.mu.Lock()

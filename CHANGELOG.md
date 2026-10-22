@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tenant rename.** `PATCH /api/v1/tenants/{tenant_id}` with `{name}` renames
+  a tenant (`platform.admin`; the slug and id are immutable; `404` for an
+  unknown tenant, `400` for a name outside 1-120 characters). The console's
+  Tenants page offers it to platform sessions.
+
+### Changed
+
+- **Console tenant switcher.** The top-bar switcher shows the tenant name,
+  its full id with a copy button, and a "Switch tenant..." search in a
+  lens-style layout. Ids are no longer truncated to 8 characters.
+
 ## [0.6.0] - 2026-10-22
 
 ### Added

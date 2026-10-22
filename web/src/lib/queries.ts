@@ -142,6 +142,7 @@ import {
 import {
   createTenant,
   listTenants,
+  renameTenant,
   TENANTS_QUERY_KEY,
   type CreateTenantInput,
 } from '@/lib/tenants'
@@ -1060,6 +1061,16 @@ export function useCreateTenant() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: CreateTenantInput) => createTenant(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: TENANTS_QUERY_KEY })
+    },
+  })
+}
+
+export function useRenameTenant() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => renameTenant(id, name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: TENANTS_QUERY_KEY })
     },

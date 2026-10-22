@@ -16,6 +16,8 @@ export interface TenantsPage {
   total: number
 }
 
+export const TENANT_NAME_MAX = 120
+
 export interface CreateTenantInput {
   slug: string
   name: string
@@ -38,5 +40,14 @@ export function createTenant(input: CreateTenantInput): Promise<Tenant> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
+  })
+}
+
+/** `PATCH /tenants/{id}`: rename a tenant. The slug and id never change. */
+export function renameTenant(id: string, name: string): Promise<Tenant> {
+  return apiFetch<Tenant>(`/tenants/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
   })
 }

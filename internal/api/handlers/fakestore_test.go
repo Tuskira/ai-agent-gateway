@@ -147,6 +147,18 @@ func (s *fakeTenantStore) List(_ context.Context) ([]*store.Tenant, error) {
 	return out, nil
 }
 
+func (s *fakeTenantStore) UpdateName(_ context.Context, id, name string) (*store.Tenant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.byID[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	t.Name = name
+	cp := *t
+	return &cp, nil
+}
+
 var _ store.TenantStore = (*fakeTenantStore)(nil)
 
 // ---------------------------------------------------------------------------

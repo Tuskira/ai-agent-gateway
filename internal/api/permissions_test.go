@@ -258,6 +258,9 @@ func (nopTenants) GetBySlug(context.Context, string) (*store.Tenant, error) {
 	return nil, store.ErrNotFound
 }
 func (nopTenants) List(context.Context) ([]*store.Tenant, error) { return nil, nil }
+func (nopTenants) UpdateName(context.Context, string, string) (*store.Tenant, error) {
+	return nil, store.ErrNotFound
+}
 
 type nopAPIKeys struct{}
 

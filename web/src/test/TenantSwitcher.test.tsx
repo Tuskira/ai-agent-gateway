@@ -84,7 +84,7 @@ describe('TenantSwitcher', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
-  it('is not rendered for a plain admin, who keeps the static Tenant label', async () => {
+  it('is not rendered for a plain admin, who keeps the static tenant id pill on the right', async () => {
     const calls = stubApi({
       'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
       'GET /users': () => jsonResponse({ items: [] }),
@@ -92,32 +92,68 @@ describe('TenantSwitcher', () => {
     renderTopBar()
 
     await screen.findByText('empty')
-    expect(screen.getByText('Tenant')).toBeInTheDocument()
     expect(screen.queryByTestId('tenant-switcher')).not.toBeInTheDocument()
     expect(calls.some((c) => c.path.startsWith('/tenants'))).toBe(false)
     expect(screen.getByTestId('tenant-id-pill')).toHaveTextContent('tenant-uuid-1')
   })
 
-  it('names the acting tenant and lists every tenant with a short id and a count', async () => {
+  it('shows the acting tenant name and full id, and lists every tenant with its full id and a count', async () => {
     stubPlatform()
     const user = userEvent.setup()
     renderTopBar()
 
     const trigger = await screen.findByTestId('tenant-switcher')
     await waitFor(() => expect(trigger).toHaveTextContent('Acme'))
-    expect(screen.queryByText('Tenant')).not.toBeInTheDocument()
+    expect(trigger).toHaveTextContent('tenant-uuid-1')
+    // The platform session's id lives in the switcher, not a second pill.
+    expect(screen.queryByTestId('tenant-id-pill')).not.toBeInTheDocument()
 
     await user.click(trigger)
     const list = await screen.findByRole('listbox')
     for (const t of TENANTS.items) {
       const option = within(list).getByRole('option', { name: new RegExp(t.name) })
-      expect(option).toHaveTextContent(t.id.slice(0, 8))
+      expect(option).toHaveTextContent(t.id)
     }
     expect(within(list).getByRole('option', { name: /acme/i })).toHaveAttribute(
       'data-checked',
       'true',
     )
     expect(screen.getByTestId('tenant-switcher-footer')).toHaveTextContent('3 tenants')
+  })
+
+  it('places the switcher in the right cluster before the theme toggle and avatar, with no left-side switcher or search box', async () => {
+    stubPlatform()
+    renderTopBar()
+
+    const trigger = await screen.findByTestId('tenant-switcher')
+    const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' })
+    expect(breadcrumb).not.toContainElement(trigger)
+
+    const avatar = screen.getByRole('button', { name: 'Account menu' })
+    const cluster = avatar.parentElement as HTMLElement
+    expect(cluster).toContainElement(trigger)
+    const order = Array.from(cluster.querySelectorAll('[data-testid="tenant-switcher"], button'))
+    expect(order[0]).toBe(trigger)
+    expect(order[order.length - 1]).toBe(avatar)
+
+    expect(screen.queryByRole('textbox', { name: /search/i })).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/search tools/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Search' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the static tenant pill in the right cluster for a plain admin', async () => {
+    const calls = stubApi({
+      'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
+      'GET /users': () => jsonResponse({ items: [] }),
+    })
+    renderTopBar()
+
+    await screen.findByText('empty')
+    expect(calls.length).toBeGreaterThan(0)
+    const pill = screen.getByTestId('tenant-id-pill')
+    const avatar = screen.getByRole('button', { name: 'Account menu' })
+    expect(avatar.parentElement).toContainElement(pill)
+    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).not.toContainElement(pill)
   })
 
   it('filters by name and by id', async () => {
@@ -128,10 +164,11 @@ describe('TenantSwitcher', () => {
     await user.click(await screen.findByTestId('tenant-switcher'))
     const input = await screen.findByRole('combobox', { name: 'Search tenants' })
 
-    await user.type(input, 'glob')
+    expect(input).toHaveAttribute('placeholder', 'Switch tenant...')
+    await user.type(input, 'GLOB')
     await waitFor(() =>
       expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
-        'Globextenant-u',
+        'Globextenant-uuid-2',
       ]),
     )
 
@@ -139,7 +176,7 @@ describe('TenantSwitcher', () => {
     await user.type(input, 'tenant-uuid-3')
     await waitFor(() =>
       expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
-        'Initechtenant-u',
+        'Initechtenant-uuid-3',
       ]),
     )
 
@@ -169,7 +206,7 @@ describe('TenantSwitcher', () => {
 
     // The trigger, the pill and storage all follow the selection.
     expect(screen.getByTestId('tenant-switcher')).toHaveTextContent('Globex')
-    expect(screen.getByTestId('tenant-id-pill')).toHaveTextContent('tenant-uuid-2')
+    expect(screen.getByTestId('tenant-switcher-id')).toHaveTextContent('tenant-uuid-2')
     expect(localStorage.getItem('gateway.acting_tenant.ops')).toBe('tenant-uuid-2')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
@@ -198,7 +235,7 @@ describe('TenantSwitcher', () => {
     expect(connectorCalls[1]!.headers[ACTING_TENANT_HEADER]).toBe('tenant-uuid-2')
   })
 
-  it('shows the short id when the acting tenant is not in the list', async () => {
+  it('names the acting tenant even when only it is in the list', async () => {
     localStorage.setItem('gateway.acting_tenant.ops', 'tenant-uuid-3')
     stubApi({
       'GET /auth/me': () => jsonResponse(SESSION_PLATFORM_ADMIN),
@@ -210,5 +247,46 @@ describe('TenantSwitcher', () => {
 
     const trigger = await screen.findByTestId('tenant-switcher')
     await waitFor(() => expect(trigger).toHaveTextContent('Initech'))
+  })
+
+  it('copies the full acting tenant id without opening the list', async () => {
+    stubPlatform()
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.spyOn(navigator.clipboard, 'writeText').mockImplementation(writeText)
+    renderTopBar()
+
+    const trigger = await screen.findByTestId('tenant-switcher')
+    await waitFor(() => expect(trigger).toHaveTextContent('tenant-uuid-1'))
+    await user.click(screen.getByRole('button', { name: 'Copy tenant ID' }))
+    expect(writeText).toHaveBeenCalledWith('tenant-uuid-1')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('moves with the arrow keys, picks with Enter and closes on Escape', async () => {
+    stubPlatform()
+    const user = userEvent.setup()
+    renderTopBar()
+
+    const trigger = await screen.findByTestId('tenant-switcher')
+    await waitFor(() => expect(trigger).toHaveTextContent('Acme'))
+    await user.click(trigger)
+    await screen.findByRole('listbox')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument())
+
+    await user.click(screen.getByTestId('tenant-switcher'))
+    await screen.findByRole('listbox')
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: /acme/i })).toHaveAttribute(
+        'data-selected',
+        'true',
+      ),
+    )
+    await user.keyboard('{ArrowDown}{Enter}')
+    await waitFor(() =>
+      expect(screen.getByTestId('tenant-switcher')).toHaveTextContent('Globex'),
+    )
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 })

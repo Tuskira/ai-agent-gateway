@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRightLeft, Building2, Plus } from 'lucide-react'
+import { ArrowRightLeft, Building2, Pencil, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthContext'
 import { ApiError } from '@/lib/api'
@@ -15,6 +15,7 @@ import {
 } from '@/components/app/data-table'
 import { StatusPill } from '@/components/app/StatusPill'
 import { CreateTenantDialog } from '@/components/app/tenants/CreateTenantDialog'
+import { RenameTenantDialog } from '@/components/app/tenants/RenameTenantDialog'
 import { Button } from '@/components/ui/button'
 
 /**
@@ -27,6 +28,7 @@ export default function TenantsPage() {
   const { isPlatformAdmin, actingTenantId, switchTenant } = useAuth()
   const tenantsQuery = useTenants(isPlatformAdmin)
   const [createOpen, setCreateOpen] = useState(false)
+  const [renaming, setRenaming] = useState<Tenant | null>(null)
 
   const isForbidden =
     !isPlatformAdmin ||
@@ -96,6 +98,11 @@ export default function TenantsPage() {
 
   const rowActions: RowAction<Tenant>[] = [
     {
+      label: 'Rename',
+      icon: <Pencil aria-hidden="true" />,
+      onClick: setRenaming,
+    },
+    {
       label: 'Act in this tenant',
       icon: <ArrowRightLeft aria-hidden="true" />,
       hidden: (t) => t.id === actingTenantId,
@@ -152,6 +159,12 @@ export default function TenantsPage() {
       )}
 
       <CreateTenantDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <RenameTenantDialog
+        tenant={renaming}
+        onOpenChange={(open) => {
+          if (!open) setRenaming(null)
+        }}
+      />
     </DataTablePage>
   )
 }

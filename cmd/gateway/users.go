@@ -51,11 +51,19 @@ func cliActor() string {
 // with a generated temporary password (printed once to stdout; the user
 // must change it at first login). The tenant must already exist (see
 // bootstrap-key). Audited with actor_kind "cli".
+//
+// -role platform-admin creates the console counterpart of a platform-admin
+// API key: the user holds platform.admin in every tenant and may act in
+// any of them via X-Gateway-Acting-Tenant. Through the API that role can
+// only be granted by a caller who already holds platform.admin, so this
+// command is both the way the first one is made and the break-glass path
+// when the last one is gone. The -tenant is only where the account lives
+// (its login tenant); it does not limit the role.
 func runCreateUser() error {
 	fs := flag.NewFlagSet("create-user", flag.ExitOnError)
 	tenant := fs.String("tenant", "", "slug of the tenant the user belongs to (required)")
 	username := fs.String("username", "", "username, lowercase; an email address is fine (required)")
-	role := fs.String("role", "", "admin | viewer (required)")
+	role := fs.String("role", "", "admin | viewer | platform-admin (required; platform-admin acts in every tenant)")
 	displayName := fs.String("display-name", "", "name shown in the console")
 	configPath := fs.String("config", os.Getenv("CONFIG_PATH"), "path to YAML config file")
 	if err := fs.Parse(os.Args[2:]); err != nil {
@@ -68,8 +76,10 @@ func runCreateUser() error {
 	if err != nil {
 		return err
 	}
-	if *role != store.UserRoleAdmin && *role != store.UserRoleViewer {
-		return errors.New("-role must be admin or viewer")
+	switch *role {
+	case store.UserRoleAdmin, store.UserRoleViewer, store.UserRolePlatformAdmin:
+	default:
+		return errors.New("-role must be admin, viewer or platform-admin")
 	}
 
 	st, closeStore, err := openStoreForCLI(*configPath)

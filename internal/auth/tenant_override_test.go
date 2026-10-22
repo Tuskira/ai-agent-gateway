@@ -215,6 +215,34 @@ func TestTenantOverride_SuccessActsInOtherTenantAndKeepsHome(t *testing.T) {
 	}
 }
 
+func TestTenantOverride_HeaderIsCanonicalised(t *testing.T) {
+	// Every spelling uuid.Parse accepts names the same tenant; the handler
+	// and the request log see the canonical lowercase form.
+	for _, acting := range []string{
+		strings.ToUpper(otherTenant),
+		"{" + otherTenant + "}",
+		"urn:uuid:" + strings.ToUpper(otherTenant),
+	} {
+		f := newOverrideFixture(t)
+		w := f.serve(platformUser(), acting)
+		if w.Code != http.StatusNoContent || !f.called {
+			t.Fatalf("%q: status = %d, called = %v; want 204 and the handler called", acting, w.Code, f.called)
+		}
+		if f.seen.TenantID != otherTenant || f.seen.HomeTenantID != homeTenant {
+			t.Errorf("%q: TenantID = %q, HomeTenantID = %q; want %q and %q", acting, f.seen.TenantID, f.seen.HomeTenantID, otherTenant, homeTenant)
+		}
+		if !strings.Contains(f.logs.String(), "acting_tenant_id="+otherTenant) {
+			t.Errorf("%q: request log lacks the canonical acting_tenant_id: %q", acting, f.logs.String())
+		}
+	}
+	// The caller's own tenant in uppercase is still the no-op.
+	f := newOverrideFixture(t)
+	p := platformUser()
+	if w := f.serve(p, strings.ToUpper(homeTenant)); w.Code != http.StatusNoContent || f.seen != p {
+		t.Errorf("uppercase own tenant: status = %d, principal = %+v; want 204 and the original", w.Code, f.seen)
+	}
+}
+
 func TestTenantOverride_OwnTenantIsNoop(t *testing.T) {
 	f := newOverrideFixture(t)
 	p := platformUser()

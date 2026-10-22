@@ -31,7 +31,9 @@ const ActingTenantHeader = "X-Gateway-Acting-Tenant"
 //     see this. API keys get the same treatment: a plain admin key sending
 //     the header is refused too.
 //   - Header present and permitted: the value must be a UUID (400
-//     validation_error) naming an existing tenant (404 not_found).
+//     validation_error) naming an existing tenant (404 not_found). Any
+//     form uuid.Parse accepts is fine; it is canonicalised to lowercase
+//     before the lookup.
 //   - Success: the context Principal is replaced by a copy whose TenantID
 //     is the acting tenant and whose HomeTenantID is the principal's own,
 //     so every tenant-scoped handler is scoped to the acting tenant while
@@ -55,10 +57,15 @@ func TenantOverride(z pkgauth.Authorizer, tenants store.TenantStore) func(http.H
 				writeError(w, http.StatusForbidden, "permission_error", "acting tenant requires platform.admin")
 				return
 			}
-			if _, err := uuid.Parse(acting); err != nil {
+			parsed, err := uuid.Parse(acting)
+			if err != nil {
 				writeError(w, http.StatusBadRequest, "validation_error", ActingTenantHeader+" must be a tenant UUID")
 				return
 			}
+			// Canonical lowercase form: uuid.Parse also takes uppercase hex,
+			// braces and the urn:uuid: prefix, but the store compares the
+			// text form and so do the principal fields below.
+			acting = parsed.String()
 			if tenants == nil {
 				// Nothing to look tenants up in: refuse rather than act on
 				// an unverified tenant id.

@@ -228,7 +228,9 @@ type loginResponse struct {
 // is 409 tenant_required with a body that names no tenant, and the caller
 // retries with the tenant set. That 409 does say the username exists in
 // several tenants -- the accepted trade-off for not having to type a
-// tenant on every login.
+// tenant on every login -- but it costs the caller the same as a failed
+// login (throttle strike, dummy hash, login_fail audit row), so it is no
+// cheaper to probe than a password guess.
 func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if !httpx.Decode(w, r, &req) {
@@ -241,7 +243,9 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	fail := func(tenantID, targetUserID, reason string) {
+	// noteFailure charges the attempt to the per-IP throttle and records it
+	// in the audit trail; every answer other than a login does both.
+	noteFailure := func(tenantID, targetUserID, reason string) {
 		if h.LoginThrottle != nil {
 			h.LoginThrottle.ReportFailure(h.clientIP(r))
 		}
@@ -249,6 +253,9 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 			TenantID: tenantID, ActorKind: "anonymous", ActorID: truncate(username, 80),
 			Action: "login_fail", TargetUserID: targetUserID, Detail: reason,
 		})
+	}
+	fail := func(tenantID, targetUserID, reason string) {
+		noteFailure(tenantID, targetUserID, reason)
 		httpx.WriteError(w, http.StatusUnauthorized, errAuthentication, msgInvalidLogin)
 	}
 
@@ -300,6 +307,12 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 		case 1:
 			user = matches[0]
 		default:
+			// Priced like a wrong password: the same hash work, a throttle
+			// strike and a login_fail row (under no tenant, like
+			// unknown_user), so walking a username list for 409s is no
+			// cheaper than guessing passwords and leaves a trace.
+			password.DummyVerify(req.Password)
+			noteFailure("", "", "tenant_required")
 			httpx.WriteError(w, http.StatusConflict, typeTenantRequired, msgTenantRequired)
 			return
 		}

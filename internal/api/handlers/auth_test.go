@@ -536,13 +536,25 @@ func TestLogin_WithoutTenant_DuplicateUsernameNeedsTenant(t *testing.T) {
 	if w := login(h, `{"username":"sam@example.com","password":"not-anyones-password"}`); w.Code != http.StatusConflict {
 		t.Errorf("ambiguous login with a wrong password: status = %d, want 409", w.Code)
 	}
-	if spy.failures != 0 || spy.success != 0 {
-		t.Errorf("throttle saw %d failures, %d successes; an ambiguous username is neither", spy.failures, spy.success)
+	// Probing for 409s is priced like guessing passwords: each attempt is
+	// a throttle strike and a login_fail row, filed under no tenant (the
+	// body names none, so neither does the trail).
+	if spy.failures != 2 || spy.success != 0 {
+		t.Errorf("throttle saw %d failures, %d successes; want 2 and 0", spy.failures, spy.success)
 	}
 	for _, tn := range []string{env.tenantA.ID, env.tenantB.ID} {
 		if n := len(env.audit(t, tn)); n != 0 {
 			t.Errorf("tenant %s got %d audit rows from an ambiguous login, want 0", tn, n)
 		}
+	}
+	rows := 0
+	for _, e := range env.audit(t, "") {
+		if e.Action == "login_fail" && e.Detail == "tenant_required" && e.ActorID == "sam@example.com" && e.TargetUserID == "" {
+			rows++
+		}
+	}
+	if rows != 2 {
+		t.Errorf("login_fail/tenant_required audit rows = %d, want 2", rows)
 	}
 
 	// Naming the tenant picks the account.

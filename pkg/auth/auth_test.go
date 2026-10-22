@@ -177,6 +177,15 @@ func TestRoleAuthorizer_SessionAdminLacksPlatformAdmin(t *testing.T) {
 		}
 	}
 
+	// A session user whose role table pattern is a bare "*" (a custom
+	// role, or admin itself) still never reaches platform.admin: only the
+	// literal platform-admin role lifts the carve-out.
+	custom := &Principal{Subject: "u2", TenantID: "t1", Roles: []string{"superuser"}, AuthMethod: AuthMethodSession}
+	authz.Rules["superuser"] = []string{"*", "platform.admin"}
+	if authz.Allow(ctx, custom, PermPlatformAdmin) {
+		t.Error("session user with a custom 'platform.admin' pattern was granted platform.admin without the platform-admin role")
+	}
+
 	// A plain admin API key is a tenant admin: no platform.admin either.
 	key := &Principal{Subject: "k1", TenantID: "t1", Roles: []string{"admin"}, AuthMethod: "apikey"}
 	if authz.Allow(ctx, key, PermPlatformAdmin) {
@@ -186,6 +195,78 @@ func TestRoleAuthorizer_SessionAdminLacksPlatformAdmin(t *testing.T) {
 	pkey := &Principal{Subject: "k2", TenantID: "t1", Roles: RolesForKey(RolePlatformAdmin), AuthMethod: "apikey"}
 	if !authz.Allow(ctx, pkey, PermPlatformAdmin) || !authz.Allow(ctx, pkey, "connector.create") {
 		t.Error("platform-admin key must hold platform.admin and tenant admin permissions")
+	}
+}
+
+func TestRoleAuthorizer_PlatformAdminUserHoldsPlatform(t *testing.T) {
+	authz := NewRoleAuthorizer()
+	ctx := context.Background()
+
+	// A console user with store role platform-admin carries the same
+	// expansion as a platform-admin API key: [admin, platform-admin].
+	user := &Principal{Subject: "u1", TenantID: "t1", Roles: RolesForKey(RolePlatformAdmin), AuthMethod: AuthMethodSession}
+	if !user.IsUser() {
+		t.Fatal("test principal must be a session user")
+	}
+	for _, perm := range []string{PermPlatformAdmin, PermCatalogManage, "platform.anything.else"} {
+		if !authz.Allow(ctx, user, perm) {
+			t.Errorf("platform-admin session user denied %q", perm)
+		}
+	}
+	for _, perm := range []string{"connector.create", "admin.manage", PermUsersManage, "analytics.read", "ingest.write"} {
+		if !authz.Allow(ctx, user, perm) {
+			t.Errorf("platform-admin session user denied tenant permission %q", perm)
+		}
+	}
+
+	// The acting-tenant override leaves the roles untouched, so grants are
+	// the same whether or not HomeTenantID is set.
+	acting := *user
+	acting.TenantID, acting.HomeTenantID = "t2", "t1"
+	if !authz.Allow(ctx, &acting, PermPlatformAdmin) || !authz.Allow(ctx, &acting, "users.manage") {
+		t.Error("acting platform-admin user lost grants when HomeTenantID was set")
+	}
+
+	// platform-admin alone (no admin expansion) is not a tenant admin,
+	// for a user exactly as for a key.
+	bare := &Principal{Subject: "u2", TenantID: "t1", Roles: []string{RolePlatformAdmin}, AuthMethod: AuthMethodSession}
+	if !authz.Allow(ctx, bare, PermPlatformAdmin) {
+		t.Error("bare platform-admin session user denied platform.admin")
+	}
+	if authz.Allow(ctx, bare, "connector.create") {
+		t.Error("bare platform-admin session user granted a tenant permission")
+	}
+
+	// Nothing changes for an admin or viewer user.
+	for _, role := range []string{"admin", "viewer"} {
+		other := &Principal{Subject: "u3", TenantID: "t1", Roles: []string{role}, AuthMethod: AuthMethodSession}
+		if authz.Allow(ctx, other, PermPlatformAdmin) {
+			t.Errorf("session %s granted platform.admin", role)
+		}
+	}
+}
+
+func TestPrincipal_Home(t *testing.T) {
+	var nilP *Principal
+	if got := nilP.Home(); got != "" {
+		t.Errorf("nil.Home() = %q, want empty", got)
+	}
+	if nilP.HasRole("admin") {
+		t.Error("nil.HasRole = true")
+	}
+	p := &Principal{TenantID: "t1", Roles: []string{"admin"}}
+	if got := p.Home(); got != "t1" {
+		t.Errorf("Home() without override = %q, want t1", got)
+	}
+	p.TenantID, p.HomeTenantID = "t2", "t1"
+	if got := p.Home(); got != "t1" {
+		t.Errorf("Home() with override = %q, want the home tenant t1", got)
+	}
+	if p.TenantID != "t2" {
+		t.Errorf("TenantID = %q, want the acting tenant t2", p.TenantID)
+	}
+	if !p.HasRole("admin") || p.HasRole(RolePlatformAdmin) {
+		t.Errorf("HasRole: admin=%v platform-admin=%v", p.HasRole("admin"), p.HasRole(RolePlatformAdmin))
 	}
 }
 
@@ -227,6 +308,7 @@ func TestRoleAuthorizer_CatalogManage(t *testing.T) {
 	apikeyAdmin := &Principal{Subject: "k1", TenantID: "t1", Roles: []string{"admin"}, AuthMethod: "apikey"}
 	apikeyAgent := &Principal{Subject: "k2", TenantID: "t1", Roles: []string{"agent"}, AuthMethod: "apikey"}
 	apikeyPlatform := &Principal{Subject: "k3", TenantID: "t1", Roles: RolesForKey(RolePlatformAdmin), AuthMethod: "apikey"}
+	sessionPlatform := &Principal{Subject: "u3", TenantID: "t1", Roles: RolesForKey(RolePlatformAdmin), AuthMethod: AuthMethodSession}
 
 	t.Run("nil SingleTenant fails closed for a session admin", func(t *testing.T) {
 		authz := NewRoleAuthorizer() // SingleTenant left nil
@@ -238,6 +320,19 @@ func TestRoleAuthorizer_CatalogManage(t *testing.T) {
 		}
 		if !authz.Allow(ctx, apikeyPlatform, PermCatalogManage) {
 			t.Error("platform-admin API key denied platform.catalog.manage")
+		}
+		if !authz.Allow(ctx, sessionPlatform, PermCatalogManage) {
+			t.Error("platform-admin session user denied platform.catalog.manage with SingleTenant unset")
+		}
+	})
+
+	t.Run("platform-admin session user holds it in every deployment", func(t *testing.T) {
+		for _, single := range []bool{true, false} {
+			authz := NewRoleAuthorizer()
+			authz.SingleTenant = func(context.Context) bool { return single }
+			if !authz.Allow(ctx, sessionPlatform, PermCatalogManage) {
+				t.Errorf("single=%v: platform-admin session user denied platform.catalog.manage", single)
+			}
 		}
 	})
 

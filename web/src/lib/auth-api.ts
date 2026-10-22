@@ -12,6 +12,10 @@ export interface AuthConfig {
   /** False only on a single-tenant install with no active console user; absent on older gateways. */
   has_users?: boolean
   default_tenant: string
+  /** True when the login request may omit `tenant`: the gateway looks the
+   * username up across tenants and answers 409 `tenant_required` only when
+   * it exists in more than one. Absent on older gateways (tenant required). */
+  tenant_optional?: boolean
 }
 
 /** `POST /api/v1/auth/login` response. */

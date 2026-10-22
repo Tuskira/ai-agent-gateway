@@ -48,7 +48,7 @@ const schema = z
         '3–64 characters: lowercase letters, digits and . _ @ + - (email addresses work)',
       ),
     display_name: z.string().trim().max(200),
-    role: z.enum(['admin', 'viewer']),
+    role: z.enum(['admin', 'viewer', 'platform-admin']),
     generate: z.boolean(),
     password: z.string(),
   })
@@ -83,12 +83,17 @@ interface CreateUserDialogProps {
   /** Called with the generated temporary password so the caller can show it
    * once. Not called when the admin chose the password. */
   onTemporaryPassword: (revealed: RevealedPassword) => void
+  /** Offer the `platform-admin` role. Only a caller holding `platform.admin`
+   * may assign it (the API answers 403 otherwise), so the Users page passes
+   * `isPlatformAdmin` here. */
+  allowPlatformAdmin?: boolean
 }
 
 export function CreateUserDialog({
   open,
   onOpenChange,
   onTemporaryPassword,
+  allowPlatformAdmin = false,
 }: CreateUserDialogProps) {
   const createUser = useCreateUser()
   const [error, setError] = useState<string | null>(null)
@@ -208,10 +213,16 @@ export function CreateUserDialog({
                       <SelectContent>
                         <SelectItem value="admin">admin</SelectItem>
                         <SelectItem value="viewer">viewer</SelectItem>
+                        {allowPlatformAdmin ? (
+                          <SelectItem value="platform-admin">platform-admin</SelectItem>
+                        ) : null}
                       </SelectContent>
                     </Select>
                     <FormDescription>
                       Admins manage the gateway. Viewers can read but not change anything.
+                      {allowPlatformAdmin
+                        ? ' Platform admins can also act in every tenant.'
+                        : ''}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

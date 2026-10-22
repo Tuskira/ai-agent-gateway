@@ -247,6 +247,15 @@ func NewRouter(deps Deps) http.Handler {
 			// forged request is refused before anything else is said.
 			r.Use(session.CSRF)
 			r.Use(session.MustChangeGate(mustChangeAllowed))
+			// A platform-admin may act in another tenant for one request
+			// via X-Gateway-Acting-Tenant. After the two gates above so
+			// a forged or must-change request is refused on the real
+			// account first. Skipped without a Store (then no tenant can
+			// be verified; the only route that works then is /auth/me
+			// with an API key, which has nothing to override).
+			if deps.Store != nil {
+				r.Use(internalauth.TenantOverride(deps.Authorizer, deps.Store.Tenants()))
+			}
 			for _, rt := range routes {
 				if rt.Public {
 					continue

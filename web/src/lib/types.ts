@@ -1,8 +1,15 @@
-export type Role = 'admin' | 'agent' | 'interceptor' | 'viewer'
+/** Principal roles as `/auth/me` reports them. A platform administrator
+ * holds both `admin` and `platform-admin`. */
+export type Role = 'admin' | 'agent' | 'interceptor' | 'viewer' | 'platform-admin'
 
 export interface Principal {
   subject: string
+  /** The tenant this request acts in. For a platform session that selected
+   * another tenant this is the selected one, not the account's own. */
   tenant_id: string
+  /** The tenant the account belongs to. Equals `tenant_id` unless a platform
+   * session is acting in another tenant. Absent on older gateways. */
+  home_tenant_id?: string
   email: string
   roles: Role[]
   auth_method: string
@@ -17,7 +24,9 @@ export interface Principal {
   csrf_token?: string
 }
 
-export type UserRole = 'admin' | 'viewer'
+/** Console user roles. `platform-admin` may be assigned only by a caller
+ * holding `platform.admin`. */
+export type UserRole = 'admin' | 'viewer' | 'platform-admin'
 
 /** The signed-in person, as returned by `/auth/login` and `/auth/me`. */
 export interface SessionUser {

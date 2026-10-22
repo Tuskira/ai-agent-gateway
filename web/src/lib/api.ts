@@ -75,6 +75,66 @@ export function getCsrfToken(): string | null {
   return csrfToken
 }
 
+/* ------------------------------------------------------------------------ */
+/* Acting tenant (platform sessions)                                        */
+/* ------------------------------------------------------------------------ */
+
+/** Request header that asks the gateway to scope the call to another tenant.
+ * Honoured only for principals holding `platform.admin`; anyone else gets a
+ * 403, so the console sends it only for platform sessions. */
+export const ACTING_TENANT_HEADER = 'X-Gateway-Acting-Tenant'
+
+/** `localStorage` key prefix for the remembered tenant selection. The key is
+ * suffixed with the principal's subject so one person's stale choice never
+ * applies to the next person who signs in on the same browser. */
+export const ACTING_TENANT_STORAGE_PREFIX = 'gateway.acting_tenant.'
+
+/** The tenant a platform session is acting in; `null` for every other
+ * session. Held in memory; AuthContext owns it. */
+let actingTenantId: string | null = null
+
+export function setActingTenant(id: string | null): void {
+  actingTenantId = id
+}
+
+export function getActingTenant(): string | null {
+  return actingTenantId
+}
+
+/** Self-service routes (login, me, logout, password change) must always hit
+ * the account's own tenant, so the acting header is never sent to them. */
+export function isSelfServicePath(path: string): boolean {
+  return path.startsWith('/auth/')
+}
+
+function actingTenantStorageKey(subject: string): string {
+  return `${ACTING_TENANT_STORAGE_PREFIX}${subject}`
+}
+
+export function getStoredActingTenant(subject: string): string | null {
+  try {
+    return localStorage.getItem(actingTenantStorageKey(subject))
+  } catch {
+    return null
+  }
+}
+
+export function setStoredActingTenant(subject: string, id: string): void {
+  try {
+    localStorage.setItem(actingTenantStorageKey(subject), id)
+  } catch {
+    // best effort — without storage the selection lasts for this tab only.
+  }
+}
+
+export function clearStoredActingTenant(subject: string): void {
+  try {
+    localStorage.removeItem(actingTenantStorageKey(subject))
+  } catch {
+    // ignore
+  }
+}
+
 let passwordChangeRequiredHandler: (() => void) | null = null
 
 /** Registers the callback run when the API answers 403
@@ -99,9 +159,11 @@ interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
  * Fetch wrapper for the gateway API. In session mode the `gw_session` cookie
  * travels automatically (`same-origin`) and mutating requests carry the
  * `X-CSRF-Token` header. The bearer token is sent only in the emergency
- * API-key mode, which is exempt from CSRF. A 401 signs the user out to
- * `/login`; a 403 `password_change_required` notifies the auth layer so it
- * can route to the change-password page.
+ * API-key mode, which is exempt from CSRF. When a platform session has
+ * selected a tenant, every call except the self-service `/auth/*` routes
+ * carries `X-Gateway-Acting-Tenant`. A 401 signs the user out to `/login`;
+ * a 403 `password_change_required` notifies the auth layer so it can route
+ * to the change-password page.
  */
 export async function apiFetch<T>(
   path: string,
@@ -111,6 +173,8 @@ export async function apiFetch<T>(
   const key = apiKey ?? getStoredApiKey()
   const method = (rest.method ?? 'GET').toUpperCase()
   const sendCsrf = !key && csrfToken !== null && MUTATING_METHODS.has(method)
+  const acting =
+    actingTenantId !== null && !isSelfServicePath(path) ? actingTenantId : null
 
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: 'same-origin',
@@ -119,6 +183,7 @@ export async function apiFetch<T>(
       Accept: 'application/json',
       ...(key ? { Authorization: `Bearer ${key}` } : {}),
       ...(sendCsrf ? { 'X-CSRF-Token': csrfToken as string } : {}),
+      ...(acting ? { [ACTING_TENANT_HEADER]: acting } : {}),
       ...headers,
     },
   })
@@ -126,6 +191,7 @@ export async function apiFetch<T>(
   if (response.status === 401 && !skipAuthRedirect) {
     clearStoredApiKey()
     csrfToken = null
+    actingTenantId = null
     if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
       window.location.assign('/login')
     }

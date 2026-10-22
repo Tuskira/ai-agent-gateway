@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  ACTING_TENANT_HEADER,
   API_KEY_STORAGE_KEY,
   ApiError,
   apiFetch,
+  getActingTenant,
   onPasswordChangeRequired,
+  setActingTenant,
   setCsrfToken,
 } from '@/lib/api'
 import { errorResponse, stubApi } from './authHelpers'
@@ -19,6 +22,7 @@ describe('apiFetch session auth', () => {
   beforeEach(() => {
     sessionStorage.clear()
     setCsrfToken(null)
+    setActingTenant(null)
   })
   afterEach(() => vi.unstubAllGlobals())
 
@@ -101,5 +105,89 @@ describe('apiFetch session auth', () => {
     const calls = stubApi({ 'POST /y': ok })
     await apiFetch('/y', { method: 'POST' })
     expect(calls[0]!.headers['X-CSRF-Token']).toBeUndefined()
+  })
+
+  it('sends no acting-tenant header while no tenant is selected', async () => {
+    const calls = stubApi({ 'GET /users': ok, 'POST /users': ok })
+
+    await apiFetch('/users')
+    await apiFetch('/users', { method: 'POST' })
+
+    expect(getActingTenant()).toBeNull()
+    for (const call of calls) expect(call.headers[ACTING_TENANT_HEADER]).toBeUndefined()
+  })
+
+  it('sends the acting-tenant header on every method once a tenant is selected', async () => {
+    setActingTenant('tenant-uuid-2')
+    setCsrfToken('tok')
+    const calls = stubApi({
+      'GET /users': ok,
+      'POST /users': ok,
+      'PATCH /users': ok,
+      'DELETE /users': ok,
+      'GET /tenants?limit=200': ok,
+    })
+
+    for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) {
+      await apiFetch('/users', { method })
+    }
+    // Platform routes are not tenant-scoped; sending it there is harmless.
+    await apiFetch('/tenants?limit=200')
+
+    expect(getActingTenant()).toBe('tenant-uuid-2')
+    expect(calls).toHaveLength(5)
+    for (const call of calls)
+      expect(call.headers[ACTING_TENANT_HEADER]).toBe('tenant-uuid-2')
+    // It rides alongside the CSRF header, not instead of it.
+    expect(calls.find((c) => c.method === 'POST')!.headers['X-CSRF-Token']).toBe('tok')
+  })
+
+  it('never sends the acting-tenant header to the self-service /auth/* routes', async () => {
+    setActingTenant('tenant-uuid-2')
+    const calls = stubApi({
+      'GET /auth/me': ok,
+      'POST /auth/login': ok,
+      'POST /auth/logout': ok,
+      'POST /auth/password': ok,
+      'GET /auth/config': ok,
+      'GET /authors': ok,
+    })
+
+    await apiFetch('/auth/me')
+    await apiFetch('/auth/login', { method: 'POST' })
+    await apiFetch('/auth/logout', { method: 'POST' })
+    await apiFetch('/auth/password', { method: 'POST' })
+    await apiFetch('/auth/config')
+    // Only the `/auth/` prefix is exempt, not every path starting with "auth".
+    await apiFetch('/authors')
+
+    for (const call of calls.filter((c) => c.path.startsWith('/auth/'))) {
+      expect(call.headers[ACTING_TENANT_HEADER]).toBeUndefined()
+    }
+    expect(calls.find((c) => c.path === '/authors')!.headers[ACTING_TENANT_HEADER]).toBe(
+      'tenant-uuid-2',
+    )
+  })
+
+  it('clearing the selection stops the header on the next call', async () => {
+    setActingTenant('tenant-uuid-2')
+    const calls = stubApi({ 'GET /users': ok })
+
+    await apiFetch('/users')
+    setActingTenant(null)
+    await apiFetch('/users')
+
+    expect(calls[0]!.headers[ACTING_TENANT_HEADER]).toBe('tenant-uuid-2')
+    expect(calls[1]!.headers[ACTING_TENANT_HEADER]).toBeUndefined()
+  })
+
+  it('a 401 drops the acting-tenant selection along with the session', async () => {
+    setActingTenant('tenant-uuid-2')
+    vi.stubGlobal('location', { ...window.location, pathname: '/login', assign: vi.fn() })
+    stubApi({ 'GET /x': () => errorResponse(401, 'authentication_error', 'expired') })
+
+    await expect(apiFetch('/x')).rejects.toBeInstanceOf(ApiError)
+
+    expect(getActingTenant()).toBeNull()
   })
 })

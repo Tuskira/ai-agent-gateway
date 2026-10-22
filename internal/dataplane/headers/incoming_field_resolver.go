@@ -21,22 +21,26 @@ import (
 //     always sourced from the authenticated Principal -- forwarding a
 //     caller-supplied value would be a tenant-impersonation vector.
 //   - X-Gateway-Key: this gateway's own API-key header; same reasoning.
+//   - X-Gateway-Acting-Tenant: the platform-admin acting-tenant selector
+//     (internal/auth.ActingTenantHeader), consumed by this gateway and
+//     never meaningful to a downstream connector.
 //   - HTTP hop-by-hop (RFC 7230 6.1): meaningful only between the caller
 //     and this gateway, never safe to copy onto a request to a different
 //     server.
 var incomingHeaderDenylist = map[string]struct{}{
-	http.CanonicalHeaderKey("authorization"):       {},
-	http.CanonicalHeaderKey("x-tenant-id"):         {},
-	http.CanonicalHeaderKey("tenantid"):            {},
-	http.CanonicalHeaderKey("x-gateway-key"):       {},
-	http.CanonicalHeaderKey("connection"):          {},
-	http.CanonicalHeaderKey("keep-alive"):          {},
-	http.CanonicalHeaderKey("proxy-authenticate"):  {},
-	http.CanonicalHeaderKey("proxy-authorization"): {},
-	http.CanonicalHeaderKey("te"):                  {},
-	http.CanonicalHeaderKey("trailer"):             {},
-	http.CanonicalHeaderKey("transfer-encoding"):   {},
-	http.CanonicalHeaderKey("upgrade"):             {},
+	http.CanonicalHeaderKey("authorization"):           {},
+	http.CanonicalHeaderKey("x-tenant-id"):             {},
+	http.CanonicalHeaderKey("tenantid"):                {},
+	http.CanonicalHeaderKey("x-gateway-key"):           {},
+	http.CanonicalHeaderKey("x-gateway-acting-tenant"): {},
+	http.CanonicalHeaderKey("connection"):              {},
+	http.CanonicalHeaderKey("keep-alive"):              {},
+	http.CanonicalHeaderKey("proxy-authenticate"):      {},
+	http.CanonicalHeaderKey("proxy-authorization"):     {},
+	http.CanonicalHeaderKey("te"):                      {},
+	http.CanonicalHeaderKey("trailer"):                 {},
+	http.CanonicalHeaderKey("transfer-encoding"):       {},
+	http.CanonicalHeaderKey("upgrade"):                 {},
 }
 
 // incomingFieldResolver is the "incoming_field" built-in HeaderResolver: it

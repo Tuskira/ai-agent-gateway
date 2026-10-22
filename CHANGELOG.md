@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Platform-admin console role.** A console user may hold `platform-admin`
+  (`gateway create-user -role platform-admin`, or `POST /users` /
+  `PATCH /users/{id}` by a caller holding `platform.admin`). Its session is
+  `[admin, platform-admin]`, like a platform-admin API key, so it lists and
+  creates tenants, manages the platform catalogs and the per-tenant key
+  routes, and may create other platform-admins. The deployment's last
+  active platform-admin cannot be disabled, deleted or demoted
+  (`409 last_platform_admin`), and only a `platform.admin` caller may
+  assign the role or touch a user who holds it (`403`).
+- **`X-Gateway-Acting-Tenant`.** A caller holding `platform.admin` scopes one
+  control-plane request to another tenant by sending that tenant's UUID in
+  this header (`internal/auth.TenantOverride`, one middleware after
+  authentication, CSRF and the forced-password gate). Without
+  `platform.admin` it is `403 permission_error`, never ignored; a non-UUID
+  is `400`, an unknown tenant `404`. `GET /auth/me` reports `tenant_id`
+  (acting) and the new `home_tenant_id`; `/auth/me`, `/auth/password` and
+  `/auth/logout` always act on the caller's own account. The header is on
+  the connector `incoming_field` denylist.
+- **Tenants page and tenant switcher** in the console for platform-admin
+  sessions: a searchable switcher in the top bar and a Tenants page (list,
+  create). Switching re-queries every page in the selected tenant and the
+  choice is remembered per account. Other sessions never send the header.
+- **`auth_audit.actor_tenant_id`.** Audit rows written while acting in
+  another tenant record the actor's home tenant; `GET /auth/audit` exposes
+  it as `actor_tenant_id`. The platform-route log lines gain
+  `acting_tenant_id`, and their `actor_tenant_id` is the actor's home tenant.
+- **Optional tenant at login.** `POST /auth/login` accepts a body without
+  `tenant`: the username is resolved across tenants (one match signs in,
+  none is the usual `401`, several are `409 tenant_required`).
+  `GET /auth/config` reports `tenant_optional: true`; the console hides the
+  tenant field and shows it only after a `409`.
+
+### Changed
+
+- **Tenant-isolation statement.** `docs/security-model.md` no longer says
+  that no request header can select a tenant: `X-Gateway-Acting-Tenant`
+  can, for `platform.admin` callers only. `pkg/store`: `TenantStore` gains
+  `GetByID`; `UserStore` gains `FindByUsername` and
+  `CountActivePlatformAdmins`; `AuthAuditEntry` gains `ActorTenantID`.
+  `pkg/auth.Principal` gains `HomeTenantID`, `Home()` and `HasRole`, and a
+  console session with role `platform-admin` now passes `platform.admin`
+  and `platform.catalog.manage` in every deployment.
+- **Migration `000010_platform_admin`** widens `users.role` to allow
+  `platform-admin` and adds `auth_audit.actor_tenant_id`. The down
+  migration fails while any user (live or soft-deleted) still has role
+  `platform-admin`; demote or purge those rows first.
+
 ## [0.5.0] - 2026-10-22
 
 ### Breaking

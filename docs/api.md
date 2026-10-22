@@ -23,6 +23,17 @@ Permission is checked **before** any path-parameter id is parsed
 which ids exist — a non-UUID `{id}` is a `404`, not a `400`, for the same
 reason.
 
+Every tenant-scoped route acts in the caller's own tenant. A caller holding
+`platform.admin` (a `platform-admin` API key or console user) may act in
+another tenant for one request with the header
+`X-Gateway-Acting-Tenant: <tenant UUID>`. Without `platform.admin` the
+header is `403 permission_error` (never silently ignored); a value that is
+not a UUID is `400 validation_error`; an unknown tenant is `404 not_found`.
+`/auth/me`, `/auth/password` and `/auth/logout` always act on the caller's
+own account, and `/auth/me` reports `tenant_id` (the acting tenant) next to
+`home_tenant_id`. The `/tenants*` routes are platform-wide and ignore it.
+See [authentication.md](authentication.md#acting-in-another-tenant).
+
 ## Error envelope
 
 Every error response, from every plane's REST-shaped surface, has this
@@ -44,6 +55,8 @@ shape:
 | `not_found` | 404 |
 | `conflict` | 409 |
 | `last_admin` (cannot disable, delete or demote a tenant's last active admin) | 409 |
+| `last_platform_admin` (cannot disable, delete or demote the deployment's last active `platform-admin`) | 409 |
+| `tenant_required` (`POST /auth/login` without `tenant` and the username exists in several tenants) | 409 |
 | `self_action` (cannot disable, delete or demote yourself) | 409 |
 | `already_added` (MCP catalog entry already added) | 409 |
 | `oauth_not_supported` (MCP catalog add) | 422 |
@@ -87,19 +100,19 @@ authentication.
 | GET | `/health` | *(public)* | Liveness probe; includes sink status, rate-limiter lockout count, and (when this process runs the LLM plane) `limits: {budget_denials, rpm_denials}`. |
 | GET | `/docs` | *(public)* | HTML API reference page (Scalar, loads `/openapi.json`). |
 | GET | `/openapi.json` | *(public)* | Generated OpenAPI 3.0 document. |
-| GET | `/auth/config` | *(public)* | What the login page should offer: `{password_login, api_key_login, single_tenant, default_tenant, has_users}`. `has_users` is `false` only on a single-tenant install whose default tenant has no active (live, not disabled) user, so the login page can show first-run guidance; with several tenants it is always `true`. |
-| POST | `/auth/login` | *(public)* | Body `{tenant, username, password}` (tenant slug; omitted = the default tenant). `200 {user, must_change_password, csrf_token}` and sets the `gw_session` cookie. Any failure is the same `401`. Behind the per-IP lockout, plus a per-user one. |
+| GET | `/auth/config` | *(public)* | What the login page should offer: `{password_login, api_key_login, single_tenant, default_tenant, has_users, tenant_optional}`. `tenant_optional` is always `true` on this version: `POST /auth/login` may omit `tenant`. `has_users` is `false` only on a single-tenant install whose default tenant has no active (live, not disabled) user, so the login page can show first-run guidance; with several tenants it is always `true`. |
+| POST | `/auth/login` | *(public)* | Body `{username, password, tenant?}` (tenant slug). Without `tenant` the username is looked up across tenants: one live match signs in, several are `409 tenant_required` (retry with `tenant`), none is the usual `401`. `200 {user, must_change_password, csrf_token}` and sets the `gw_session` cookie. Any credential failure is the same `401`. Behind the per-IP lockout, plus a per-user one. |
 | POST | `/auth/logout` | *(authenticated only)* | Revokes the calling session and clears the cookie; `204`. |
-| GET | `/auth/me` | *(authenticated only)* | The caller's own `Principal` (`subject`, `tenant_id`, `email`, `roles`, `auth_method`, `key_id`) plus `kind` (`user` \| `api_key`); for a console user also `user`, `must_change_password` and `csrf_token`. |
+| GET | `/auth/me` | *(authenticated only)* | The caller's own `Principal` (`subject`, `tenant_id` — the acting tenant while `X-Gateway-Acting-Tenant` is sent — `home_tenant_id`, `email`, `roles`, `auth_method`, `key_id`) plus `kind` (`user` \| `api_key`); for a console user also `user`, `must_change_password` and `csrf_token`. |
 | POST | `/auth/password` | *(authenticated only)* | A console user changes their own password: `{current_password, new_password}`; `204`, revokes their other sessions. API keys get `403`. |
-| GET | `/auth/audit` | `users.manage` | The tenant's authentication audit trail, newest first (`?action=`, `?user_id=`, `limit`/`offset`). |
-| POST | `/users` | `users.manage` | Create a console user `{username, display_name?, role: admin\|viewer, password?}`; `201 {user, temporary_password?}` (no password: one is generated, returned once, and must be changed at first login). |
+| GET | `/auth/audit` | `users.manage` | The tenant's authentication audit trail, newest first (`?action=`, `?user_id=`, `limit`/`offset`). A row written by a `platform-admin` acting from another tenant carries `actor_tenant_id` (its home tenant). |
+| POST | `/users` | `users.manage` | Create a console user `{username, display_name?, role: admin\|viewer\|platform-admin, password?}`; `201 {user, temporary_password?}` (no password: one is generated, returned once, and must be changed at first login). `role: "platform-admin"` needs the caller to hold `platform.admin` (`403`). |
 | GET | `/users` | `users.manage` | List the tenant's users (`?role=`). |
 | GET | `/users/{id}` | `users.manage` | Get one user. |
-| PATCH | `/users/{id}` | `users.manage` | Update `display_name`, `role`, `disabled`. `409` `self_action` / `last_admin`. The username is immutable. |
-| DELETE | `/users/{id}` | `users.manage` | Soft-delete; revokes sessions. Same `409` guards. |
-| POST | `/users/{id}/reset-password` | `users.manage` | `200 {temporary_password}`; forces a change and revokes all the user's sessions. Admin API keys may call it. |
-| POST | `/users/{id}/revoke-sessions` | `users.manage` | Revoke all of the user's sessions; `204`. |
+| PATCH | `/users/{id}` | `users.manage` | Update `display_name`, `role`, `disabled`. `409` `self_action` / `last_admin` / `last_platform_admin`. Assigning `platform-admin`, or editing a user who holds it, needs `platform.admin` (`403`). The username is immutable. |
+| DELETE | `/users/{id}` | `users.manage` | Soft-delete; revokes sessions. Same `409` guards; deleting a `platform-admin` needs `platform.admin` (`403`). |
+| POST | `/users/{id}/reset-password` | `users.manage` | `200 {temporary_password}`; forces a change and revokes all the user's sessions. Admin API keys may call it. Resetting a `platform-admin` needs `platform.admin` (`403`). |
+| POST | `/users/{id}/revoke-sessions` | `users.manage` | Revoke all of the user's sessions; `204`. Revoking a `platform-admin`'s needs `platform.admin` (`403`). |
 | POST | `/tenants` | `platform.admin` | Create a tenant: `{slug, name}`. Optional `id`: a UUID in the plain 8-4-4-4-12 form (lowercase, not the nil UUID; anything else is `400`) to use as the tenant id instead of a generated one, e.g. to match an external system's tenant id; `409` if the id or slug already exists. |
 | GET | `/tenants` | `platform.admin` | List every tenant (cross-tenant by nature). `?slug=<slug>` returns only the tenant with that exact slug (an empty list if none; an empty `slug=` is `400`). |
 | POST | `/tenants/{tenant_id}/api-keys` | `platform.admin` | Create an API key in the named tenant (`404` if it does not exist). Same body and rules as `POST /api-keys` (`name`, `role`, `expires_at`, `limits`, `profile_id`, the last resolved in the target tenant); returns the plaintext once. The key's `created_by` is the calling key. A tenant admin gets `403`, even for its own tenant. |

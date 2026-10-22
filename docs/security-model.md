@@ -37,18 +37,24 @@ in:
 | Role | Grants |
 |---|---|
 | `admin` | `*` — every **tenant-scoped** permission, and nothing in the `platform.` namespace |
-| `platform-admin` | `platform.*` (`platform.admin`, `platform.catalog.manage`). API keys only. A platform-admin key is stored with this role and carries `admin` as well, so it also does everything a tenant admin can |
+| `platform-admin` | `platform.*` (`platform.admin`, `platform.catalog.manage`). An API key or a console user stored with this role carries `admin` as well, so it also does everything a tenant admin can, and may act in any tenant for one request with `X-Gateway-Acting-Tenant` (see [Tenant isolation](#tenant-isolation)) |
 | `agent` | `mcp.*`, `llm.*`, `*.read` |
 | `viewer` | `*.read` only (the read-only role for console users; also valid for a key) |
 | `interceptor` | `ingest.write` only |
 
 A console **user** (username and password, see
 [authentication.md](authentication.md)) with role `admin` is a tenant
-admin like an `admin` key: tenant creation stays with platform-admin API
-keys and the CLI, and no user ever holds `platform-admin`. `platform.catalog.manage` is a partial exception — a console
-admin holds it only in a single-tenant deployment (see below). Only
-`admin` matches `users.manage`, the permission behind the `/users` routes
-and the auth audit.
+admin like an `admin` key: it never holds `platform.admin`, whatever its
+role's patterns say. A user with role `platform-admin` is the console
+counterpart of a platform-admin key: its session holds `[admin,
+platform-admin]`, so it lists and creates tenants, manages the platform
+catalogs and may act in another tenant. Only a caller that already holds
+`platform.admin` can create such a user over the API; `gateway create-user
+-role platform-admin` is how the first one is made. `platform.catalog.manage`
+is a partial exception for `admin` users — they hold it only in a
+single-tenant deployment (see below). Only `admin` (and so `platform-admin`,
+which carries it) matches `users.manage`, the permission behind the `/users`
+routes and the auth audit.
 
 `interceptor` exists for one purpose: a key minted with it can call
 `POST /api/v1/ingest` ([api.md, "Ingest"](api.md#ingest)) and nothing
@@ -90,7 +96,12 @@ Every later `bootstrap-key` yields a tenant-admin key unless
 deployment). Over the HTTP API, `POST /api-keys` (and rotating such a key)
 with `role: "platform-admin"` — or any custom role with a `platform.*`
 pattern — requires the caller to hold `platform.admin` itself, so a tenant
-admin cannot mint a platform key.
+admin cannot mint a platform key. The same gate applies to console users:
+`POST /users` or `PATCH /users/{id}` with `role: "platform-admin"`, and
+any change to a user who holds it, needs `platform.admin`; the CLI
+(`gateway create-user -role platform-admin`) is the only path that needs
+none, and the deployment's last active platform-admin cannot be disabled,
+deleted or demoted (`409 last_platform_admin`).
 
 **Platform admin bootstrap.** `gateway bootstrap-key` is the only way to
 create the first `platform-admin` key; it needs the database credentials and
@@ -117,9 +128,10 @@ profile binding), revoke and rotate API keys in any named tenant through
 `/tenants/{tenant_id}/api-keys` (`platform.admin`; see `api.md`), so an
 operator tool can provision keys per tenant without database access. A
 tenant admin, agent, viewer, custom role without `platform.admin` and any
-console user cannot use these routes, not even for their own tenant. The key
-is created with the same rules as one made by that tenant's admin, and its
-`created_by` is the calling key. Like every platform-admin action this is
+console user without the `platform-admin` role cannot use these routes, not
+even for their own tenant; a `platform-admin` user can. The key is created
+with the same rules as one made by that tenant's admin, and its
+`created_by` is the calling key or user. Like every platform-admin action this is
 full control of the target tenant's keys, so keep platform-admin keys few and
 rotate them.
 
@@ -131,7 +143,9 @@ and failed to issue the new one) still leaves both lines. They are written
 outside the permission check, so refused (403) and unknown-tenant (404)
 attempts are logged as well. Fields: `method`, `route` (the pattern),
 `tenant_id` and `key_id` (the URL parameters when the route has them),
-`actor` (the calling key's id), `actor_auth_method`, `actor_tenant_id`,
+`actor` (the calling key's or user's id), `actor_auth_method`,
+`actor_tenant_id` (the caller's own tenant), `acting_tenant_id` (only when
+the caller selected another tenant with `X-Gateway-Acting-Tenant`),
 `client_ip` (as the rate limiter resolves it, so trusted-proxy settings
 apply) and `request_id` (the request's `X-Request-Id` header, cut to 128
 characters, if the client or a proxy sent one; the gateway does not generate one). The result line adds
@@ -145,8 +159,8 @@ log output only; there is no audit table for it.
 **`platform.catalog.manage`.** The other permission in the `platform.`
 namespace, gating every [model catalog](llm-plane.md#model-registry) write
 route (`api.md`'s `/model-catalog/*` rows) — the platform-wide list of
-providers and models a tenant can "connect." Only a
-`platform-admin` **API key** holds it unconditionally. For a console **user** with role
+providers and models a tenant can "connect." A
+`platform-admin` API key or console user holds it unconditionally. For a console **user** with role
 `admin`, it is granted only while the deployment is **single-tenant** (the
 same "exactly one tenant exists" test `GET /auth/config`'s `single_tenant`
 field uses, wired up as `RoleAuthorizer.SingleTenant`) — in a multi-tenant
@@ -173,12 +187,28 @@ identity.
 
 ## Tenant isolation
 
-There is no per-request tenant header a client can set to select its
-tenant. `Principal.TenantID` comes only from the server-side credential:
-the API key's `api_keys.tenant_id`, the console user's tenant, or the
-dev-mode tenant. Every store method is tenant-scoped by that
-value — see `pkg/store`'s interfaces, every one of which takes
-`tenantID` explicitly. The one gateway-owned exception is the outbound
+`Principal.TenantID` comes from the server-side credential: the API key's
+`api_keys.tenant_id`, the console user's tenant, or the dev-mode tenant.
+Every store method is tenant-scoped by that value — see `pkg/store`'s
+interfaces, every one of which takes `tenantID` explicitly.
+
+One request header can change it, and only for a caller that already
+holds `platform.admin`: `X-Gateway-Acting-Tenant: <tenant UUID>`
+(`internal/auth.TenantOverride`, a single middleware on the control-plane
+API, mounted after authentication, CSRF and the forced-password gate; the
+MCP and LLM planes never read it). For such a caller the request is scoped
+to the named tenant; `Principal.HomeTenantID` keeps the real one, so
+`/auth/me`, password change, logout and the audit trail's actor attribution
+never follow the override, and `auth_audit` rows written while acting carry
+`actor_tenant_id`. For everyone else the header is refused with `403
+permission_error`, never ignored: a tenant admin, a viewer or an `admin`
+API key cannot select a tenant, and a console bug cannot make a request
+silently act on the home tenant. A value that is not a UUID is `400`, an
+unknown tenant `404`. The header is also on the `incoming_field` denylist
+below, so no connector configuration can forward it. See
+[authentication.md](authentication.md#acting-in-another-tenant).
+
+Outbound, the gateway itself sets one tenant header: the
 `X-Tenant-Id` header the MCP plane's backend client sets on every call to
 a connector (`internal/dataplane/client.HeaderTenantID`): it is written
 *after* the connector's own configured headers, so no connector
@@ -284,7 +314,8 @@ accepts `?key=`).
 itself (via the header-resolver framework); a backend only ever sees what
 a configured header resolves to, plus the gateway-owned `X-Tenant-Id` and
 `Mcp-Session-Id`. The `incoming_field` resolver denylists forwarding
-`Authorization`, `X-Tenant-Id`, `Tenantid`, `X-Gateway-Key`, the hop-by-hop
+`Authorization`, `X-Tenant-Id`, `Tenantid`, `X-Gateway-Key`,
+`X-Gateway-Acting-Tenant`, the hop-by-hop
 headers, and every `Mcp-*` header, so a connector config cannot be used to
 forge the caller's identity or leak the caller's own gateway credential to
 a third party.

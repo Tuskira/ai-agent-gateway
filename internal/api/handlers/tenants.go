@@ -17,11 +17,13 @@ import (
 // owning tenant_id of their own (a tenant IS the isolation boundary), so
 // List(ctx) is inherently cross-tenant, and pkgauth.RoleAuthorizer
 // special-cases the "platform." namespace so an ordinary "*.read" (or
-// even bare "*") grant does not imply it -- see matchPermission. For
-// phase 1 there is no separate "platform-admin" role; the built-in admin
-// role is the only one that holds "platform.admin" out of the box (see
-// NewRoleAuthorizer). Deployments that want a narrower platform-admin
-// role can define one via config.Auth.Roles.
+// even bare "*") grant does not imply it -- see matchPermission. The
+// built-in platform-admin role (an API key, or a console user with
+// store.UserRolePlatformAdmin) is the one that holds "platform.admin"
+// out of the box (see NewRoleAuthorizer); custom roles with a
+// "platform.*" pattern can be defined via config.Auth.Roles. These
+// handlers never call requireTenant, so X-Gateway-Acting-Tenant does not
+// scope them.
 type Tenants struct{ Deps }
 
 const maxSlugLen = 100

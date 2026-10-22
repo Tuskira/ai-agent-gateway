@@ -46,10 +46,9 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
     ? `${sessionUser.role} · ${sessionUser.tenant}`
     : 'API key'
   const initials = (accountName || '?').slice(0, 2).toUpperCase()
-  // Platform sessions show (and copy) the tenant they act in, which may
-  // differ from the account's own; everyone else sees their one tenant.
+  // The pill is for non-platform sessions, which see their one tenant;
+  // platform sessions get the acting tenant's id from the switcher.
   const shownTenantId = principal ? (actingTenantId ?? principal.tenant_id) : ''
-  const tenantIdShort = shownTenantId.slice(0, 8)
 
   async function copyTenantId() {
     if (!shownTenantId) return
@@ -141,14 +140,11 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
           <Search className="size-[18px]" aria-hidden="true" />
         </Button>
 
-        {principal ? (
+        {/* Platform sessions get the id and copy button inside the switcher. */}
+        {principal && !isPlatformAdmin ? (
           <div className="hidden items-center gap-2.5 rounded-r-5 border border-border bg-card py-1 pr-1.5 pl-3 sm:flex">
-            {/* Below lg: id truncated to 8 characters. */}
-            <span className="truncate font-mono text-[13px] text-foreground lg:hidden">
-              {tenantIdShort}&hellip;
-            </span>
             <span
-              className="hidden truncate text-[13px] text-foreground lg:inline"
+              className="truncate font-mono text-[13px] text-foreground"
               data-testid="tenant-id-pill"
             >
               {shownTenantId}

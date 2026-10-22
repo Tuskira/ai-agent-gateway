@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-22
+
 ### Breaking
 
 - **`detection/turn` API trimmed.** Exported helpers with no callers
@@ -22,82 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an `analytics.Range`, and `SankeyQuery` carries the `Period` to read. An
   out-of-tree `Reader` must read `Period` rather than resolve `Range` itself;
   the response's `Range` is set by the handler.
-- **Connector headers are validated when the connector is saved.** A header
-  that could never be sent (unknown `type`, a denylisted `incoming_field`
-  header such as `Authorization`, a disabled `env`/`file` provider, an
-  invalid header name, a `static` value or `prefix` with a line break) is
-  refused with `400 validation_error` on `POST`/`PUT`; it used to save and
-  then be dropped on every call. On `PUT` only headers the request adds or
-  changes are checked, so a connector saved before this release can still
-  be edited, enabled and disabled.
-- `PUT /api/v1/profiles/{id}/tools` returns `{items, total}`, the same shape
-  as `GET`; it used to return a bare array.
-- `connectors.default_timeout_ms` must be between 100 and 600000 (the range
-  the API accepts for `timeout_ms`); a value outside it fails startup.
-- **Unknown config keys now fail startup.** The YAML config is decoded
-  strictly: a key the gateway has no field for (a typo such as
-  `mcp.require_profle`, a stale key from an older release) stops the
-  process with `config <file>: unknown key "mcp.require_profle" at line 3`
-  instead of being silently ignored, which used to leave a security setting
-  at its default. Every shipped example, deploy manifest and docs snippet is
-  checked by a test. Fix: correct or remove the named key. Unknown
-  `GATEWAY_*` environment variables are logged as a warning, not rejected.
-- **LLM capture bodies are capped at 1 MiB each by default**
-  (`llm_proxy.capture.max_request_bytes` / `max_response_bytes`, previously
-  `0` = unbounded). A larger body is stored cut at the cap and flagged
-  `truncated`; the parsed `messages` / `system` / `tools` parts obey the
-  same cap. Set the keys to `0` to keep unbounded storage.
-- The stdout sink no longer prints captured bodies (request/response bodies,
-  `messages`, `system`, `tools`) unless `sinks.stdout.include_bodies: true`.
-  Postgres, ClickHouse and the body store are unaffected.
-- **The built-in `admin` role is now a tenant admin only.** It no longer holds
-  `platform.admin` or `platform.catalog.manage`, so an admin API key can no
-  longer list or create tenants (`GET`/`POST /tenants`), write platform MCP
-  catalog entries, or manage the model catalog. A new built-in role,
-  `platform-admin` (`platform.*`), holds those; a platform-admin key also
-  carries `admin`. Upgrade note: existing admin keys lose platform rights on
-  upgrade (no data migration). Create a platform key with
-  `gateway bootstrap-key --platform` (use `--force` if the tenant already has
-  an admin key). The first key ever created in an empty database still gets
-  both roles automatically.
-- `auth.dev_mode` now refuses to start when an enabled plane listens on a
-  non-loopback address (the default `0.0.0.0` included) unless
-  `auth.dev_mode.allow_remote: true`, and `auth.dev_mode.tenant` is now
-  resolved by slug (or UUID) at startup and must exist. The dev principal is
-  a tenant admin; set `auth.dev_mode.platform: true` for platform-admin.
-- Database migration `000008_key_profiles` adds `api_keys.profile_id`.
-- **`X-Forwarded-For` is no longer trusted as sent on the MCP and LLM
-  planes.** Their logged `client_ip` used the left-most `X-Forwarded-For`
-  entry from any caller. All planes now share one resolver: the TCP peer
-  address unless the peer is in `api.trusted_proxies`, in which case the
-  header is walked from the right. Deployments behind a load balancer or
-  ingress must set `api.trusted_proxies` (the `deploy/` overlays now do) or
-  `client_ip` and the rate limiters see the proxy's address.
-- `api.trusted_proxies` now accepts CIDRs as well as IPs, and with a trusted
-  peer the client is the right-most address NOT in the trusted set, not the
-  left-most `X-Forwarded-For` entry. A malformed entry fails startup. It can
-  also be set as a comma-separated `GATEWAY_API_TRUSTED_PROXIES`.
-- `auth.api_keys.cache_ttl` defaults to `30s` (was `60s`).
-- Outbound requests now refuse internal destinations by default (SSRF
-  guard). Connector endpoints, MCP catalog URLs, model registry
-  `base_url`s and model catalog providers can no longer point at loopback,
-  link-local (including cloud metadata `169.254.169.254`), private
-  (RFC 1918), CGNAT, unique-local, multicast or unspecified addresses, in
-  any spelling (`2130706433`, `0x7f000001`, `[::ffff:127.0.0.1]`, a
-  hostname that resolves to one, or a redirect to one). Literal addresses,
-  and a hostname (e.g. `localhost`) that resolves only to a blocked
-  address, are rejected at create time with `400 egress_blocked`; the
-  dial-time check remains the actual boundary, so a name that can't be
-  resolved yet (or times out) is still accepted at create time and
-  checked when dialed. To reach a private service, list it under the new
-  `egress.allowed_cidrs` / `egress.allowed_hosts`. `deploy/docker-compose.yml`
-  and the examples already allow `host.docker.internal` and loopback.
-- A connector header of `{"type": "token_field", "field": "bearer_token"}`
-  (which forwards the caller's own gateway credential to the backend) is
-  rejected at create/update with `400 bearer_forwarding_disabled`, and a
-  call through an existing connector that still has it fails with a clear
-  error instead of forwarding. Set `connectors.allow_bearer_token_forwarding:
-  true` to restore the old behaviour for backends you fully trust.
 
 ### Changed
 
@@ -126,21 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mcps/usage` accept `from=YYYY-MM-DD&to=YYYY-MM-DD` in place of `range`
   (the response's `range` is then `custom`). The console sidebar's first
   group is now **Dashboards**: Overview, then Token Monitoring.
-- **Product name: "AI Agent Gateway".** Visible references to the project
-  (README, docs prose, the console, the docs site) now read "AI Agent
-  Gateway" instead of "AI Gateway" / "tusk-ai-secured-gateway". The repo
-  name, Go module path, binary name, container image, Kubernetes
-  resources, env vars, and config keys are unchanged.
-- **Contributor License Agreement replaces the DCO.** Every contributor
-  now signs a license-grant CLA (`.github/cla/INDIVIDUAL_CLA.md` /
-  `CORPORATE_CLA.md`, adapted from the Apache Software Foundation's
-  ICLA/CCLA) via the CLA Assistant bot on their first pull request,
-  instead of adding a `Signed-off-by:` trailer to every commit. See
-  CONTRIBUTING.md's "Contributor License Agreement" section. The DCO
-  workflow and sign-off requirement are removed.
-- Added `TRADEMARKS.md`, Tuskira's trademark policy for the "Tuskira" and
-  "AI Agent Gateway" marks, linked from `README.md`, `NOTICE`, and the
-  website footer.
 
 ### Fixed
 
@@ -205,50 +116,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line that also carried the comment was neither found nor redacted and
   left the host in the turn. The agent (and `PreparedTurn.Normalized`) now
   ignores the comment: in a call it is only text the sender wrote.
-- A credential pasted with a trailing newline is sent without it; only line
-  breaks inside the value (a PEM key) are escaped.
-- An MCP catalog entry's `default_headers` need a non-empty, single-line
-  value (`400`/startup error), instead of storing a header that is dropped
-  on every call.
-- Validating the shipped MCP catalog seed shares one 2s DNS budget, so a
-  hanging resolver no longer delays every gateway command by up to 40s.
-- The `file` header provider's path error no longer echoes the server's
-  `file_provider_root` or the stored path.
-- The shipped MCP catalog (Langfuse, Atlassian, GitHub and others) is now
-  seeded by default. It was read only from `configs/base/default.yml`,
-  which is not loaded unless `CONFIG_PATH` points at it, so a stock
-  deployment showed an empty catalog. Set `mcp_catalog.seed: []` to turn
-  it off.
-- A deleted MCP or agent profile can be added again under the same slug.
-  The slug's unique constraint also counted soft-deleted rows, so the add
-  failed with `409` although nothing by that slug was visible. Database
-  migration `000009_live_slugs` makes both unique among live rows only.
-- A multi-line credential (a PEM key) injected through an `external` header
-  is sent with its line breaks escaped to `\n`. It used to be dropped.
-  `static`, `token_field` and `incoming_field` values containing CR/LF are
-  still refused.
-- A profile whose name is longer than the slug column (or has no letters or
-  digits) can be selected with `X-Agent-Profile-Name`. The header used to
-  resolve to a different slug than the one stored, granting no tools.
-- `connectors.default_timeout_ms` is the `timeout_ms` of a connector created
-  without one (API or catalog). It used to be ignored in favour of 30000.
-- Two replicas seeding `skills.seed_dir` at the same moment no longer fail
-  startup on the duplicate name.
-- A connector endpoint, MCP catalog URL, or model/catalog `base_url` of a
-  hostname like `http://localhost:1234` (as opposed to a literal IP such
-  as `127.0.0.1`) is now rejected at create time with the same `400
-  egress_blocked` the SSRF guard above gives a literal internal address,
-  instead of being accepted and only failing later, opaquely, as
-  "connector is unhealthy" once the gateway tries to dial it.
-  `localhost`/`*.localhost` are judged without a DNS round trip; any other
-  hostname is resolved (2s budget) and judged on every address it returns.
-- `test/e2e` now runs under the SSRF guard added above: the suite's
-  backends listen on loopback, which the guard blocks by default, so
-  without this every e2e test failed with `connector is unhealthy` /
-  `egress_blocked: destination ::1 is in the internal range ::1/128`. The
-  suite now installs the test-only loopback allowance
-  (`internal/netguard/netguardtest.AllowLoopback`) the unit tests already
-  used; production's default stays blocked.
 
 ### Security
 
@@ -259,67 +126,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Principal.RawCredential` (bare, or behind an auth scheme) is now removed,
   while a provider key sent beside it, `X-Gateway-Key` handling and Bedrock
   signed requests are unchanged.
-- `deploy/docker-compose.yml` no longer writes prompts, completions and tool
-  arguments to container logs: bodies are still stored for the console, but
-  the stdout sink runs without them. The gateway logs a startup warning when
-  `sinks.stdout.include_bodies` and `store_bodies` are both on.
-- `SECURITY.md` now lists 0.3.x as supported (0.2.x best effort until 0.4.0), documents the reporting
-  channels and a pre-publication checklist (see `docs/security-model.md`).
-- Separated platform administration from tenant administration: a tenant admin
-  key could list and create every tenant. Creating (or rotating) a key with
-  role `platform-admin`, or any custom role granting `platform.*`, now needs the
-  caller to hold `platform.admin`.
-- Dev mode no longer silently serves unauthenticated admin requests to the
-  network: it logs a startup `WARN`, refuses non-loopback binds without an
-  explicit opt-in, and no longer grants platform rights by default.
-- API keys can be bound to an agent profile (`profile_id` on
-  `POST /api-keys` / `PATCH /api-keys/{id}`, and a "Bind to profile" select in
-  the console). A bound key has that profile enforced on the MCP plane, with
-  `X-Agent-Profile-Name` ignored when absent and rejected (`-32003`) when it
-  names another profile. Previously the caller chose the profile by header, so
-  `mcp.require_profile` did not confine a key. Unbound keys behave as before.
-- Rate limiting is proxy-aware. The old limiter keyed on `RemoteAddr`
-  (behind a load balancer one bad client locked out everyone) and, with a
-  trusted proxy, on the spoofable left-most `X-Forwarded-For` entry (rotating
-  it evaded the lockout and framed other IPs). The client IP is now the first
-  untrusted address walking `X-Forwarded-For` from the right, via one shared
-  `internal/clientip` resolver used by the API, MCP and LLM planes and by the
-  captured `client_ip`. The kind and EKS overlays and the Docker Compose file
-  ship trusted-proxy ranges.
-- A second limiter dimension counts failed lookups of unknown keys per key
-  prefix (`auth.rate_limit.credential_max_failures`, default 20 per
-  `credential_window` 5m), so rotating IPs cannot guess one key without
-  limit, and no IP is charged for it. A locked prefix still serves keys the
-  process has cached, so the legitimate holder is unaffected.
-- The auth-failure lockout is per plane. The API, MCP and LLM planes each keep
-  their own per-IP failure counter and per-key-prefix counter (same
-  thresholds), so a wrong key on one plane (say a stale MCP key in an IDE) no
-  longer locks that IP out of the others (model calls keep working). The
-  API-key lookup and negative caches stay shared.
-- The MCP and LLM planes now lock out an IP after repeated failed
-  authentication, like the API plane, answering `429` + `Retry-After` in each
-  plane's own error format (JSON-RPC `-32029`; the Anthropic, OpenAI, Gemini
-  or Bedrock envelope). Unknown API keys are cached negatively for 5 s
-  (bounded LRU), so a flood of bad keys no longer costs one database lookup
-  each (300 bad requests: 300 lookups before, 1 to 20 now).
-- API-key revocation now reaches every gateway process (API, MCP, LLM) at
-  once. A revoke/rotate publishes `pg_notify('gateway_key_revoked', <hash>)`
-  in the same statement as the write and each process evicts the key on
-  receipt (about 12 ms measured across two processes; before, another
-  replica kept accepting the key for up to the 60 s cache TTL). A listener
-  that reconnects flushes its cache, and the TTL remains the backstop. Stores
-  without the new optional `store.RevocationNotifier` interface keep the TTL
-  only. No schema migration.
-- Added `internal/netguard`: every upstream HTTP client (MCP connectors,
-  MCP catalog add probe, model registry targets, LLM upstreams, model
-  catalog test) now dials through a guard that checks the address actually
-  connected to, so DNS tricks and redirects cannot reach internal
-  addresses; redirects are capped at 5 hops. The Kubernetes NetworkPolicy
-  allows 443/80 egress to public addresses only (RFC 1918 and link-local
-  excluded).
-- The gateway logs a loud `WARN` at startup when `database.password` is
-  still the shipped default `gateway` on a non-local database host or with
-  TLS enabled.
 
 ### Added
 
@@ -516,6 +322,219 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `interceptor`-role key, installing the utility and pointing Claude Desktop
   at it; `run.sh` checks the gateway side (roles, dedup, logs API, session
   timeline) with no Mac, and runs in `make examples-smoke`.
+
+## [0.4.0] - 2026-10-01
+
+### Breaking
+
+- **Connector headers are validated when the connector is saved.** A header
+  that could never be sent (unknown `type`, a denylisted `incoming_field`
+  header such as `Authorization`, a disabled `env`/`file` provider, an
+  invalid header name, a `static` value or `prefix` with a line break) is
+  refused with `400 validation_error` on `POST`/`PUT`; it used to save and
+  then be dropped on every call. On `PUT` only headers the request adds or
+  changes are checked, so a connector saved before this release can still
+  be edited, enabled and disabled.
+- `PUT /api/v1/profiles/{id}/tools` returns `{items, total}`, the same shape
+  as `GET`; it used to return a bare array.
+- `connectors.default_timeout_ms` must be between 100 and 600000 (the range
+  the API accepts for `timeout_ms`); a value outside it fails startup.
+- **Unknown config keys now fail startup.** The YAML config is decoded
+  strictly: a key the gateway has no field for (a typo such as
+  `mcp.require_profle`, a stale key from an older release) stops the
+  process with `config <file>: unknown key "mcp.require_profle" at line 3`
+  instead of being silently ignored, which used to leave a security setting
+  at its default. Every shipped example, deploy manifest and docs snippet is
+  checked by a test. Fix: correct or remove the named key. Unknown
+  `GATEWAY_*` environment variables are logged as a warning, not rejected.
+- **LLM capture bodies are capped at 1 MiB each by default**
+  (`llm_proxy.capture.max_request_bytes` / `max_response_bytes`, previously
+  `0` = unbounded). A larger body is stored cut at the cap and flagged
+  `truncated`; the parsed `messages` / `system` / `tools` parts obey the
+  same cap. Set the keys to `0` to keep unbounded storage.
+- The stdout sink no longer prints captured bodies (request/response bodies,
+  `messages`, `system`, `tools`) unless `sinks.stdout.include_bodies: true`.
+  Postgres, ClickHouse and the body store are unaffected.
+- **The built-in `admin` role is now a tenant admin only.** It no longer holds
+  `platform.admin` or `platform.catalog.manage`, so an admin API key can no
+  longer list or create tenants (`GET`/`POST /tenants`), write platform MCP
+  catalog entries, or manage the model catalog. A new built-in role,
+  `platform-admin` (`platform.*`), holds those; a platform-admin key also
+  carries `admin`. Upgrade note: existing admin keys lose platform rights on
+  upgrade (no data migration). Create a platform key with
+  `gateway bootstrap-key --platform` (use `--force` if the tenant already has
+  an admin key). The first key ever created in an empty database still gets
+  both roles automatically.
+- `auth.dev_mode` now refuses to start when an enabled plane listens on a
+  non-loopback address (the default `0.0.0.0` included) unless
+  `auth.dev_mode.allow_remote: true`, and `auth.dev_mode.tenant` is now
+  resolved by slug (or UUID) at startup and must exist. The dev principal is
+  a tenant admin; set `auth.dev_mode.platform: true` for platform-admin.
+- Database migration `000008_key_profiles` adds `api_keys.profile_id`.
+- **`X-Forwarded-For` is no longer trusted as sent on the MCP and LLM
+  planes.** Their logged `client_ip` used the left-most `X-Forwarded-For`
+  entry from any caller. All planes now share one resolver: the TCP peer
+  address unless the peer is in `api.trusted_proxies`, in which case the
+  header is walked from the right. Deployments behind a load balancer or
+  ingress must set `api.trusted_proxies` (the `deploy/` overlays now do) or
+  `client_ip` and the rate limiters see the proxy's address.
+- `api.trusted_proxies` now accepts CIDRs as well as IPs, and with a trusted
+  peer the client is the right-most address NOT in the trusted set, not the
+  left-most `X-Forwarded-For` entry. A malformed entry fails startup. It can
+  also be set as a comma-separated `GATEWAY_API_TRUSTED_PROXIES`.
+- `auth.api_keys.cache_ttl` defaults to `30s` (was `60s`).
+- Outbound requests now refuse internal destinations by default (SSRF
+  guard). Connector endpoints, MCP catalog URLs, model registry
+  `base_url`s and model catalog providers can no longer point at loopback,
+  link-local (including cloud metadata `169.254.169.254`), private
+  (RFC 1918), CGNAT, unique-local, multicast or unspecified addresses, in
+  any spelling (`2130706433`, `0x7f000001`, `[::ffff:127.0.0.1]`, a
+  hostname that resolves to one, or a redirect to one). Literal addresses,
+  and a hostname (e.g. `localhost`) that resolves only to a blocked
+  address, are rejected at create time with `400 egress_blocked`; the
+  dial-time check remains the actual boundary, so a name that can't be
+  resolved yet (or times out) is still accepted at create time and
+  checked when dialed. To reach a private service, list it under the new
+  `egress.allowed_cidrs` / `egress.allowed_hosts`. `deploy/docker-compose.yml`
+  and the examples already allow `host.docker.internal` and loopback.
+- A connector header of `{"type": "token_field", "field": "bearer_token"}`
+  (which forwards the caller's own gateway credential to the backend) is
+  rejected at create/update with `400 bearer_forwarding_disabled`, and a
+  call through an existing connector that still has it fails with a clear
+  error instead of forwarding. Set `connectors.allow_bearer_token_forwarding:
+  true` to restore the old behaviour for backends you fully trust.
+
+### Changed
+
+- **Product name: "AI Agent Gateway".** Visible references to the project
+  (README, docs prose, the console, the docs site) now read "AI Agent
+  Gateway" instead of "AI Gateway" / "tusk-ai-secured-gateway". The repo
+  name, Go module path, binary name, container image, Kubernetes
+  resources, env vars, and config keys are unchanged.
+- **Contributor License Agreement replaces the DCO.** Every contributor
+  now signs a license-grant CLA (`.github/cla/INDIVIDUAL_CLA.md` /
+  `CORPORATE_CLA.md`, adapted from the Apache Software Foundation's
+  ICLA/CCLA) via the CLA Assistant bot on their first pull request,
+  instead of adding a `Signed-off-by:` trailer to every commit. See
+  CONTRIBUTING.md's "Contributor License Agreement" section. The DCO
+  workflow and sign-off requirement are removed.
+- Added `TRADEMARKS.md`, Tuskira's trademark policy for the "Tuskira" and
+  "AI Agent Gateway" marks, linked from `README.md`, `NOTICE`, and the
+  website footer.
+
+### Fixed
+
+- A credential pasted with a trailing newline is sent without it; only line
+  breaks inside the value (a PEM key) are escaped.
+- An MCP catalog entry's `default_headers` need a non-empty, single-line
+  value (`400`/startup error), instead of storing a header that is dropped
+  on every call.
+- Validating the shipped MCP catalog seed shares one 2s DNS budget, so a
+  hanging resolver no longer delays every gateway command by up to 40s.
+- The `file` header provider's path error no longer echoes the server's
+  `file_provider_root` or the stored path.
+- The shipped MCP catalog (Langfuse, Atlassian, GitHub and others) is now
+  seeded by default. It was read only from `configs/base/default.yml`,
+  which is not loaded unless `CONFIG_PATH` points at it, so a stock
+  deployment showed an empty catalog. Set `mcp_catalog.seed: []` to turn
+  it off.
+- A deleted MCP or agent profile can be added again under the same slug.
+  The slug's unique constraint also counted soft-deleted rows, so the add
+  failed with `409` although nothing by that slug was visible. Database
+  migration `000009_live_slugs` makes both unique among live rows only.
+- A multi-line credential (a PEM key) injected through an `external` header
+  is sent with its line breaks escaped to `\n`. It used to be dropped.
+  `static`, `token_field` and `incoming_field` values containing CR/LF are
+  still refused.
+- A profile whose name is longer than the slug column (or has no letters or
+  digits) can be selected with `X-Agent-Profile-Name`. The header used to
+  resolve to a different slug than the one stored, granting no tools.
+- `connectors.default_timeout_ms` is the `timeout_ms` of a connector created
+  without one (API or catalog). It used to be ignored in favour of 30000.
+- Two replicas seeding `skills.seed_dir` at the same moment no longer fail
+  startup on the duplicate name.
+- A connector endpoint, MCP catalog URL, or model/catalog `base_url` of a
+  hostname like `http://localhost:1234` (as opposed to a literal IP such
+  as `127.0.0.1`) is now rejected at create time with the same `400
+  egress_blocked` the SSRF guard above gives a literal internal address,
+  instead of being accepted and only failing later, opaquely, as
+  "connector is unhealthy" once the gateway tries to dial it.
+  `localhost`/`*.localhost` are judged without a DNS round trip; any other
+  hostname is resolved (2s budget) and judged on every address it returns.
+- `test/e2e` now runs under the SSRF guard added above: the suite's
+  backends listen on loopback, which the guard blocks by default, so
+  without this every e2e test failed with `connector is unhealthy` /
+  `egress_blocked: destination ::1 is in the internal range ::1/128`. The
+  suite now installs the test-only loopback allowance
+  (`internal/netguard/netguardtest.AllowLoopback`) the unit tests already
+  used; production's default stays blocked.
+
+### Security
+
+- `deploy/docker-compose.yml` no longer writes prompts, completions and tool
+  arguments to container logs: bodies are still stored for the console, but
+  the stdout sink runs without them. The gateway logs a startup warning when
+  `sinks.stdout.include_bodies` and `store_bodies` are both on.
+- `SECURITY.md` now lists 0.3.x as supported (0.2.x best effort until 0.4.0), documents the reporting
+  channels and a pre-publication checklist (see `docs/security-model.md`).
+- Separated platform administration from tenant administration: a tenant admin
+  key could list and create every tenant. Creating (or rotating) a key with
+  role `platform-admin`, or any custom role granting `platform.*`, now needs the
+  caller to hold `platform.admin`.
+- Dev mode no longer silently serves unauthenticated admin requests to the
+  network: it logs a startup `WARN`, refuses non-loopback binds without an
+  explicit opt-in, and no longer grants platform rights by default.
+- API keys can be bound to an agent profile (`profile_id` on
+  `POST /api-keys` / `PATCH /api-keys/{id}`, and a "Bind to profile" select in
+  the console). A bound key has that profile enforced on the MCP plane, with
+  `X-Agent-Profile-Name` ignored when absent and rejected (`-32003`) when it
+  names another profile. Previously the caller chose the profile by header, so
+  `mcp.require_profile` did not confine a key. Unbound keys behave as before.
+- Rate limiting is proxy-aware. The old limiter keyed on `RemoteAddr`
+  (behind a load balancer one bad client locked out everyone) and, with a
+  trusted proxy, on the spoofable left-most `X-Forwarded-For` entry (rotating
+  it evaded the lockout and framed other IPs). The client IP is now the first
+  untrusted address walking `X-Forwarded-For` from the right, via one shared
+  `internal/clientip` resolver used by the API, MCP and LLM planes and by the
+  captured `client_ip`. The kind and EKS overlays and the Docker Compose file
+  ship trusted-proxy ranges.
+- A second limiter dimension counts failed lookups of unknown keys per key
+  prefix (`auth.rate_limit.credential_max_failures`, default 20 per
+  `credential_window` 5m), so rotating IPs cannot guess one key without
+  limit, and no IP is charged for it. A locked prefix still serves keys the
+  process has cached, so the legitimate holder is unaffected.
+- The auth-failure lockout is per plane. The API, MCP and LLM planes each keep
+  their own per-IP failure counter and per-key-prefix counter (same
+  thresholds), so a wrong key on one plane (say a stale MCP key in an IDE) no
+  longer locks that IP out of the others (model calls keep working). The
+  API-key lookup and negative caches stay shared.
+- The MCP and LLM planes now lock out an IP after repeated failed
+  authentication, like the API plane, answering `429` + `Retry-After` in each
+  plane's own error format (JSON-RPC `-32029`; the Anthropic, OpenAI, Gemini
+  or Bedrock envelope). Unknown API keys are cached negatively for 5 s
+  (bounded LRU), so a flood of bad keys no longer costs one database lookup
+  each (300 bad requests: 300 lookups before, 1 to 20 now).
+- API-key revocation now reaches every gateway process (API, MCP, LLM) at
+  once. A revoke/rotate publishes `pg_notify('gateway_key_revoked', <hash>)`
+  in the same statement as the write and each process evicts the key on
+  receipt (about 12 ms measured across two processes; before, another
+  replica kept accepting the key for up to the 60 s cache TTL). A listener
+  that reconnects flushes its cache, and the TTL remains the backstop. Stores
+  without the new optional `store.RevocationNotifier` interface keep the TTL
+  only. No schema migration.
+- Added `internal/netguard`: every upstream HTTP client (MCP connectors,
+  MCP catalog add probe, model registry targets, LLM upstreams, model
+  catalog test) now dials through a guard that checks the address actually
+  connected to, so DNS tricks and redirects cannot reach internal
+  addresses; redirects are capped at 5 hops. The Kubernetes NetworkPolicy
+  allows 443/80 egress to public addresses only (RFC 1918 and link-local
+  excluded).
+- The gateway logs a loud `WARN` at startup when `database.password` is
+  still the shipped default `gateway` on a non-local database host or with
+  TLS enabled.
+
+### Added
+
 - Third-party license notices now ship everywhere the gateway does.
   `make notices` (`tools/notices`) classifies every Go module's license,
   fails the build if one falls outside an allow list (MIT, BSD-2-Clause,
@@ -1748,7 +1767,9 @@ First release: phase 1 of the open-source AI gateway.
   `bootstrap-key` transcript.
 - CI badge in `README.md`.
 
-[Unreleased]: https://github.com/Tuskira/tusk-ai-secured-gateway/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Tuskira/ai-agent-gateway/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Tuskira/tusk-ai-secured-gateway/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Tuskira/tusk-ai-secured-gateway/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Tuskira/tusk-ai-secured-gateway/releases/tag/v0.1.0

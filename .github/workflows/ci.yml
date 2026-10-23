@@ -60,7 +60,7 @@ jobs:
         run: go test -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-unit.out ./...
 
       - name: upload unit coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: coverage-unit.out
           flags: unit
@@ -120,7 +120,7 @@ jobs:
         run: go test -C detection -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-detection.out ./...
 
       - name: upload detection coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: detection/coverage-detection.out
           flags: unit
@@ -171,7 +171,7 @@ jobs:
       - run: npm run build
 
       - name: upload web coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: web/coverage/lcov.info
           flags: web
@@ -262,7 +262,7 @@ jobs:
         run: go test -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-clickhouse.out -tags integration ./pkg/sink/clickhouse/... -run Integration -v
 
       - name: upload e2e coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: coverage-e2e.out
           flags: e2e
@@ -270,7 +270,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: upload integration coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: coverage-postgres.out,coverage-session.out,coverage-clickhouse.out
           flags: integration

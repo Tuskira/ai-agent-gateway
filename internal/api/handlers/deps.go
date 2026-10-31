@@ -108,6 +108,11 @@ type Deps struct {
 	// through, simply skip the call.
 	KeyInvalidator KeyInvalidator
 
+	// KnownPermissions lists every permission the gateway checks (from
+	// the route table); GET /auth/me reports which of them the caller
+	// holds. Nil: none are reported.
+	KnownPermissions func() []string
+
 	// Console configures the console login/session routes (Auth handler).
 	// The zero value is usable: default lifetimes, "auto" cookies.
 	Console ConsoleConfig

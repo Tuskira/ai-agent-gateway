@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `GET /api/v1/auth/me` reports the caller's resolved `permissions`.
+
 ## [0.7.0] - 2026-11-02
 
 ### Added

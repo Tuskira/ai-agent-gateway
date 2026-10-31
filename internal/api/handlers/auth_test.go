@@ -837,3 +837,16 @@ func TestChangePassword_APIKeyForbidden(t *testing.T) {
 		t.Errorf("status = %d, want 403", w.Code)
 	}
 }
+
+func TestMe_Permissions(t *testing.T) {
+	deps := newTestDeps()
+	deps.Authorizer = pkgauth.NewRoleAuthorizer()
+	deps.KnownPermissions = func() []string { return []string{"admin.manage", "analytics.read", "llm.access", "mcp.access"} }
+	h := Auth{Deps: deps}
+	w := serve(http.MethodGet, "/auth/me", h.Me, asAPIKey(httptest.NewRequest(http.MethodGet, "/auth/me", nil), "tenant-x", "agent"))
+	var got meView
+	decodeInto(t, w, &got)
+	if strings.Join(got.Permissions, ",") != "analytics.read,llm.access,mcp.access" {
+		t.Errorf("agent permissions = %v", got.Permissions)
+	}
+}

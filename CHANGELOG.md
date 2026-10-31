@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Key containment.** `POST /api/v1/api-keys/{id}/containment` with
+  `{"level":"normal|restrict|kill","note":"..."}` moves an agent's key along
+  a containment ladder: restrict refuses every MCP tool call (models still
+  work), kill refuses the key on every plane until restored. The key's open
+  calls on the process are cut mid-stream and the answer says how many
+  (`cut`). `/suspend` and `/resume` are shorthands. Keys report
+  `containment`, `suspended_at`, `restricted_at` and `containment_note`.
+  Migration `000011` adds the columns.
+- **Monitored tool grants.** A profile grant takes `permission: "monitor"`:
+  the call runs and is reported to the detection agent with its arguments.
+- **Inline prevention** (`llm_proxy.detection.inline`, off by default): the
+  agent judges a generation call's request before it is forwarded when the
+  tenant's engine policy says so; a blocking rule refuses it with `400`.
+  Fails open.
+- **Detection events.** With `llm_proxy.detection.agent_url` set, every MCP
+  tool call (with its profile outcome) and every request refused for a
+  suspended, revoked or expired key is posted to the agent's `/v1/events`.
+- The detection tee's turn adds `headers` (the client's identity headers
+  only), `response_type` and `request_judged`.
+- `GET /api/v1/auth/me` reports the caller's resolved `permissions`.
+- Detection agent: `GET /v1/policy` for the gateway, `POST /v1/events`
+  (forwarded to the engine with monitored arguments redacted), and, when
+  the engine's policy sets `observe`, a redacted `POST /v1/observe` per
+  generation turn; a turn with `request_judged` sends only its response
+  stage.
+- Detection agent: a background stage the engine refuses with `429` (its
+  tenant at the engine's in-flight limit) is retried twice (about 0.5s and
+  1s, with jitter) inside its deadline; an inline stage is never retried.
+
 ## [0.6.1] - 2026-10-22
 
 ### Added

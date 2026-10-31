@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { RequireAuth } from '@/auth/RequireAuth'
 import { AppShell } from '@/components/layout/AppShell'
 import { ComingSoon } from '@/components/app/ComingSoon'
+import { extension } from '@/extensions'
 import { navGroups, OVERVIEW_PATH } from '@/lib/nav'
 import DocsPage from '@/routes/DocsPage'
 import LoginPage from '@/routes/LoginPage'
@@ -46,9 +47,16 @@ const builtPages: Record<string, ComponentType> = {
   '/token-monitoring': TokenMonitoringPage,
 }
 
+/** Pages a build of the console adds (see src/extensions). */
+const extensionRoutes = extension.routes ?? []
+const extensionPaths = new Set(extensionRoutes.map((r) => r.path))
+
 const comingSoonItems = navGroups
   .flatMap((group) => group.items)
-  .filter((item) => item.path !== OVERVIEW_PATH && !builtPages[item.path])
+  .filter(
+    (item) =>
+      item.path !== OVERVIEW_PATH && !builtPages[item.path] && !extensionPaths.has(item.path),
+  )
 
 const builtItems = navGroups
   .flatMap((group) => group.items)
@@ -89,6 +97,7 @@ export const router = createBrowserRouter([
             path: '/token-monitoring/keys/:id',
             element: <TokenMonitoringDetailPage kind="key" />,
           },
+          ...extensionRoutes.map(({ path, Component }) => ({ path, element: <Component /> })),
           ...comingSoonItems.map((item) => ({
             path: item.path,
             element: <ComingSoon title={item.label} description={item.description} />,

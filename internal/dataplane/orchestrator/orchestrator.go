@@ -19,6 +19,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -89,6 +90,14 @@ type Deps struct {
 	// RequireProfile rejects a request that names no profile.
 	RequireProfile bool
 
+	// OnToolCall, when set, is told about every tools/call routed to a
+	// connector, with its outcome: allowed, monitored (granted with
+	// permission "monitor": the call runs), denied (the profile does not
+	// grant it) or restricted (the caller's key is restricted by
+	// containment, so every tool call is refused). It runs on the request
+	// path and must not block.
+	OnToolCall func(ctx context.Context, c ToolCall)
+
 	// MaxUpstreamStreamsPerSession bounds the connector streams one
 	// session may hold (zero: upstream.DefaultMaxPerSession), and
 	// MaxSubscriptionsPerSession its resource subscriptions (zero:
@@ -115,6 +124,44 @@ type Deps struct {
 	// Notifications, Requests, Lookup, OnSessionGone and MaxPerSession
 	// are set by New.
 	Upstream upstream.Options
+}
+
+// ToolCall is one tools/call as Deps.OnToolCall sees it.
+type ToolCall struct {
+	TenantID    string
+	KeyID       string
+	Principal   string
+	SessionID   string // the MCP session id, when there is one
+	Profile     string // the profile that applied; "" when none
+	ConnectorID string
+	Server      string // the connector's slug ("" when the call was refused before routing)
+	Tool        string // unprefixed tool name (the qualified name before routing)
+	Outcome     string // allowed | monitored | denied | restricted
+	// Arguments is the call's arguments as JSON, set for a monitored call
+	// only.
+	Arguments string
+}
+
+// Tool-call outcomes (ToolCall.Outcome).
+const (
+	ToolCallAllowed    = "allowed"
+	ToolCallMonitored  = "monitored"
+	ToolCallDenied     = "denied"
+	ToolCallRestricted = "restricted"
+)
+
+// restrictedMessage is the refusal of a restricted key's tool call.
+const restrictedMessage = "agent restricted: an admin turned this agent's tool calls off"
+
+func (o *Orchestrator) toolCall(ctx context.Context, in Request, c ToolCall) {
+	if o.deps.OnToolCall == nil {
+		return
+	}
+	c.TenantID, c.KeyID, c.Principal = in.Principal.TenantID, in.Principal.KeyID, in.Principal.Subject
+	if in.Session != nil {
+		c.SessionID = in.Session.ID
+	}
+	o.deps.OnToolCall(ctx, c)
 }
 
 // Orchestrator serves MCP methods.
@@ -767,6 +814,13 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 	info := reqctx.From(ctx)
 	info.SetTool(params.Name)
 
+	// A restricted key (containment) may call models but no tool: refuse
+	// before anything is resolved or routed.
+	if in.Principal.ToolsRestricted {
+		o.toolCall(ctx, in, ToolCall{Tool: params.Name, Outcome: ToolCallRestricted})
+		return o.fail(in, mcp.NewError(mcp.ErrorCodeToolNotAllowed, restrictedMessage, map[string]any{"tool": params.Name}))
+	}
+
 	allow, mcpErr := o.resolveProfile(ctx, in)
 	if mcpErr != nil {
 		return o.fail(in, mcpErr)
@@ -789,6 +843,20 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 	// The profile gate sits AFTER routing because the grant is per
 	// (connector, tool): "search" on one connector is a different grant
 	// from "search" on another, and only routing says which one this is.
+	tc := ToolCall{ConnectorID: route.Connector.ID, Server: route.Connector.Slug, Tool: route.ToolName, Outcome: ToolCallAllowed}
+	if allow != nil {
+		tc.Profile = allow.Name
+		switch {
+		case !allow.Allows(route.Connector.ID, route.ToolName):
+			tc.Outcome = ToolCallDenied
+		case allow.Monitored(route.Connector.ID, route.ToolName):
+			tc.Outcome = ToolCallMonitored
+			if b, err := json.Marshal(params.Arguments); err == nil {
+				tc.Arguments = string(b)
+			}
+		}
+	}
+	o.toolCall(ctx, in, tc)
 	if allow != nil && !allow.Allows(route.Connector.ID, route.ToolName) {
 		o.log.Info("tools/call denied by agent profile",
 			"profile", allow.Name, "profile_found", allow.Found,

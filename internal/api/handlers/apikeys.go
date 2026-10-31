@@ -70,6 +70,13 @@ type apiKeyView struct {
 	// ProfileID / ProfileName identify the profile the key is bound to.
 	ProfileID   string `json:"profile_id,omitempty"`
 	ProfileName string `json:"profile_name,omitempty"`
+	// Containment is the key's rung (normal, restricted or killed);
+	// SuspendedAt is set while killed, RestrictedAt while restricted, and
+	// ContainmentNote says why the key was last contained or restored.
+	Containment     string `json:"containment"`
+	SuspendedAt     string `json:"suspended_at,omitempty"`
+	RestrictedAt    string `json:"restricted_at,omitempty"`
+	ContainmentNote string `json:"containment_note,omitempty"`
 }
 
 type apiKeyCreateView struct {
@@ -88,6 +95,11 @@ func newAPIKeyView(k *store.APIKey) apiKeyView {
 		ExpiresAt:  formatTimePtr(k.ExpiresAt),
 		RevokedAt:  formatTimePtr(k.RevokedAt),
 		Limits:     k.Limits,
+
+		Containment:     string(store.ContainmentOf(k)),
+		SuspendedAt:     formatTimePtr(k.SuspendedAt),
+		RestrictedAt:    formatTimePtr(k.RestrictedAt),
+		ContainmentNote: k.ContainmentNote,
 	}
 	if k.ProfileID != nil {
 		v.ProfileID = *k.ProfileID

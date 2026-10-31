@@ -380,6 +380,9 @@ request, response and stream is in `internal/llmplane/testdata/conversation/`
 | `conversation` | object | The request read through the dialect's reader, in the canonical shape below. Omitted when it could not be read. |
 | `answer` | object | The response read the same way: `content` (blocks), `stop_reason`, and `truncated` when the response was cut (the 1 MiB copy ended, or the stream ended before the model finished): `content` is then what was read up to the cut. Omitted when there is no response or it could not be read. |
 | `normalize_error` | string | Why `conversation`, `answer` or `items` is missing (or, for a whole response cut at 1 MiB, an empty `truncated` answer): `no reader for <dialect>` or `no reader for this route` (none), `decode request: …`, `decode response: …`, `batch references a file` (a Gemini batch whose requests are in an uploaded file), or `batch of <n> requests: only the first 1000 are read`. |
+| `headers` | object | The client's request headers that say what made the call (lower-case names): `user-agent`, `x-app`, `anthropic-version`, `anthropic-beta`, the `x-stainless-*` SDK headers, `x-claude-code-session-id` and `x-agent-profile-name`, when sent. No other header is sent; never a credential. |
+| `response_type` | string | The `Content-Type` the client got, when `response` is present. |
+| `request_judged` | bool | Set when the request stage was already judged inline before forwarding (see "Inline prevention"); the agent then judges only the response stage. |
 | `items` | array | A batch only (`op: "batch"`): each request of the batch, in body order, as `{custom_id, conversation}`. `custom_id` is the request's `custom_id` (Anthropic) or its `metadata.key` (Gemini; its position, `"0"`, `"1"`, …, when it has none); a batch that repeats an id is not read. At most 1000 items: the rest of a larger batch is not read, and `normalize_error` says so. A batch has no `conversation` and no `answer` (its `response` is the batch object, which holds no generation). |
 
 The raw `request` and `response` are sent whether or not they could be
@@ -431,6 +434,57 @@ Fields are only ever added; `v` stays `1`.
   for up to 5 seconds; what is left is dropped with one log line.
 - The agent should accept fast and shed load itself; the gateway never
   waits for it.
+
+### Inline prevention
+
+Off by default. With `llm_proxy.detection.inline: true`, before a
+generation call (`op: "generate"`) is forwarded the gateway asks the agent
+for the tenant's policy, `GET {agent_url}/v1/policy?tenant_id=` (cached 15
+seconds per tenant; 5 seconds after a failed lookup). When the policy says
+`inline` (the engine has a rule that can refuse a request in that tenant's
+mode), the gateway posts the request stage, `POST {agent_url}/v1/turns/request`
+(`id`, `tenant_id`, `session_id`, `key_id`, `principal`, `model`, `path`,
+`at`, `request`), and waits for the verdict, at most
+`llm_proxy.detection.inline_timeout` (default `10s`) for the lookup and the
+verdict together.
+
+- A verdict with `block` refuses the call with `400 invalid_request_error`
+  and nothing is forwarded: `Blocked by gateway rule <rule_id> (OWASP
+  <owasp>: <title>), probability <p> >= <threshold>. The request was not
+  sent to the model.` (or `, <detail>` when the rule has no probability).
+  The refusal is captured in the LLM logs with error `rule_blocked:
+  <rule_id>` and is not teed. A `400` rather than a `403`: agent clients
+  read a `403` as their own credential failing and retry.
+- Otherwise the call is forwarded, and its turn carries `request_judged`.
+- Every failure fails open: agent down, timeout, a non-`200` or an answer
+  that is not a verdict lets the call through unjudged inline (the turn is
+  still teed whole). Failures are counted under `/health`
+  `detection.inline.failed` and logged at most once a minute.
+- With `inline` off, nothing on the request path talks to the agent.
+
+### Events
+
+With `agent_url` set the gateway also posts its events, what it did that
+is not a model call, to `POST {agent_url}/v1/events` (`{"events":[...]}`,
+answered `202`), in batches of up to 500, at most every 200 ms, off the
+request path (a full queue of 4096 drops, counted under `/health`
+`detection_events` on the LLM plane):
+
+- `kind: "tool_call"`: every MCP `tools/call` routed to a connector, with
+  `tenant_id`, `session_id`, `key_id`, `principal`, `plane: "mcp"`,
+  `profile`, `connector_id`, `server` (the connector's slug), `tool`
+  (unprefixed) and `outcome`: `allowed`, `monitored` (granted with
+  permission `monitor`; the call runs, and only then `arguments` carries
+  its arguments as JSON, cut at 16 KiB), `denied` (not granted) or
+  `restricted` (the key is restricted; see
+  [api.md](api.md#key-containment)).
+- `kind: "refused"`: a request refused because its key is suspended,
+  revoked or expired: `plane` (`mcp`, `llm` or `api`), `outcome:
+  "refused"`, `reason` (`key suspended`, `key revoked`, `key expired`) and
+  `detail` (`POST /v1/messages`).
+
+Every event has `v: 1` and `at`. The agent redacts `arguments` before
+forwarding them to its engine.
 
 ## Streaming
 

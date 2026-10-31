@@ -61,7 +61,7 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
                 const link = (
                   <NavLink
                     to={item.path}
-                    end={item.path === '/'}
+                    end={item.end ?? item.path === '/'}
                     onClick={onNavigate}
                     aria-label={collapsed ? item.label : undefined}
                     className={({ isActive }) =>

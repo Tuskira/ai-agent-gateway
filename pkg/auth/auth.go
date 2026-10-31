@@ -38,6 +38,11 @@ type Principal struct {
 	// unbound). The MCP plane enforces it and ignores/rejects the
 	// X-Agent-Profile-Name header accordingly.
 	ProfileID string
+	// ToolsRestricted is set when the API key is restricted (the middle
+	// rung of the containment ladder): it may call models, but the MCP
+	// plane refuses every tool call. Tools stay listed, so each attempt
+	// is refused visibly rather than silently impossible.
+	ToolsRestricted bool
 
 	// The fields below are set only when AuthMethod == AuthMethodSession,
 	// i.e. for a console user logged in with a session cookie. Subject is

@@ -17,6 +17,7 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react'
+import { extension } from '@/extensions'
 
 export interface NavItem {
   label: string
@@ -30,16 +31,21 @@ export interface NavItem {
   /** Hide from the nav unless the principal holds `platform-admin`. These
    * pages are platform-wide: they do not follow the acting tenant. */
   platformOnly?: boolean
+  /** Active only on this exact path, not on paths under it (the overview
+   * always is). For an item whose path is a prefix of other items'. */
+  end?: boolean
 }
 
 export interface NavGroup {
   label: string
   items: NavItem[]
+  /** For a group an extension adds: the core group it goes before. */
+  before?: string
 }
 
 export const OVERVIEW_PATH = '/'
 
-export const navGroups: NavGroup[] = [
+const coreNavGroups: NavGroup[] = [
   {
     label: 'Dashboards',
     items: [
@@ -171,6 +177,23 @@ export const navGroups: NavGroup[] = [
     ],
   },
 ]
+
+/** core with the extension's groups merged in (see ConsoleExtension). */
+export function mergeNavGroups(core: NavGroup[], extra: NavGroup[] = []): NavGroup[] {
+  const out = core.map((group) => ({ ...group, items: [...group.items] }))
+  for (const group of extra) {
+    const same = out.find((g) => g.label === group.label)
+    if (same) {
+      same.items.push(...group.items)
+      continue
+    }
+    const at = group.before ? out.findIndex((g) => g.label === group.before) : -1
+    out.splice(at < 0 ? out.length : at, 0, { ...group, items: [...group.items] })
+  }
+  return out
+}
+
+export const navGroups: NavGroup[] = mergeNavGroups(coreNavGroups, extension.navGroups)
 
 export const navItems: NavItem[] = navGroups.flatMap((group) => group.items)
 

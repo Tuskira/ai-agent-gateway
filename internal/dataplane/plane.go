@@ -60,6 +60,9 @@ type Deps struct {
 	// read of the tool cache ("hit", "stale" or "miss"; see
 	// orchestrator.Deps.OnToolCacheLookup). Nil observes nothing.
 	OnToolCacheLookup func(result string)
+	// OnToolCall is told about every tools/call routed to a connector and
+	// its outcome (see orchestrator.Deps.OnToolCall). Nil observes nothing.
+	OnToolCall func(ctx context.Context, c orchestrator.ToolCall)
 }
 
 // Plane is a built MCP plane.
@@ -210,6 +213,7 @@ func New(deps Deps) (*Plane, error) {
 		Notifier:       notifier,
 		Skills:         skills,
 		RequireProfile: cfg.MCP.RequireProfile,
+		OnToolCall:     deps.OnToolCall,
 
 		MaxUpstreamStreamsPerSession:       cfg.MCP.MaxUpstreamStreamsPerSession,
 		MaxSubscriptionsPerSession:         cfg.MCP.MaxSubscriptionsPerSession,

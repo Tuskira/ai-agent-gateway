@@ -451,6 +451,11 @@ type meView struct {
 	Roles        []string `json:"roles"`
 	AuthMethod   string   `json:"auth_method"`
 	KeyID        string   `json:"key_id,omitempty"`
+	// Permissions are the permissions the caller holds, resolved by the
+	// gateway's authorizer (custom roles included) against every
+	// permission it checks, so a companion service can authorize the
+	// same principal the same way.
+	Permissions []string `json:"permissions"`
 
 	Kind               string           `json:"kind"` // "user" | "api_key"
 	User               *sessionUserView `json:"user,omitempty"`
@@ -470,7 +475,14 @@ func (h Auth) Me(w http.ResponseWriter, r *http.Request) {
 
 	view := meView{
 		Subject: p.Subject, TenantID: p.TenantID, HomeTenantID: p.Home(), Email: p.Email, Roles: p.Roles,
-		AuthMethod: p.AuthMethod, KeyID: p.KeyID, Kind: "api_key",
+		AuthMethod: p.AuthMethod, KeyID: p.KeyID, Kind: "api_key", Permissions: []string{},
+	}
+	if h.KnownPermissions != nil && h.Authorizer != nil {
+		for _, perm := range h.KnownPermissions() {
+			if h.Authorizer.Allow(r.Context(), p, perm) {
+				view.Permissions = append(view.Permissions, perm)
+			}
+		}
 	}
 	if p.IsUser() {
 		user, err := h.Store.Users().Get(r.Context(), p.Home(), p.Subject)

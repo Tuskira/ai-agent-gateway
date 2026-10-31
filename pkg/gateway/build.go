@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/auth/session"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
 	dataplaneheaders "github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/headers"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/orchestrator"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectionevents"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/llmplane"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/metrics"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/secrets"
@@ -419,12 +422,13 @@ func resolveDevTenant(cfg *config.Config, st store.Store, logger *slog.Logger) e
 // pkgauth.Authenticator chains, so the caller can wire its InvalidateKey
 // method into api.Deps.KeyInvalidator -- the chain type itself exposes no
 // such method.
-func buildAuthenticator(cfg *config.Config, st store.Store, extra []pkgauth.Authenticator, logger *slog.Logger) (plane, apiPlane pkgauth.Authenticator, apiKeyAuth *apikey.Authenticator) {
+func buildAuthenticator(cfg *config.Config, st store.Store, extra []pkgauth.Authenticator, onRefused func(*http.Request, *store.APIKey, string), logger *slog.Logger) (plane, apiPlane pkgauth.Authenticator, apiKeyAuth *apikey.Authenticator) {
 	var keyAuth, devAuth []pkgauth.Authenticator
 
 	if cfg.Auth.APIKeys.Enabled {
 		apiKeyAuth = apikey.New(st.APIKeys(), apikey.Options{
-			CacheTTL: cfg.Auth.APIKeys.CacheTTL,
+			CacheTTL:  cfg.Auth.APIKeys.CacheTTL,
+			OnRefused: onRefused,
 		})
 		keyAuth = append(keyAuth, apiKeyAuth)
 	}
@@ -477,4 +481,44 @@ func (r *revocationRoutine) Stop(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 	return nil
+}
+
+// planeOf names the plane a request came in on, by its path: the planes
+// share one API-key authenticator.
+func planeOf(r *http.Request) string {
+	switch p := r.URL.Path; {
+	case strings.HasPrefix(p, "/mcp"):
+		return "mcp"
+	case strings.HasPrefix(p, "/api/"):
+		return "api"
+	default:
+		return "llm"
+	}
+}
+
+// refusedEvents reports each request refused for its key's state
+// (suspended, revoked, expired) to the detection agent; nil when there is
+// no agent.
+func refusedEvents(e *detectionevents.Emitter) func(*http.Request, *store.APIKey, string) {
+	if e == nil {
+		return nil
+	}
+	return func(r *http.Request, k *store.APIKey, reason string) {
+		e.Emit(detectionevents.Event{Kind: detectionevents.KindRefused, TenantID: k.TenantID, KeyID: k.ID,
+			Principal: k.ID, Plane: planeOf(r), Outcome: detectionevents.OutcomeRefused, Reason: reason,
+			Detail: r.Method + " " + r.URL.Path})
+	}
+}
+
+// toolCallEvents reports each MCP tools/call and its profile outcome to
+// the detection agent; nil when there is no agent.
+func toolCallEvents(e *detectionevents.Emitter) func(context.Context, orchestrator.ToolCall) {
+	if e == nil {
+		return nil
+	}
+	return func(_ context.Context, c orchestrator.ToolCall) {
+		e.Emit(detectionevents.Event{Kind: detectionevents.KindToolCall, TenantID: c.TenantID, SessionID: c.SessionID,
+			KeyID: c.KeyID, Principal: c.Principal, Plane: "mcp", Profile: c.Profile, ConnectorID: c.ConnectorID,
+			Server: c.Server, Tool: c.Tool, Outcome: c.Outcome, Arguments: c.Arguments})
+	}
 }

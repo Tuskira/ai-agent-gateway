@@ -122,7 +122,12 @@ handler validates that every `connector_id` exists in the caller's own
 tenant before writing, so a profile can never reference another tenant's
 connector even by guessing its id. The response is the new list in the
 same `{items, total}` shape as `GET .../tools`. Each entry may also carry
-an optional `tool_namespace`.
+an optional `tool_namespace`, and a `permission`: `allow` (the default) or
+`monitor`. A monitored tool runs like an allowed one, and the MCP plane
+reports each call of it, with its arguments, to the detection agent as a
+`tool_call` event with `outcome: "monitored"` (see
+[llm-plane.md](llm-plane.md#events)); without an agent it behaves exactly
+like `allow`. `GET .../tools` returns each entry's `permission`.
 
 ## Skills and commands
 

@@ -223,6 +223,9 @@ type profileToolRequest struct {
 	ConnectorID   string `json:"connector_id"`
 	ToolName      string `json:"tool_name"`
 	ToolNamespace string `json:"tool_namespace,omitempty"`
+	// Permission is "allow" (the default) or "monitor": the call runs and
+	// is reported to the detection agent as a monitored call.
+	Permission string `json:"permission,omitempty"`
 }
 
 type setProfileToolsRequest struct {
@@ -233,6 +236,7 @@ type profileToolView struct {
 	ConnectorID   string `json:"connector_id"`
 	ToolName      string `json:"tool_name"`
 	ToolNamespace string `json:"tool_namespace,omitempty"`
+	Permission    string `json:"permission"`
 }
 
 // SetTools handles PUT /api/v1/profiles/{id}/tools: replaces the
@@ -264,6 +268,14 @@ func (h Profiles) SetTools(w http.ResponseWriter, r *http.Request) {
 			httpx.ValidationError(w, fmt.Sprintf("tools[%d].%s", i, err.Error()))
 			return
 		}
+		perm := t.Permission
+		if perm == "" {
+			perm = store.PermissionAllow
+		}
+		if perm != store.PermissionAllow && perm != store.PermissionMonitor {
+			httpx.ValidationError(w, fmt.Sprintf("tools[%d].permission must be allow or monitor", i))
+			return
+		}
 		if _, err := h.Store.Connectors().Get(r.Context(), tid, t.ConnectorID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				httpx.ValidationError(w, fmt.Sprintf("tools[%d].connector_id %q does not exist for this tenant", i, t.ConnectorID))
@@ -277,6 +289,7 @@ func (h Profiles) SetTools(w http.ResponseWriter, r *http.Request) {
 			ConnectorID:    t.ConnectorID,
 			ToolNamespace:  t.ToolNamespace,
 			ToolName:       t.ToolName,
+			Permission:     perm,
 		})
 	}
 
@@ -317,10 +330,15 @@ func (h Profiles) GetTools(w http.ResponseWriter, r *http.Request) {
 func newProfileToolViews(tools []store.ProfileTool) []profileToolView {
 	views := make([]profileToolView, 0, len(tools))
 	for _, t := range tools {
+		perm := t.Permission
+		if perm == "" {
+			perm = store.PermissionAllow
+		}
 		views = append(views, profileToolView{
 			ConnectorID:   t.ConnectorID,
 			ToolName:      t.ToolName,
 			ToolNamespace: t.ToolNamespace,
+			Permission:    perm,
 		})
 	}
 	return views

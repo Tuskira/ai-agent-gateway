@@ -111,9 +111,13 @@ func (s *agentProfileStore) SetTools(ctx context.Context, tenantID, profileID st
 		return fmt.Errorf("postgres: clear profile tools: %w", err)
 	}
 
-	const insertQ = `INSERT INTO agent_profile_tools (agent_profile_id, connector_id, tool_namespace, tool_name) VALUES ($1, $2, $3, $4)`
+	const insertQ = `INSERT INTO agent_profile_tools (agent_profile_id, connector_id, tool_namespace, tool_name, permission) VALUES ($1, $2, $3, $4, $5)`
 	for _, tool := range tools {
-		if _, err := tx.ExecContext(ctx, insertQ, profileID, tool.ConnectorID, tool.ToolNamespace, tool.ToolName); err != nil {
+		perm := tool.Permission
+		if perm == "" {
+			perm = store.PermissionAllow
+		}
+		if _, err := tx.ExecContext(ctx, insertQ, profileID, tool.ConnectorID, tool.ToolNamespace, tool.ToolName, perm); err != nil {
 			return mapWriteErr(err)
 		}
 	}
@@ -126,7 +130,7 @@ func (s *agentProfileStore) SetTools(ctx context.Context, tenantID, profileID st
 
 func (s *agentProfileStore) GetTools(ctx context.Context, tenantID, profileID string) ([]store.ProfileTool, error) {
 	const q = `
-		SELECT pt.agent_profile_id, pt.connector_id, pt.tool_namespace, pt.tool_name
+		SELECT pt.agent_profile_id, pt.connector_id, pt.tool_namespace, pt.tool_name, pt.permission
 		FROM agent_profile_tools pt
 		JOIN agent_profiles p ON p.id = pt.agent_profile_id
 		WHERE p.tenant_id = $1 AND pt.agent_profile_id = $2
@@ -140,7 +144,7 @@ func (s *agentProfileStore) GetTools(ctx context.Context, tenantID, profileID st
 	var out []store.ProfileTool
 	for rows.Next() {
 		var t store.ProfileTool
-		if err := rows.Scan(&t.AgentProfileID, &t.ConnectorID, &t.ToolNamespace, &t.ToolName); err != nil {
+		if err := rows.Scan(&t.AgentProfileID, &t.ConnectorID, &t.ToolNamespace, &t.ToolName, &t.Permission); err != nil {
 			return nil, fmt.Errorf("postgres: scan profile tool: %w", err)
 		}
 		out = append(out, t)

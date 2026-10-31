@@ -80,6 +80,14 @@ var liveSlugsMigration string
 //go:embed migrations/000010_platform_admin.up.sql
 var platformAdminMigration string
 
+// containmentMigration adds the key containment ladder (api_keys
+// suspended_at, restricted_at, containment_note) and the per-tool
+// permission of a profile grant (agent_profile_tools.permission). Its
+// sibling 000011_containment.down.sql is for a hand rollback only.
+//
+//go:embed migrations/000011_containment.up.sql
+var containmentMigration string
+
 // migrations are applied in version order; each is recorded in
 // schema_migrations once applied. Append new migrations here (with the next
 // version) — never edit one that has already shipped.
@@ -97,6 +105,7 @@ var migrations = []struct {
 	{8, keyProfilesMigration},
 	{9, liveSlugsMigration},
 	{10, platformAdminMigration},
+	{11, containmentMigration},
 }
 
 // migrationLockKey is an arbitrary constant used as a Postgres advisory

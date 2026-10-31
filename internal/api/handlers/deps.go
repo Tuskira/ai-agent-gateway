@@ -7,6 +7,7 @@
 package handlers
 
 import (
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/inflight"
 	"net/http"
 	"time"
 
@@ -107,6 +108,17 @@ type Deps struct {
 	// and any deployment that doesn't wire the api-key Authenticator
 	// through, simply skip the call.
 	KeyInvalidator KeyInvalidator
+
+	// Inflight holds the data planes' open requests per key, so moving a
+	// key along the containment ladder also cuts its calls mid-stream. Nil
+	// (or another process's planes): only the key's next request is
+	// refused.
+	Inflight *inflight.Registry
+
+	// KnownPermissions lists every permission the gateway checks (from
+	// the route table); GET /auth/me reports which of them the caller
+	// holds. Nil: none are reported.
+	KnownPermissions func() []string
 
 	// Console configures the console login/session routes (Auth handler).
 	// The zero value is usable: default lifetimes, "auto" cookies.

@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectionevents"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/inflight"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -333,11 +335,27 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, opts.Authenticators, logger)
+	// Detection events (llm_proxy.detection.agent_url): tool-call outcomes
+	// and refused keys go to the detection agent, off the request path.
+	var events *detectionevents.Emitter
+	if d := cfg.LLMProxy.Detection; d.AgentURL != "" {
+		events = detectionevents.New(detectionevents.Config{AgentURL: d.AgentURL, Timeout: d.Timeout})
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), detectionDrainTimeout)
+			defer cancel()
+			events.Close(ctx)
+		}()
+	}
+	// openCalls holds every data-plane request per API key, so key
+	// containment (POST /api-keys/{id}/containment) cuts an agent's open
+	// calls on this process at once.
+	openCalls := inflight.New()
+
+	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, opts.Authenticators, refusedEvents(events), logger)
 	// The MCP and LLM planes refuse an IP locked out for failed auth with a
 	// 429 in their own error format, before any credential lookup.
-	mcpAuthenticator := internalauth.PlaneRateLimitedAuthenticator(authenticator, mcpRateLimiter)
-	llmAuthenticator := internalauth.PlaneRateLimitedAuthenticator(authenticator, llmRateLimiter)
+	mcpAuthenticator := internalauth.PlaneRateLimitedAuthenticator(openCalls.Authenticator(authenticator), mcpRateLimiter)
+	llmAuthenticator := internalauth.PlaneRateLimitedAuthenticator(openCalls.Authenticator(authenticator), llmRateLimiter)
 	authorizer := pkgauth.NewRoleAuthorizer()
 	// cfg.Auth.Roles (config.Auth.Roles' doc comment) is merged over the
 	// built-ins here, after NewRoleAuthorizer seeds admin/agent: a
@@ -480,6 +498,7 @@ func Run(ctx context.Context, opts Options) error {
 			Logger:            logger,
 			ClientIP:          clientIPs.IP,
 			OnToolCacheLookup: toolCacheLookup,
+			OnToolCall:        toolCallEvents(events),
 		})
 		if err != nil {
 			return fmt.Errorf("build mcp plane: %w", err)
@@ -497,7 +516,7 @@ func Run(ctx context.Context, opts Options) error {
 				return err
 			}
 			routines = append(routines, httpplane.New(
-				"mcp", cfg.MCP.Address, gwMetrics.Instrument("mcp", metrics.MCPRoute)(mcpPlane.Handler),
+				"mcp", cfg.MCP.Address, gwMetrics.Instrument("mcp", metrics.MCPRoute)(openCalls.Middleware("mcp")(mcpPlane.Handler)),
 				cfg.MCP.ReadTimeout, cfg.MCP.WriteTimeout, defaultIdleTimeout, logger,
 			))
 			routines = append(routines, mcpPlane.Routines...)
@@ -556,6 +575,7 @@ func Run(ctx context.Context, opts Options) error {
 			IngestSink:        sinks.IngestSink,
 			IngestRateLimiter: ingestRateLimiter,
 			DefaultTimeoutMS:  cfg.Connectors.DefaultTimeoutMS,
+			Inflight:          openCalls,
 		}
 		// apiKeyAuthenticator is nil when auth.api_keys.enabled is
 		// false; api.Deps.KeyInvalidator's nil interface is a documented
@@ -632,6 +652,7 @@ func Run(ctx context.Context, opts Options) error {
 			tee := llmplane.NewDetectionTee(llmplane.DetectionTeeConfig{
 				AgentURL: d.AgentURL, Timeout: d.Timeout, QueueSize: d.QueueSize,
 				QueueBytes: d.QueueBytes, MaxInFlight: d.MaxInFlight,
+				Inline: d.Inline, InlineTimeout: d.InlineTimeout,
 			})
 			// Runs after supervisor.Run has stopped the planes, so no handler
 			// is still offering turns: drain for a bounded time, drop the rest.
@@ -644,7 +665,7 @@ func Run(ctx context.Context, opts Options) error {
 			if err := metrics.RegisterDetectionTee(gwMetrics, tee); err != nil {
 				return err
 			}
-			logger.Info("llm detection tee enabled", "agent_url", d.AgentURL)
+			logger.Info("llm detection tee enabled", "agent_url", d.AgentURL, "inline", d.Inline)
 		}
 		core, err := llmplane.Handler(llmCfg, recorder)
 		if err != nil {
@@ -658,10 +679,11 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			if llmCfg.DetectionTee != nil {
 				health["detection"] = llmCfg.DetectionTee.Status()
+				health["detection_events"] = events.Status()
 			}
 			_ = json.NewEncoder(w).Encode(health)
 		})
-		llmMux.Handle("/", authMiddleware(core))
+		llmMux.Handle("/", openCalls.Middleware("llm")(authMiddleware(core)))
 
 		// Write timeout 0 (unlimited): LLM responses may stream for a long time.
 		routines = append(routines, httpplane.New(

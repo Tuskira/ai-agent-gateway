@@ -51,5 +51,11 @@
       }
     ],
     "stop_reason": "tool_use"
-  }
+  },
+  "headers": {
+    "user-agent": "claude-cli/2.0.0 (external, cli)",
+    "x-stainless-lang": "js"
+  },
+  "response_type": "application/json",
+  "request_judged": true
 }

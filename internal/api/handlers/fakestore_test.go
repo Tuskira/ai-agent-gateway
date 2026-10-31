@@ -275,7 +275,29 @@ func (s *fakeAPIKeyStore) SetProfile(_ context.Context, tenantID, id string, pro
 	return nil
 }
 
-var _ store.APIKeyStore = (*fakeAPIKeyStore)(nil)
+func (s *fakeAPIKeyStore) SetContainment(_ context.Context, tenantID, id string, level store.Containment, note string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k, ok := s.byID[id]
+	if !ok || k.TenantID != tenantID || k.RevokedAt != nil {
+		return store.ErrNotFound
+	}
+	now := time.Now().UTC()
+	k.SuspendedAt, k.RestrictedAt = nil, nil
+	switch level {
+	case store.ContainmentKilled:
+		k.SuspendedAt = &now
+	case store.ContainmentRestricted:
+		k.RestrictedAt = &now
+	}
+	k.ContainmentNote = note
+	return nil
+}
+
+var (
+	_ store.APIKeyStore     = (*fakeAPIKeyStore)(nil)
+	_ store.APIKeyContainer = (*fakeAPIKeyStore)(nil)
+)
 
 // ---------------------------------------------------------------------------
 // credentials

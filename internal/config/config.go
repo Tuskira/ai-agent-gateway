@@ -549,6 +549,14 @@ type LLMDetection struct {
 	QueueBytes int64 `yaml:"queue_bytes"`
 	// MaxInFlight caps turns being posted at once.
 	MaxInFlight int `yaml:"max_in_flight"`
+	// Inline turns on inline prevention: before a generation call is
+	// forwarded, the agent is asked (per the tenant's engine policy,
+	// cached) to judge its request, and a blocking rule refuses the call
+	// with 400. Fails open on any agent error. Off: detection only, and
+	// nothing on the request path talks to the agent.
+	Inline bool `yaml:"inline"`
+	// InlineTimeout bounds one inline judgment (policy lookup + verdict).
+	InlineTimeout time.Duration `yaml:"inline_timeout"`
 }
 
 // BodyStoreConfig selects where captured LLM request/response bodies live.
@@ -927,11 +935,13 @@ func Default() *Config {
 				},
 			},
 			Detection: LLMDetection{
-				AgentURL:    "", // off
-				Timeout:     5 * time.Second,
-				QueueSize:   1024,
-				QueueBytes:  256 << 20, // 256 MiB
-				MaxInFlight: 8,
+				AgentURL:      "", // off
+				Timeout:       5 * time.Second,
+				QueueSize:     1024,
+				QueueBytes:    256 << 20, // 256 MiB
+				MaxInFlight:   8,
+				Inline:        false,
+				InlineTimeout: 10 * time.Second,
 			},
 		},
 		Database: Database{
@@ -1251,6 +1261,9 @@ func (c *Config) Validate() error {
 		}
 		if d.MaxInFlight <= 0 {
 			return fmt.Errorf("llm_proxy.detection: max_in_flight must be > 0, got %d", d.MaxInFlight)
+		}
+		if d.Inline && d.InlineTimeout <= 0 {
+			return fmt.Errorf("llm_proxy.detection: inline_timeout must be > 0, got %s", d.InlineTimeout)
 		}
 	}
 

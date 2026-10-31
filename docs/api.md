@@ -103,7 +103,7 @@ authentication.
 | GET | `/auth/config` | *(public)* | What the login page should offer: `{password_login, api_key_login, single_tenant, default_tenant, has_users, tenant_optional}`. `tenant_optional` is always `true` on this version: `POST /auth/login` may omit `tenant`. `has_users` is `false` only on a single-tenant install whose default tenant has no active (live, not disabled) user, so the login page can show first-run guidance; with several tenants it is always `true`. |
 | POST | `/auth/login` | *(public)* | Body `{username, password, tenant?}` (tenant slug). Without `tenant` the username is looked up across tenants: one live match signs in, several are `409 tenant_required` (retry with `tenant`), none is the usual `401`. `200 {user, must_change_password, csrf_token}` and sets the `gw_session` cookie. Any credential failure is the same `401`. Behind the per-IP lockout, plus a per-user one. |
 | POST | `/auth/logout` | *(authenticated only)* | Revokes the calling session and clears the cookie; `204`. |
-| GET | `/auth/me` | *(authenticated only)* | The caller's own `Principal` (`subject`, `tenant_id` — the acting tenant while `X-Gateway-Acting-Tenant` is sent — `home_tenant_id`, `email`, `roles`, `auth_method`, `key_id`) plus `kind` (`user` \| `api_key`); for a console user also `user`, `must_change_password` and `csrf_token`. |
+| GET | `/auth/me` | *(authenticated only)* | The caller's own `Principal` (`subject`, `tenant_id` — the acting tenant while `X-Gateway-Acting-Tenant` is sent — `home_tenant_id`, `email`, `roles`, `auth_method`, `key_id`) plus `kind` (`user` \| `api_key`) and `permissions` (every permission the gateway checks that the caller holds, resolved by its authorizer, custom roles included); for a console user also `user`, `must_change_password` and `csrf_token`. |
 | POST | `/auth/password` | *(authenticated only)* | A console user changes their own password: `{current_password, new_password}`; `204`, revokes their other sessions. API keys get `403`. |
 | GET | `/auth/audit` | `users.manage` | The tenant's authentication audit trail, newest first (`?action=`, `?user_id=`, `limit`/`offset`). A row written by a `platform-admin` acting from another tenant carries `actor_tenant_id` (its home tenant). |
 | POST | `/users` | `users.manage` | Create a console user `{username, display_name?, role: admin\|viewer\|platform-admin, password?}`; `201 {user, temporary_password?}` (no password: one is generated, returned once, and must be changed at first login). `role: "platform-admin"` needs the caller to hold `platform.admin` (`403`). |
@@ -126,6 +126,9 @@ authentication.
 | PATCH | `/api-keys/{id}` | `admin.manage` | Set (`{"limits":{...}}`, replaces wholesale) or clear (`{"limits":null}`) a key's LLM limits; set (`{"profile_id":"<id>"}`) or clear (`{"profile_id":null}`) its profile binding. At least one of the two fields is required (`400` otherwise). |
 | DELETE | `/api-keys/{id}` | `admin.manage` | Revoke a key; every gateway replica evicts its cached lookup within milliseconds (Postgres `LISTEN/NOTIFY`; `auth.api_keys.cache_ttl` is the backstop). |
 | POST | `/api-keys/{id}/rotate` | `admin.manage` | Revoke and reissue; returns the new plaintext once. |
+| POST | `/api-keys/{id}/containment` | `admin.manage` | Move the key along the [containment ladder](#key-containment): `{"level":"normal\|restrict\|kill","note":"why"}`. Returns the key plus `cut`. |
+| POST | `/api-keys/{id}/suspend` | `admin.manage` | Containment level `kill` with the note `suspended` (no body). |
+| POST | `/api-keys/{id}/resume` | `admin.manage` | Containment level `normal` (no body). |
 | POST | `/credentials` | `admin.manage` | Create an encrypted credential. |
 | GET | `/credentials` | `admin.manage` | List credential metadata (no payload). |
 | GET | `/credentials/{name}` | `admin.manage` | Get one credential's metadata. |
@@ -350,3 +353,29 @@ ingest is enabled. Only for a caller that already holds a valid
 body an unmounted route's `404` would, so that caller learns nothing about
 whether the feature exists on this deployment versus not being rolled out
 yet.
+
+## Key containment
+
+An API key (an agent) sits on one rung of a containment ladder, set with
+`POST /api-keys/{id}/containment` (`admin.manage`):
+
+| `level` | Key state (`containment`) | Effect |
+|---|---|---|
+| `normal` | `normal` | No containment. |
+| `restrict` | `restricted` (`restricted_at` set) | The key may still call models; the MCP plane refuses every `tools/call` with `-32003` `agent restricted: an admin turned this agent's tool calls off`. Tools stay listed, so each attempt is refused visibly. |
+| `kill` | `killed` (`suspended_at` set) | The key is refused on every plane like a revoked key (`401`), until it is restored with `normal`. |
+
+The body is `{"level": "...", "note": "why"}` (`reason` is accepted as an
+alias of `note`). A note is required to restrict or kill (`400 say why: a
+note is required to restrict or kill an agent`); a caller cannot contain
+the key it is signed in with (`400`); a revoked or unknown key is `404`.
+The key's cached lookup is evicted at once on this process (a kill also
+notifies every replica, like a revoke; a restriction or a restore reaches
+other replicas within `auth.api_keys.cache_ttl`). The key's open calls on
+this process are cut mid-stream: on kill its LLM and MCP calls, on
+restrict its MCP calls. The answer is the key, with `containment`,
+`suspended_at`, `restricted_at` and `containment_note`, plus
+`"cut": {"llm": n, "mcp": m}`, how many open calls were cut per plane.
+Every key in `GET /api-keys` carries the same containment fields.
+`/suspend` and `/resume` are bodiless shorthands for `kill` (note
+`suspended`) and `normal`.

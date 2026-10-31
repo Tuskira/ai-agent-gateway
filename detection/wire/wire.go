@@ -27,7 +27,9 @@ const (
 	PathTurnRequest  = "/v1/turns/request"  // agent, inline contract: synchronous verdict
 	PathTurnResponse = "/v1/turns/response" // agent, inline contract: accepted at once (202)
 	PathDetect       = "/v1/detect"         // engine
-	PathPolicy       = "/v1/policy"         // engine, ?tenant_id=
+	PathPolicy       = "/v1/policy"         // engine, ?tenant_id= (the agent serves it to the gateway too, cached)
+	PathEvents       = "/v1/events"         // agent (from the gateway) and engine (from the agent): EventBatch
+	PathObserve      = "/v1/observe"        // engine: Observation
 )
 
 // TurnVersion is the gateway-to-agent contract's version (Turn.V). The agent
@@ -72,6 +74,28 @@ type Turn struct {
 	Answer         *Answer       `json:"answer,omitempty"`
 	NormalizeError string        `json:"normalize_error,omitempty"`
 	Items          []TurnItem    `json:"items,omitempty"`
+
+	// Headers are the client's request headers named in ObservedHeaders
+	// (lower-case names), which say what runtime made the call; the
+	// gateway sends no other header. ResponseType is the Content-Type the
+	// client got, which says how to read Response (an event stream or one
+	// body). Both go to the engine in an Observation.
+	Headers      map[string]string `json:"headers,omitempty"`
+	ResponseType string            `json:"response_type,omitempty"`
+	// RequestJudged is set when the gateway already had the request stage
+	// judged inline (POST /v1/turns/request) before forwarding: the agent
+	// then judges only the response stage of this turn.
+	RequestJudged bool `json:"request_judged,omitempty"`
+}
+
+// ObservedHeaders are the request headers the gateway puts in Turn.Headers:
+// the client's identity (user agent, SDK, OS) and nothing that carries a
+// credential.
+var ObservedHeaders = []string{
+	"user-agent", "x-app", "anthropic-version", "anthropic-beta",
+	"x-stainless-lang", "x-stainless-os", "x-stainless-arch", "x-stainless-runtime",
+	"x-stainless-runtime-version", "x-stainless-package-version",
+	"x-claude-code-session-id", "x-agent-profile-name",
 }
 
 // Turn.Op values.
@@ -250,4 +274,74 @@ type Judgment struct {
 type PolicyResponse struct {
 	Inline       bool `json:"inline"`
 	WantResponse bool `json:"want_response"`
+	// Observe asks the agent for an Observation of each generation call
+	// (POST /v1/observe), for an engine that keeps track of the agents calling.
+	Observe bool `json:"observe,omitempty"`
+}
+
+// Event is something the gateway did that is not a model call: a tool call
+// on its MCP plane with the caller's profile outcome, or a request refused
+// because the caller's key is suspended, revoked or expired. The gateway
+// posts events to the agent (EventBatch, POST /v1/events, answered 202), and
+// the agent forwards them to the engine with Arguments redacted.
+type Event struct {
+	V         int       `json:"v,omitempty"`
+	Kind      string    `json:"kind"` // EventToolCall or EventRefused
+	ID        string    `json:"id,omitempty"`
+	TenantID  string    `json:"tenant_id"`
+	SessionID string    `json:"session_id,omitempty"`
+	KeyID     string    `json:"key_id,omitempty"`
+	Principal string    `json:"principal,omitempty"`
+	At        time.Time `json:"at"`
+	Plane     string    `json:"plane"` // "mcp", "llm" or "api"
+
+	// A tool call: the profile that applied (empty when none), the
+	// connector and its slug, the unprefixed tool, and the outcome.
+	// Arguments (JSON) is sent for a monitored call only.
+	Profile     string `json:"profile,omitempty"`
+	ConnectorID string `json:"connector_id,omitempty"`
+	Server      string `json:"server,omitempty"`
+	Tool        string `json:"tool,omitempty"`
+	Outcome     string `json:"outcome,omitempty"`
+	Arguments   string `json:"arguments,omitempty"`
+
+	// A refused request: why ("key suspended", "key revoked", "key
+	// expired") and what was asked ("POST /v1/messages").
+	Reason string `json:"reason,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// Event kinds and tool-call outcomes.
+const (
+	EventToolCall = "tool_call"
+	EventRefused  = "refused"
+
+	OutcomeAllowed    = "allowed"
+	OutcomeMonitored  = "monitored"  // granted with permission "monitor": runs, and is a detection
+	OutcomeDenied     = "denied"     // the profile does not grant the tool
+	OutcomeRestricted = "restricted" // the key is restricted: every tool call is refused
+	OutcomeRefused    = "refused"    // the key is suspended, revoked or expired
+)
+
+// EventBatch is what POST /v1/events carries, gateway to agent and agent to
+// engine.
+type EventBatch struct {
+	Events []Event `json:"events"`
+}
+
+// MaxEventBatch bounds EventBatch.Events.
+const MaxEventBatch = 500
+
+// Observation is one generation call, as the engine reads it:
+// who made it (Headers: the Turn's ObservedHeaders), the request body and
+// the first 1 MiB of the response, each with every secret the agent found
+// replaced by [REDACTED:<kind>]. Sent only when the engine's policy asks
+// (PolicyResponse.Observe).
+type Observation struct {
+	V            int               `json:"v,omitempty"`
+	Meta         Meta              `json:"meta"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	Request      []byte            `json:"request"`
+	Response     []byte            `json:"response,omitempty"`
+	ResponseType string            `json:"response_type,omitempty"`
 }

@@ -5,9 +5,11 @@
 package api
 
 import (
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/inflight"
 	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -164,6 +166,9 @@ type Deps struct {
 	// when the api-key Authenticator isn't wired into this process at
 	// all) -- see handlers.KeyInvalidator.
 	KeyInvalidator handlers.KeyInvalidator
+	// Inflight lets key containment cut an agent's open data-plane calls
+	// (handlers.Deps.Inflight). Nil: only new requests are refused.
+	Inflight *inflight.Registry
 	// UIHandler serves the embedded admin console. Required when ServeUI
 	// is true; ignored otherwise. Kept as an injected http.Handler
 	// (rather than NewRouter importing internal/api/ui directly) so
@@ -295,7 +300,12 @@ func NewRouter(deps Deps) http.Handler {
 // generated spec after the full table (including those two routes) is
 // assembled, via Docs's pointer receiver -- see handlers.Docs.
 func buildRoutes(deps Deps) []routeSpec {
+	// known is every permission a route (or a data plane) checks, filled
+	// once the route table is built; GET /auth/me resolves the caller's
+	// against it.
+	var known []string
 	hdeps := handlers.Deps{
+		KnownPermissions:  func() []string { return known },
 		Store:             deps.Store,
 		Secrets:           deps.Secrets,
 		Headers:           deps.Headers,
@@ -310,6 +320,7 @@ func buildRoutes(deps Deps) []routeSpec {
 		LLMCalls:          deps.LLMCalls,
 		AllowedRoles:      allowedRoles(deps.Authorizer),
 		KeyInvalidator:    deps.KeyInvalidator,
+		Inflight:          deps.Inflight,
 		ModelInvalidator:  deps.ModelInvalidator,
 		IngestConfig:      deps.IngestConfig,
 		Capture:           deps.Capture,
@@ -411,6 +422,9 @@ func buildRoutes(deps Deps) []routeSpec {
 		{Method: http.MethodGet, Pattern: "/api-keys", Tag: "api-keys", Summary: "List API keys", Permission: "admin.manage", Handler: apiKeys.List},
 		{Method: http.MethodPatch, Pattern: "/api-keys/{id}", Tag: "api-keys", Summary: "Update an API key's limits or profile binding", Permission: "admin.manage", Handler: apiKeys.Update},
 		{Method: http.MethodDelete, Pattern: "/api-keys/{id}", Tag: "api-keys", Summary: "Revoke an API key", Permission: "admin.manage", Handler: apiKeys.Revoke},
+		{Method: http.MethodPost, Pattern: "/api-keys/{id}/containment", Tag: "api-keys", Summary: "Move an agent's key along the containment ladder: normal, restrict (tool calls refused) or kill (every call refused), with a note; cuts the key's open calls", Permission: "admin.manage", Handler: apiKeys.Containment},
+		{Method: http.MethodPost, Pattern: "/api-keys/{id}/suspend", Tag: "api-keys", Summary: "Kill an agent's key (containment level kill): refused on every plane until resumed", Permission: "admin.manage", Handler: apiKeys.Suspend},
+		{Method: http.MethodPost, Pattern: "/api-keys/{id}/resume", Tag: "api-keys", Summary: "Restore a contained key (containment level normal)", Permission: "admin.manage", Handler: apiKeys.Resume},
 		{Method: http.MethodPost, Pattern: "/api-keys/{id}/rotate", Tag: "api-keys", Summary: "Rotate an API key", Permission: "admin.manage", Handler: apiKeys.Rotate},
 
 		{Method: http.MethodPost, Pattern: "/credentials", Tag: "credentials", Summary: "Create a credential", Permission: "admin.manage", Handler: credentials.Create},
@@ -504,6 +518,17 @@ func buildRoutes(deps Deps) []routeSpec {
 		// admin's blanket "*") grants (pkg/auth.NewRoleAuthorizer).
 		{Method: http.MethodPost, Pattern: "/ingest", Tag: "ingest", Summary: "Ingest externally captured LLM/access-log records", Permission: "ingest.write", Handler: ingestH.Ingest},
 	}
+
+	seen := map[string]bool{"mcp.access": true, "llm.access": true}
+	for _, rt := range routes {
+		if rt.Permission != "" {
+			seen[rt.Permission] = true
+		}
+	}
+	for p := range seen {
+		known = append(known, p)
+	}
+	sort.Strings(known)
 
 	docs.Spec = buildOpenAPI(routes, deps.ServiceVersion)
 	return routes

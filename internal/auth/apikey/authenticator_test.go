@@ -345,3 +345,27 @@ func TestAuthenticator_TouchThrottling(t *testing.T) {
 		t.Errorf("touchCalls = %d, want 2", got)
 	}
 }
+
+func TestAuthenticator_SuspendedRefusedAndReported(t *testing.T) {
+	plaintext, hash, prefix, _ := Generate()
+	fs := newFakeStore()
+	at := time.Now().Add(-time.Minute)
+	fs.byHash[hash] = &store.APIKey{ID: "key-1", TenantID: "t1", Role: "agent", KeyHash: hash, KeyPrefix: prefix, SuspendedAt: &at}
+	var gotKey, gotReason string
+	a := New(fs, Options{OnRefused: func(_ *http.Request, k *store.APIKey, reason string) { gotKey, gotReason = k.ID, reason }})
+	_, err := a.Authenticate(context.Background(), bearerRequest(plaintext))
+	if !errors.Is(err, auth.ErrInvalid) || gotKey != "key-1" || gotReason != "key suspended" {
+		t.Fatalf("err %v, refused %q %q", err, gotKey, gotReason)
+	}
+}
+
+func TestAuthenticator_RestrictedKeyIsToolsRestricted(t *testing.T) {
+	plaintext, hash, prefix, _ := Generate()
+	fs := newFakeStore()
+	at := time.Now().Add(-time.Minute)
+	fs.byHash[hash] = &store.APIKey{ID: "key-1", TenantID: "t1", Role: "agent", KeyHash: hash, KeyPrefix: prefix, RestrictedAt: &at}
+	p, err := New(fs, Options{}).Authenticate(context.Background(), bearerRequest(plaintext))
+	if err != nil || !p.ToolsRestricted {
+		t.Fatalf("p %+v err %v", p, err)
+	}
+}

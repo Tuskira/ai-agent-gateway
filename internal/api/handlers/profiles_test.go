@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -301,5 +303,41 @@ func TestProfiles_WritesInvalidateProfileCache(t *testing.T) {
 	}
 	if fake.invalidateCalls != 4 || fake.lastInvalidateProfileID != created.ID {
 		t.Errorf("after Delete: calls=%d id=%q", fake.invalidateCalls, fake.lastInvalidateProfileID)
+	}
+}
+
+func TestProfiles_ToolPermissionRoundTrip(t *testing.T) {
+	deps := newTestDeps()
+	conn := &store.Connector{TenantID: "tenant-a", Name: "ops", Slug: "ops", Endpoint: "http://127.0.0.1:1/mcp", Metadata: map[string]any{}}
+	if err := deps.Store.Connectors().Create(context.Background(), conn); err != nil {
+		t.Fatal(err)
+	}
+	prof := &store.AgentProfile{TenantID: "tenant-a", Name: "p", Slug: "p"}
+	if err := deps.Store.AgentProfiles().Create(context.Background(), prof); err != nil {
+		t.Fatal(err)
+	}
+	h := Profiles{Deps: deps}
+	put := func(body string) *httptest.ResponseRecorder {
+		req := withPrincipal(httptest.NewRequest(http.MethodPut, "/profiles/"+prof.ID+"/tools", strings.NewReader(body)), "tenant-a", "admin")
+		return serve(http.MethodPut, "/profiles/{id}/tools", h.SetTools, req)
+	}
+	if w := put(`{"tools":[{"connector_id":"` + conn.ID + `","tool_name":"page","permission":"block"}]}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad permission: %d", w.Code)
+	}
+	if w := put(`{"tools":[{"connector_id":"` + conn.ID + `","tool_name":"page","permission":"monitor"},{"connector_id":"` + conn.ID + `","tool_name":"read"}]}`); w.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", w.Code, w.Body.String())
+	}
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/profiles/"+prof.ID+"/tools", nil), "tenant-a", "admin")
+	w := serve(http.MethodGet, "/profiles/{id}/tools", h.GetTools, req)
+	var page struct {
+		Items []profileToolView `json:"items"`
+	}
+	decodeInto(t, w, &page)
+	perms := map[string]string{}
+	for _, it := range page.Items {
+		perms[it.ToolName] = it.Permission
+	}
+	if perms["page"] != "monitor" || perms["read"] != "allow" {
+		t.Fatalf("permissions = %v", perms)
 	}
 }

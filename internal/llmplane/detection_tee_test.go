@@ -485,7 +485,8 @@ func TestDetectionTee_Routes(t *testing.T) {
 func TestDetectionTee_ContractFixtures(t *testing.T) {
 	turn := func(status int, resp string) teeTurn {
 		tt := teeTurn{
-			V: teeVersion, ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "session-1", KeyID: "key-1",
+			Headers: map[string]string{"user-agent": "claude-cli/2.0.0 (external, cli)", "x-stainless-lang": "js"},
+			V:       teeVersion, ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "session-1", KeyID: "key-1",
 			Principal: "user-1", Model: "example-model", Path: "/v1/messages",
 			At:         time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 			StatusCode: status, Dialect: readerAnthropic, Op: routeGenerate,
@@ -494,6 +495,7 @@ func TestDetectionTee_ContractFixtures(t *testing.T) {
 		}
 		if resp != "" {
 			tt.Response, tt.respType = []byte(resp), "application/json"
+			tt.ResponseType, tt.RequestJudged = tt.respType, true
 		}
 		tt.normalize()
 		return tt

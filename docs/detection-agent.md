@@ -411,7 +411,21 @@ and the response stage when there is a response, each redacted. The
 `GET /healthz` answers `200` with the agent's counts as JSON (see
 [Configuration](#configuration)).
 
-### Inline contract (not used by the gateway's tee)
+### GET /v1/policy, POST /v1/events (from the gateway)
+
+- `GET /v1/policy?tenant_id=` answers the tenant's engine policy from the
+  agent's cache (`{"inline", "want_response", "observe"}`); a gateway with
+  `llm_proxy.detection.inline` asks it before forwarding a call.
+- `POST /v1/events` takes `{"events":[...]}` (at most 500; see the
+  gateway's llm-plane.md "Events"), answers `202` at once and forwards them
+  to the engine's `POST /v1/events` in batches, each monitored call's
+  `arguments` redacted (`turn.RedactRaw`; a scan that does not finish in 2s
+  drops the arguments). A full queue (4096) or an engine failure drops
+  events, counted on `/healthz` (`events_sent`, `events_dropped`).
+- A turn with `request_judged` was judged inline by the gateway: only its
+  response stage is judged.
+
+### Inline contract
 
 | Route | Answer |
 |---|---|
@@ -421,10 +435,10 @@ and the response stage when there is a response, each redacted. The
 These take a single stage (`wire.TurnRequest`: the same fields without `v`
 and `status_code`; `response` only on `/v1/turns/response`) and are the
 contract of a gateway that holds the call for a verdict and may refuse it.
-The gateway in this repository does not do that: its tee posts to
-`/v1/turns` only. They are kept working, tested, and served by the same
-agent, but treat them as the legacy inline contract; they are not covered by
-the gateway fixtures. On `/v1/turns/request` an `inline` tenant's call waits
+The gateway in this repository uses `/v1/turns/request` only with
+`llm_proxy.detection.inline` on (then the whole turn still goes to
+`/v1/turns`, marked `request_judged`); `/v1/turns/response` is not used by
+it. Neither is covered by the gateway fixtures. On `/v1/turns/request` an `inline` tenant's call waits
 for the engine (up to `AGENT_ENGINE_TIMEOUT`, and the engine failing lets
 the call through), and a `blocking` rule in the answer is returned as
 `block`. At most `AGENT_MAX_IN_FLIGHT` inline judgments run at once; past
@@ -472,6 +486,18 @@ Only the [inline contract](#inline-contract-not-used-by-the-gateways-tee)
 asks for it; `POST /v1/turns` never does. The agent caches the answer per
 tenant for `AGENT_POLICY_TTL`. On that contract it is on the request path of
 a call on a cache miss and has a 1 second budget, so answer it from memory.
+
+### POST /v1/events, POST /v1/observe
+
+- `POST /v1/events`: the gateway's events (`wire.EventBatch`), forwarded as
+  above; the engine answers `200` or `202`.
+- `POST /v1/observe`: when the tenant's policy sets `observe`, one
+  `wire.Observation` per generation turn (`meta`, `headers`, `request`,
+  `response`, `response_type`), each body with every secret found replaced
+  by `[REDACTED:<kind>]` (a scan that does not finish within
+  `AGENT_PREPARE_TIMEOUT` sends nothing). For an engine that keeps track of
+  which agents call. Queued (256, a quarter of `AGENT_QUEUE_BYTES`), dropped and
+  counted when full (`observe_sent`, `observe_dropped`).
 
 ### POST /v1/detect
 

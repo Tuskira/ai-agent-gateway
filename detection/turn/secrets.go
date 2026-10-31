@@ -635,3 +635,19 @@ func cacheStore(k [sha256.Size]byte, ms []secretMatch) {
 
 // validUTF8 is s with each run of invalid UTF-8 replaced by U+FFFD.
 func validUTF8(s string) string { return strings.ToValidUTF8(s, string(utf8.RuneError)) }
+
+// RedactRaw returns b with every secret found in it, as written or as it
+// appears inside a JSON string, replaced by [REDACTED:<kind>]. The marker
+// holds no quote or backslash, so a JSON body stays JSON. It fails, and the
+// caller must send nothing, when ctx ends before the scan is complete.
+func RedactRaw(ctx context.Context, b []byte) ([]byte, error) {
+	text := validUTF8(string(b))
+	ms, err := scanSecretsContext(ctx, text)
+	if err != nil {
+		return nil, err
+	}
+	if len(ms) == 0 {
+		return []byte(text), nil
+	}
+	return []byte(replaceSecrets(text, byLength(withEncodings(ms)))), nil
+}

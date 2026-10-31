@@ -63,6 +63,16 @@ type APIKey struct {
 	RevokedAt  *time.Time
 	LastUsedAt *time.Time
 
+	// SuspendedAt is set while the key is killed (containment): refused on
+	// every plane like a revoked key, but it can be restored.
+	SuspendedAt *time.Time
+	// RestrictedAt is set while the key is restricted (containment): it
+	// may call models, but the MCP plane refuses every tool call.
+	RestrictedAt *time.Time
+	// ContainmentNote is why the key was last restricted, killed or
+	// restored.
+	ContainmentNote string
+
 	// Limits caps what this key may spend or send through the LLM plane
 	// (enforced by internal/llmplane). nil = unlimited.
 	Limits *Limits
@@ -323,7 +333,17 @@ type ProfileTool struct {
 	ConnectorID    string
 	ToolNamespace  string
 	ToolName       string
+	// Permission is PermissionAllow (also the zero value) or
+	// PermissionMonitor: the call runs, and the MCP plane reports it to
+	// the detection agent as a monitored call.
+	Permission string
 }
+
+// Tool permissions on a profile grant. A tool without a grant is denied.
+const (
+	PermissionAllow   = "allow"
+	PermissionMonitor = "monitor"
+)
 
 // Skill is one row of the skills & commands registry: a named, versioned
 // bundle of text files (Kind "skill", modeled on the portable Agent
@@ -553,6 +573,40 @@ type APIKeyStore interface {
 	// The caller must have confirmed profileID belongs to tenantID.
 	// Returns ErrNotFound if id doesn't exist under tenantID.
 	SetProfile(ctx context.Context, tenantID, id string, profileID *string) error
+}
+
+// Containment is a rung of the containment ladder of an API key.
+type Containment string
+
+const (
+	// ContainmentNormal: no containment.
+	ContainmentNormal Containment = "normal"
+	// ContainmentRestricted: the key may call models; every MCP tool call
+	// is refused.
+	ContainmentRestricted Containment = "restricted"
+	// ContainmentKilled: the key is suspended, refused on every plane
+	// like a revoked key, until restored.
+	ContainmentKilled Containment = "killed"
+)
+
+// ContainmentOf is the rung k is on.
+func ContainmentOf(k *APIKey) Containment {
+	switch {
+	case k.SuspendedAt != nil:
+		return ContainmentKilled
+	case k.RestrictedAt != nil:
+		return ContainmentRestricted
+	}
+	return ContainmentNormal
+}
+
+// APIKeyContainer is an OPTIONAL capability of an APIKeyStore (discovered
+// with a type assertion, so a store without it still satisfies
+// APIKeyStore): moving a key along the containment ladder.
+type APIKeyContainer interface {
+	// SetContainment sets the key's rung with the reason. Returns
+	// ErrNotFound for a key unknown under tenantID or already revoked.
+	SetContainment(ctx context.Context, tenantID, id string, level Containment, note string) error
 }
 
 // APIKeyLookup is the one APIKeyStore read the LLM plane's per-key limiter

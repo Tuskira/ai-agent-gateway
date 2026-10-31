@@ -35,5 +35,9 @@
       "get_time"
     ],
     "history": "full"
+  },
+  "headers": {
+    "user-agent": "claude-cli/2.0.0 (external, cli)",
+    "x-stainless-lang": "js"
   }
 }

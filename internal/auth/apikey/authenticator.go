@@ -220,11 +220,17 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*aut
 	}
 
 	now := a.now()
-	if key.RevokedAt != nil {
-		return nil, fmt.Errorf("%w: key revoked", auth.ErrInvalid)
+	reason := ""
+	switch {
+	case key.RevokedAt != nil:
+		reason = "key revoked"
+	case key.SuspendedAt != nil:
+		reason = "key suspended"
+	case key.ExpiresAt != nil && !now.Before(*key.ExpiresAt):
+		reason = "key expired"
 	}
-	if key.ExpiresAt != nil && !now.Before(*key.ExpiresAt) {
-		return nil, fmt.Errorf("%w: key expired", auth.ErrInvalid)
+	if reason != "" {
+		return nil, fmt.Errorf("%w: %s", auth.ErrInvalid, reason)
 	}
 
 	a.scheduleTouch(key.ID, now)
@@ -234,14 +240,17 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*aut
 		profileID = *key.ProfileID
 	}
 	return &auth.Principal{
-		ProfileID:     profileID,
-		Subject:       key.ID,
-		TenantID:      key.TenantID,
-		Email:         "",
-		Roles:         auth.RolesForKey(key.Role),
-		AuthMethod:    "apikey",
-		KeyID:         key.ID,
-		RawCredential: plaintext,
+		ProfileID:  profileID,
+		Subject:    key.ID,
+		TenantID:   key.TenantID,
+		Email:      "",
+		Roles:      auth.RolesForKey(key.Role),
+		AuthMethod: "apikey",
+		KeyID:      key.ID,
+		// A restricted key may call models; the MCP plane refuses its
+		// tool calls (containment).
+		ToolsRestricted: key.RestrictedAt != nil,
+		RawCredential:   plaintext,
 	}, nil
 }
 

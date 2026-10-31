@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Key containment.** `POST /api/v1/api-keys/{id}/containment` with
+  `{"level":"normal|restrict|kill","note":"..."}` moves an agent's key along
+  a containment ladder: restrict refuses every MCP tool call (models still
+  work), kill refuses the key on every plane until restored. The key's open
+  calls on the process are cut mid-stream and the answer says how many
+  (`cut`). `/suspend` and `/resume` are shorthands. Keys report
+  `containment`, `suspended_at`, `restricted_at` and `containment_note`.
+  Migration `000012` adds the columns.
 - `GET /api/v1/auth/me` reports the caller's resolved `permissions`.
 
 ## [0.7.0] - 2026-11-02

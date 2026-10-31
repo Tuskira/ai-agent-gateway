@@ -117,6 +117,9 @@ type Deps struct {
 	Upstream upstream.Options
 }
 
+// restrictedMessage is the refusal of a restricted key's tool call.
+const restrictedMessage = "agent restricted: an admin turned this agent's tool calls off"
+
 // Orchestrator serves MCP methods.
 type Orchestrator struct {
 	deps     Deps
@@ -766,6 +769,12 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 
 	info := reqctx.From(ctx)
 	info.SetTool(params.Name)
+
+	// A restricted key (containment) may call models but no tool: refuse
+	// before anything is resolved or routed.
+	if in.Principal.ToolsRestricted {
+		return o.fail(in, mcp.NewError(mcp.ErrorCodeToolNotAllowed, restrictedMessage, map[string]any{"tool": params.Name}))
+	}
 
 	allow, mcpErr := o.resolveProfile(ctx, in)
 	if mcpErr != nil {

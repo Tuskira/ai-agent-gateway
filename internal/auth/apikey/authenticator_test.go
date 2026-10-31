@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -343,5 +344,27 @@ func TestAuthenticator_TouchThrottling(t *testing.T) {
 
 	if got := fs.touchCallCount(); got != 2 {
 		t.Errorf("touchCalls = %d, want 2", got)
+	}
+}
+
+func TestAuthenticator_SuspendedRefused(t *testing.T) {
+	plaintext, hash, prefix, _ := Generate()
+	fs := newFakeStore()
+	at := time.Now().Add(-time.Minute)
+	fs.byHash[hash] = &store.APIKey{ID: "key-1", TenantID: "t1", Role: "agent", KeyHash: hash, KeyPrefix: prefix, SuspendedAt: &at}
+	_, err := New(fs, Options{}).Authenticate(context.Background(), bearerRequest(plaintext))
+	if !errors.Is(err, auth.ErrInvalid) || !strings.Contains(err.Error(), "key suspended") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestAuthenticator_RestrictedKeyIsToolsRestricted(t *testing.T) {
+	plaintext, hash, prefix, _ := Generate()
+	fs := newFakeStore()
+	at := time.Now().Add(-time.Minute)
+	fs.byHash[hash] = &store.APIKey{ID: "key-1", TenantID: "t1", Role: "agent", KeyHash: hash, KeyPrefix: prefix, RestrictedAt: &at}
+	p, err := New(fs, Options{}).Authenticate(context.Background(), bearerRequest(plaintext))
+	if err != nil || !p.ToolsRestricted {
+		t.Fatalf("p %+v err %v", p, err)
 	}
 }

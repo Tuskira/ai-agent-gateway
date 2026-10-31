@@ -72,6 +72,12 @@ type Options struct {
 	// Now returns the current time. Nil uses time.Now; tests override it
 	// for deterministic cache-expiry and throttling behavior.
 	Now func() time.Time
+
+	// OnRefused, when set, is told about every request refused because
+	// its key is revoked, suspended (killed by containment) or expired:
+	// the key exists, so it is known who was refused. It runs on the
+	// request path and must not block.
+	OnRefused func(r *http.Request, key *store.APIKey, reason string)
 }
 
 // CredentialGuard is the per-credential-prefix half of the auth-failure
@@ -126,6 +132,8 @@ type Authenticator struct {
 	lastTouch map[string]time.Time
 
 	touchCh chan touchRequest
+
+	onRefused func(r *http.Request, key *store.APIKey, reason string)
 }
 
 var _ auth.Authenticator = (*Authenticator)(nil)
@@ -161,6 +169,7 @@ func New(keys store.APIKeyStore, opts Options) *Authenticator {
 		guard:         opts.Guard,
 		lastTouch:     make(map[string]time.Time),
 		touchCh:       make(chan touchRequest, touchQueueSize),
+		onRefused:     opts.OnRefused,
 	}
 
 	if opts.NegativeTTL > 0 {
@@ -230,6 +239,9 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*aut
 		reason = "key expired"
 	}
 	if reason != "" {
+		if a.onRefused != nil {
+			a.onRefused(r, key, reason)
+		}
 		return nil, fmt.Errorf("%w: %s", auth.ErrInvalid, reason)
 	}
 

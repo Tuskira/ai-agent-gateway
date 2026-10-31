@@ -351,7 +351,17 @@ type ProfileTool struct {
 	ConnectorID    string
 	ToolNamespace  string
 	ToolName       string
+	// Permission is PermissionAllow (also the zero value) or
+	// PermissionMonitor: the call runs, and the MCP plane reports it to
+	// the detection agent as a monitored call.
+	Permission string
 }
+
+// Tool permissions on a profile grant. A tool without a grant is denied.
+const (
+	PermissionAllow   = "allow"
+	PermissionMonitor = "monitor"
+)
 
 // Skill is one row of the skills & commands registry: a named, versioned
 // bundle of text files (Kind "skill", modeled on the portable Agent

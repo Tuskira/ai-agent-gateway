@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectionevents"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/inflight"
 	"log/slog"
 	"net/http"
@@ -334,12 +335,23 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
+	// Detection events (llm_proxy.detection.agent_url): tool-call outcomes
+	// and refused keys go to the detection agent, off the request path.
+	var events *detectionevents.Emitter
+	if d := cfg.LLMProxy.Detection; d.AgentURL != "" {
+		events = detectionevents.New(detectionevents.Config{AgentURL: d.AgentURL, Timeout: d.Timeout})
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), detectionDrainTimeout)
+			defer cancel()
+			events.Close(ctx)
+		}()
+	}
 	// openCalls holds every data-plane request per API key, so key
 	// containment (POST /api-keys/{id}/containment) cuts an agent's open
 	// calls on this process at once.
 	openCalls := inflight.New()
 
-	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, opts.Authenticators, logger)
+	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, opts.Authenticators, refusedEvents(events), logger)
 	// The MCP and LLM planes refuse an IP locked out for failed auth with a
 	// 429 in their own error format, before any credential lookup.
 	mcpAuthenticator := internalauth.PlaneRateLimitedAuthenticator(openCalls.Authenticator(authenticator), mcpRateLimiter)
@@ -486,6 +498,7 @@ func Run(ctx context.Context, opts Options) error {
 			Logger:            logger,
 			ClientIP:          clientIPs.IP,
 			OnToolCacheLookup: toolCacheLookup,
+			OnToolCall:        toolCallEvents(events),
 		})
 		if err != nil {
 			return fmt.Errorf("build mcp plane: %w", err)
@@ -665,6 +678,7 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			if llmCfg.DetectionTee != nil {
 				health["detection"] = llmCfg.DetectionTee.Status()
+				health["detection_events"] = events.Status()
 			}
 			_ = json.NewEncoder(w).Encode(health)
 		})

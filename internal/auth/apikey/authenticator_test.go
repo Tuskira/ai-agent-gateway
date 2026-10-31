@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -347,14 +346,16 @@ func TestAuthenticator_TouchThrottling(t *testing.T) {
 	}
 }
 
-func TestAuthenticator_SuspendedRefused(t *testing.T) {
+func TestAuthenticator_SuspendedRefusedAndReported(t *testing.T) {
 	plaintext, hash, prefix, _ := Generate()
 	fs := newFakeStore()
 	at := time.Now().Add(-time.Minute)
 	fs.byHash[hash] = &store.APIKey{ID: "key-1", TenantID: "t1", Role: "agent", KeyHash: hash, KeyPrefix: prefix, SuspendedAt: &at}
-	_, err := New(fs, Options{}).Authenticate(context.Background(), bearerRequest(plaintext))
-	if !errors.Is(err, auth.ErrInvalid) || !strings.Contains(err.Error(), "key suspended") {
-		t.Fatalf("err %v", err)
+	var gotKey, gotReason string
+	a := New(fs, Options{OnRefused: func(_ *http.Request, k *store.APIKey, reason string) { gotKey, gotReason = k.ID, reason }})
+	_, err := a.Authenticate(context.Background(), bearerRequest(plaintext))
+	if !errors.Is(err, auth.ErrInvalid) || gotKey != "key-1" || gotReason != "key suspended" {
+		t.Fatalf("err %v, refused %q %q", err, gotKey, gotReason)
 	}
 }
 

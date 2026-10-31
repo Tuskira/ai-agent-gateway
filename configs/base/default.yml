@@ -100,6 +100,13 @@ llm_proxy:
   #   queue_size: 1024         # turns waiting; more are dropped
   #   queue_bytes: 268435456   # 256 MiB of turns held (bodies; as posted while posting); more are dropped
   #   max_in_flight: 8         # posts at once
+  #   # Inline prevention (off by default): before a generation call is
+  #   # forwarded, ask the agent (per the tenant's engine policy, cached
+  #   # 15s) to judge its request; a blocking rule refuses it with 400.
+  #   # Fails open on any agent error. The agent_url also receives the
+  #   # gateway's events (tool-call outcomes, refused keys) at /v1/events.
+  #   inline: false
+  #   inline_timeout: 10s      # policy lookup + verdict
 
   # Optional path to a JSON file, in the same shape as
   # pkg/pricing/prices.json, that overrides the embedded per-model cost

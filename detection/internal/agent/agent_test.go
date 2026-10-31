@@ -41,10 +41,13 @@ type fakeEngine struct {
 	detectFail bool
 	// newerOnly answers every detect as an engine that does not speak the
 	// agent's wire version.
-	newerOnly   bool
-	result      *wire.Judgment
-	hold        chan struct{}
-	releaseOnce sync.Once
+	newerOnly bool
+	result    *wire.Judgment
+	hold      chan struct{}
+	// events and observations are what reached /v1/events and /v1/observe.
+	events       []wire.Event
+	observations []wire.Observation
+	releaseOnce  sync.Once
 }
 
 func newFakeEngine(t *testing.T) *fakeEngine {
@@ -74,6 +77,16 @@ func (f *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(f.policies[r.URL.Query().Get("tenant_id")])
+	case wire.PathEvents:
+		var b wire.EventBatch
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		f.events = append(f.events, b.Events...)
+		w.WriteHeader(http.StatusAccepted)
+	case wire.PathObserve:
+		var o wire.Observation
+		_ = json.NewDecoder(r.Body).Decode(&o)
+		f.observations = append(f.observations, o)
+		w.WriteHeader(http.StatusAccepted)
 	case wire.PathDetect:
 		raw, _ := io.ReadAll(r.Body)
 		var req wire.DetectRequest
@@ -476,8 +489,9 @@ func postTurn(t *testing.T, url string, tr wire.Turn) int {
 }
 
 // A turn with a response reaches the engine as the request stage, then the
-// response stage, both under the turn's id; the policy is never consulted,
-// even for a tenant whose policy says inline.
+// response stage, both under the turn's id; judging never waits on the
+// policy, even for a tenant whose policy says inline (only the observation
+// worker reads it, off the judgment path, once per TTL).
 func TestTurnsBothStagesInOrder(t *testing.T) {
 	f := newFakeEngine(t)
 	f.policies["t1"] = wire.PolicyResponse{Inline: true, WantResponse: true}
@@ -501,8 +515,8 @@ func TestTurnsBothStagesInOrder(t *testing.T) {
 	f.mu.Lock()
 	gets := f.policyGets
 	f.mu.Unlock()
-	if gets != 0 {
-		t.Errorf("policy fetched %d times; /v1/turns never uses it", gets)
+	if gets > 1 {
+		t.Errorf("policy fetched %d times; only the observation worker reads it, once per TTL", gets)
 	}
 }
 
@@ -1126,6 +1140,10 @@ func TestInlineBounded(t *testing.T) {
 	f.release()
 	<-first
 	waitQueued(t, a, 0)
+	// The slot is released after the verdict is written: wait for it.
+	for i := 0; i < 200 && len(a.inline) != 0; i++ {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if len(a.inline) != 0 {
 		t.Errorf("%d inline slots held after the judgments", len(a.inline))
 	}

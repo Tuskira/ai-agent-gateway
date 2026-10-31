@@ -67,6 +67,7 @@ func TestGatewayContractFixtures(t *testing.T) {
 		Request: []byte(`{"model":"example-model","max_tokens":64,"system":"be brief",` +
 			`"tools":[{"name":"get_time","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hello"}]}`),
 		Dialect: "anthropic", Op: OpGenerate, Conversation: conv,
+		Headers: map[string]string{"user-agent": "claude-cli/2.0.0 (external, cli)", "x-stainless-lang": "js"},
 	}
 	sameJSON("turn_no_response.json", turn)
 	turn.StatusCode = 200
@@ -76,6 +77,7 @@ func TestGatewayContractFixtures(t *testing.T) {
 		{Type: ContentText, Text: "hi"},
 		{Type: ContentToolUse, ID: "toolu_1", Name: "get_time", Input: json.RawMessage(`{}`)},
 	}, StopReason: "tool_use"}
+	turn.ResponseType, turn.RequestJudged = "application/json", true
 	sameJSON("turn.json", turn)
 
 	text := func(s string) []ContentBlock { return []ContentBlock{{Type: ContentText, Text: s}} }

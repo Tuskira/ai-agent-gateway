@@ -71,7 +71,7 @@ jobs:
       # .golangci.yml is the "version: 2" config schema); pinned to the
       # exact golangci-lint release verified locally for this change.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.14.0
 
@@ -133,7 +133,7 @@ jobs:
         run: make notices
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.14.0
           working-directory: detection

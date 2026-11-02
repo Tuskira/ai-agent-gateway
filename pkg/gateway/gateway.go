@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/inflight"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -333,11 +334,16 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
+	// openCalls holds every data-plane request per API key, so key
+	// containment (POST /api-keys/{id}/containment) cuts an agent's open
+	// calls on this process at once.
+	openCalls := inflight.New()
+
 	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, opts.Authenticators, logger)
 	// The MCP and LLM planes refuse an IP locked out for failed auth with a
 	// 429 in their own error format, before any credential lookup.
-	mcpAuthenticator := internalauth.PlaneRateLimitedAuthenticator(authenticator, mcpRateLimiter)
-	llmAuthenticator := internalauth.PlaneRateLimitedAuthenticator(authenticator, llmRateLimiter)
+	mcpAuthenticator := internalauth.PlaneRateLimitedAuthenticator(openCalls.Authenticator(authenticator), mcpRateLimiter)
+	llmAuthenticator := internalauth.PlaneRateLimitedAuthenticator(openCalls.Authenticator(authenticator), llmRateLimiter)
 	authorizer := pkgauth.NewRoleAuthorizer()
 	// cfg.Auth.Roles (config.Auth.Roles' doc comment) is merged over the
 	// built-ins here, after NewRoleAuthorizer seeds admin/agent: a
@@ -497,7 +503,7 @@ func Run(ctx context.Context, opts Options) error {
 				return err
 			}
 			routines = append(routines, httpplane.New(
-				"mcp", cfg.MCP.Address, gwMetrics.Instrument("mcp", metrics.MCPRoute)(mcpPlane.Handler),
+				"mcp", cfg.MCP.Address, gwMetrics.Instrument("mcp", metrics.MCPRoute)(openCalls.Middleware("mcp")(mcpPlane.Handler)),
 				cfg.MCP.ReadTimeout, cfg.MCP.WriteTimeout, defaultIdleTimeout, logger,
 			))
 			routines = append(routines, mcpPlane.Routines...)
@@ -556,6 +562,7 @@ func Run(ctx context.Context, opts Options) error {
 			IngestSink:        sinks.IngestSink,
 			IngestRateLimiter: ingestRateLimiter,
 			DefaultTimeoutMS:  cfg.Connectors.DefaultTimeoutMS,
+			Inflight:          openCalls,
 		}
 		// apiKeyAuthenticator is nil when auth.api_keys.enabled is
 		// false; api.Deps.KeyInvalidator's nil interface is a documented
@@ -661,7 +668,7 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			_ = json.NewEncoder(w).Encode(health)
 		})
-		llmMux.Handle("/", authMiddleware(core))
+		llmMux.Handle("/", openCalls.Middleware("llm")(authMiddleware(core)))
 
 		// Write timeout 0 (unlimited): LLM responses may stream for a long time.
 		routines = append(routines, httpplane.New(

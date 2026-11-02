@@ -12,7 +12,10 @@ import (
 
 type apiKeyStore struct{ db *sql.DB }
 
-var _ store.APIKeyStore = (*apiKeyStore)(nil)
+var (
+	_ store.APIKeyStore     = (*apiKeyStore)(nil)
+	_ store.APIKeyContainer = (*apiKeyStore)(nil)
+)
 
 func (s *apiKeyStore) Create(ctx context.Context, k *store.APIKey) error {
 	const q = `
@@ -30,7 +33,7 @@ func (s *apiKeyStore) Create(ctx context.Context, k *store.APIKey) error {
 
 func (s *apiKeyStore) GetByHash(ctx context.Context, keyHash string) (*store.APIKey, error) {
 	const q = `
-		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id
+		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id, suspended_at, restricted_at, containment_note
 		FROM api_keys WHERE key_hash = $1`
 	k, err := scanAPIKeyRow(s.db.QueryRowContext(ctx, q, keyHash))
 	if err != nil {
@@ -41,7 +44,7 @@ func (s *apiKeyStore) GetByHash(ctx context.Context, keyHash string) (*store.API
 
 func (s *apiKeyStore) GetByID(ctx context.Context, tenantID, id string) (*store.APIKey, error) {
 	const q = `
-		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id
+		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id, suspended_at, restricted_at, containment_note
 		FROM api_keys WHERE tenant_id = $1 AND id = $2`
 	k, err := scanAPIKeyRow(s.db.QueryRowContext(ctx, q, tenantID, id))
 	if err != nil {
@@ -52,7 +55,7 @@ func (s *apiKeyStore) GetByID(ctx context.Context, tenantID, id string) (*store.
 
 func (s *apiKeyStore) List(ctx context.Context, tenantID string) ([]*store.APIKey, error) {
 	const q = `
-		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id
+		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id, suspended_at, restricted_at, containment_note
 		FROM api_keys WHERE tenant_id = $1 ORDER BY created_at`
 	rows, err := s.db.QueryContext(ctx, q, tenantID)
 	if err != nil {
@@ -111,12 +114,44 @@ func (s *apiKeyStore) SetProfile(ctx context.Context, tenantID, id string, profi
 	return execExpectingOneRow(ctx, s.db, q, tenantID, id, profileID)
 }
 
+// SetContainment puts a live (unrevoked) key on a rung of the containment
+// ladder with the reason; ErrNotFound for an unknown or revoked key. A kill
+// also notifies keyRevokedChannel, so every process evicts the key's cached
+// lookup at once (a restriction or a restore waits out the cache TTL on
+// other replicas, as a key's limits do).
+func (s *apiKeyStore) SetContainment(ctx context.Context, tenantID, id string, level store.Containment, note string) error {
+	switch level {
+	case store.ContainmentNormal, store.ContainmentRestricted, store.ContainmentKilled:
+	default:
+		return fmt.Errorf("postgres: unknown containment level %q", level)
+	}
+	const q = `
+		WITH contained AS (
+			UPDATE api_keys SET
+				restricted_at = CASE WHEN $3 = 'restricted' THEN COALESCE(restricted_at, now()) END,
+				suspended_at  = CASE WHEN $3 = 'killed'     THEN COALESCE(suspended_at, now())  END,
+				containment_note = $4
+			WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL
+			RETURNING key_hash
+		)
+		SELECT count(*), count(CASE WHEN $3 = 'killed' THEN pg_notify('` + keyRevokedChannel + `', key_hash) END) FROM contained`
+	var n, notified int
+	if err := s.db.QueryRowContext(ctx, q, tenantID, id, string(level), note).Scan(&n, &notified); err != nil {
+		return mapWriteErr(err)
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func scanAPIKeyRow(row rowScanner) (*store.APIKey, error) {
 	var k store.APIKey
 	var lim []byte
 	if err := row.Scan(
 		&k.ID, &k.TenantID, &k.Name, &k.Role, &k.KeyHash, &k.KeyPrefix,
 		&k.ExpiresAt, &k.RevokedAt, &k.LastUsedAt, &k.CreatedBy, &k.CreatedAt, &lim, &k.ProfileID,
+		&k.SuspendedAt, &k.RestrictedAt, &k.ContainmentNote,
 	); err != nil {
 		return nil, err
 	}

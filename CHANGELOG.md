@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `timeout` (5s) and `cache_ttl` (5m). New migration `000011` adds the
   `credential_sources` table.
 
+### Changed
+
+- **`pkg/store.Store` now requires `CredentialSources()`.** Any outside
+  `Store` driver must implement `store.CredentialSourceStore` (Create, Get,
+  GetByName, List, Update, SoftDelete) and pass the new
+  `CredentialSources` cases in `pkg/store/storetest`. The in-memory store in
+  `internal/dataplane/dptest` is the reference implementation.
+
 ## [0.6.1] - 2026-10-22
 
 ### Added

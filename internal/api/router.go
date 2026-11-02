@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -295,7 +296,12 @@ func NewRouter(deps Deps) http.Handler {
 // generated spec after the full table (including those two routes) is
 // assembled, via Docs's pointer receiver -- see handlers.Docs.
 func buildRoutes(deps Deps) []routeSpec {
+	// known is every permission a route (or a data plane) checks, filled
+	// once the route table is built; GET /auth/me resolves the caller's
+	// against it.
+	var known []string
 	hdeps := handlers.Deps{
+		KnownPermissions:  func() []string { return known },
 		Store:             deps.Store,
 		Secrets:           deps.Secrets,
 		Headers:           deps.Headers,
@@ -512,6 +518,17 @@ func buildRoutes(deps Deps) []routeSpec {
 		// admin's blanket "*") grants (pkg/auth.NewRoleAuthorizer).
 		{Method: http.MethodPost, Pattern: "/ingest", Tag: "ingest", Summary: "Ingest externally captured LLM/access-log records", Permission: "ingest.write", Handler: ingestH.Ingest},
 	}
+
+	seen := map[string]bool{"mcp.access": true, "llm.access": true}
+	for _, rt := range routes {
+		if rt.Permission != "" {
+			seen[rt.Permission] = true
+		}
+	}
+	for p := range seen {
+		known = append(known, p)
+	}
+	sort.Strings(known)
 
 	docs.Spec = buildOpenAPI(routes, deps.ServiceVersion)
 	return routes

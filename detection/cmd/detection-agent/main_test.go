@@ -40,3 +40,18 @@ func TestScanCacheBytes(t *testing.T) {
 		}
 	}
 }
+
+// DETECTION_INBOUND_TOKEN is optional: unset, the agent takes requests
+// without a token; set, it is the token they must carry.
+func TestInboundToken(t *testing.T) {
+	t.Setenv("DETECTION_ENGINE_URL", "https://engine.example.com")
+	t.Setenv("DETECTION_AGENT_TOKEN", "x")
+	t.Setenv("DETECTION_INBOUND_TOKEN", "")
+	if cfg, _, _, err := config(); err != nil || cfg.InboundToken != "" {
+		t.Errorf("unset: %q, %v; want empty", cfg.InboundToken, err)
+	}
+	t.Setenv("DETECTION_INBOUND_TOKEN", "gw-secret")
+	if cfg, _, _, err := config(); err != nil || cfg.InboundToken != "gw-secret" || cfg.Token != "x" {
+		t.Errorf("set: inbound %q engine %q, %v", cfg.InboundToken, cfg.Token, err)
+	}
+}

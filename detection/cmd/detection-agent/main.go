@@ -51,7 +51,7 @@ func run() error {
 	defer stop()
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
-	slog.Info("detection-agent listening", "addr", listen, "engine", cfg.EngineURL)
+	slog.Info("detection-agent listening", "addr", listen, "engine", cfg.EngineURL, "inbound_auth", cfg.InboundToken != "")
 
 	select {
 	case err := <-errc:
@@ -80,6 +80,10 @@ func config() (cfg agent.Config, listen string, level slog.Level, err error) {
 	if cfg.EngineURL == "" || cfg.Token == "" {
 		return cfg, "", level, errors.New("DETECTION_ENGINE_URL and DETECTION_AGENT_TOKEN are required")
 	}
+	// DETECTION_INBOUND_TOKEN (optional): when set, every request to the
+	// agent except GET /healthz must carry it as a bearer token. It is the
+	// gateway's llm_proxy.detection.agent_token.
+	cfg.InboundToken = os.Getenv("DETECTION_INBOUND_TOKEN")
 	// AGENT_LOG_LEVEL: debug, info (the default), warn or error. debug adds
 	// one line per judged turn (ids, stages, counts, bytes, prepare time;
 	// never its text).

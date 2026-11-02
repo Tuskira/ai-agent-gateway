@@ -76,6 +76,11 @@ type Config struct {
 	// (turn.SetScanCacheBytes). The cache is process-wide, so the command
 	// applies it, not New; default turn.DefaultScanCacheBytes (64 MiB).
 	ScanCacheBytes int
+	// InboundToken, when set, is the bearer token every request to the
+	// agent (except GET /healthz) must carry: "Authorization: Bearer
+	// <token>", compared in constant time. Empty: the agent serves its
+	// listener without authentication, as it always has.
+	InboundToken string
 }
 
 // Agent serves the gateway's turns and talks to the engine.
@@ -231,7 +236,8 @@ func New(cfg Config) *Agent {
 	return a
 }
 
-// Handler serves the gateway's turns and /healthz (Health, as JSON).
+// Handler serves the gateway's turns and /healthz (Health, as JSON). With
+// Config.InboundToken set, everything but /healthz needs the bearer token.
 func (a *Agent) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+wire.PathTurns, a.turns)
@@ -242,7 +248,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		answerJSON(w, a.Health())
 	})
-	return mux
+	return a.requireInboundToken(mux)
 }
 
 // Wait judges what is left in the queue, then stops the workers. Call it

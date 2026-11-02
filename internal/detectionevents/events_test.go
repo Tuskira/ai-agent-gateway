@@ -58,3 +58,27 @@ func TestEmitterNeverBlocksAndNilIsNoop(t *testing.T) {
 		t.Fatalf("status %v", st)
 	}
 }
+
+func TestEmitterSendsAgentToken(t *testing.T) {
+	for _, tc := range []struct{ token, want string }{{"s3cret-token", "Bearer s3cret-token"}, {"", ""}} {
+		var mu sync.Mutex
+		var auth []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			auth = append(auth, r.Header.Get("Authorization"))
+			mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		e := New(Config{AgentURL: srv.URL, AgentToken: tc.token, FlushInterval: 10 * time.Millisecond})
+		e.Emit(Event{Kind: KindToolCall, TenantID: "t", Plane: "mcp"})
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		e.Close(ctx)
+		cancel()
+		srv.Close()
+		mu.Lock()
+		if len(auth) != 1 || auth[0] != tc.want {
+			t.Errorf("token %q: Authorization headers = %q, want [%q]", tc.token, auth, tc.want)
+		}
+		mu.Unlock()
+	}
+}

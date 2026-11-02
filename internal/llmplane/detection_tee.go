@@ -34,6 +34,7 @@ import (
 //	POST {agent}/v1/turns   teeTurn -> 202
 type DetectionTee struct {
 	url      string
+	token    string // bearer token for the agent; "" sends none
 	timeout  time.Duration
 	client   *http.Client
 	queue    chan *teeTurn
@@ -64,6 +65,7 @@ type DetectionTee struct {
 // <= 0 takes the config default.
 type DetectionTeeConfig struct {
 	AgentURL    string
+	AgentToken  string        // sent as "Authorization: Bearer <token>" when set
 	Timeout     time.Duration // one post; default 5s
 	QueueSize   int           // turns waiting; default 1024
 	QueueBytes  int64         // bytes held, waiting or being posted; default 256 MiB
@@ -162,6 +164,7 @@ func NewDetectionTee(cfg DetectionTeeConfig) *DetectionTee {
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &DetectionTee{
 		url:     strings.TrimRight(cfg.AgentURL, "/"),
+		token:   cfg.AgentToken,
 		timeout: cfg.Timeout,
 		client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -410,6 +413,7 @@ func (d *DetectionTee) post(t *teeTurn) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	d.authorize(req)
 	resp, err := d.client.Do(req)
 	if err != nil {
 		if d.ctx.Err() != nil {
@@ -425,6 +429,14 @@ func (d *DetectionTee) post(t *teeTurn) {
 		return
 	}
 	d.sent.Add(1)
+}
+
+// authorize adds the agent bearer token (llm_proxy.detection.agent_token) to
+// a request to the agent, when one is configured.
+func (d *DetectionTee) authorize(req *http.Request) {
+	if d.token != "" {
+		req.Header.Set("Authorization", "Bearer "+d.token)
+	}
 }
 
 func (d *DetectionTee) drop(id, reason string) {

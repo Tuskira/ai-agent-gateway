@@ -339,7 +339,7 @@ func Run(ctx context.Context, opts Options) error {
 	// and refused keys go to the detection agent, off the request path.
 	var events *detectionevents.Emitter
 	if d := cfg.LLMProxy.Detection; d.AgentURL != "" {
-		events = detectionevents.New(detectionevents.Config{AgentURL: d.AgentURL, Timeout: d.Timeout})
+		events = detectionevents.New(detectionevents.Config{AgentURL: d.AgentURL, AgentToken: d.AgentToken, Timeout: d.Timeout})
 		defer func() {
 			ctx, cancel := context.WithTimeout(context.Background(), detectionDrainTimeout)
 			defer cancel()
@@ -650,7 +650,7 @@ func Run(ctx context.Context, opts Options) error {
 		llmCfg.Registry = modelRegistry
 		if d := cfg.LLMProxy.Detection; d.AgentURL != "" {
 			tee := llmplane.NewDetectionTee(llmplane.DetectionTeeConfig{
-				AgentURL: d.AgentURL, Timeout: d.Timeout, QueueSize: d.QueueSize,
+				AgentURL: d.AgentURL, AgentToken: d.AgentToken, Timeout: d.Timeout, QueueSize: d.QueueSize,
 				QueueBytes: d.QueueBytes, MaxInFlight: d.MaxInFlight,
 				Inline: d.Inline, InlineTimeout: d.InlineTimeout,
 			})

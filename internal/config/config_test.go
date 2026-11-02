@@ -315,13 +315,14 @@ func TestLoad_EnvOverlay_Detection(t *testing.T) {
 	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_QUEUE_SIZE", "16")
 	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_QUEUE_BYTES", "1048576")
 	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_MAX_IN_FLIGHT", "3")
+	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_AGENT_TOKEN", "s3cret-token")
 
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if d := cfg.LLMProxy.Detection; d.AgentURL != "http://127.0.0.1:8090" || d.Timeout != 2*time.Second ||
-		d.QueueSize != 16 || d.QueueBytes != 1<<20 || d.MaxInFlight != 3 {
+		d.QueueSize != 16 || d.QueueBytes != 1<<20 || d.MaxInFlight != 3 || d.AgentToken != "s3cret-token" {
 		t.Errorf("Detection = %+v", d)
 	}
 }
@@ -333,6 +334,27 @@ func TestValidate_DetectionAgentURLNotEchoed(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "agent_url") || strings.Contains(err.Error(), "s3cret") {
 		t.Errorf("Validate() = %v; want an error that does not echo the URL", err)
+	}
+}
+
+// agent_token is empty by default (no Authorization header), and a value
+// that cannot be a bearer token is refused without echoing it.
+func TestValidate_DetectionAgentToken(t *testing.T) {
+	if tok := Default().LLMProxy.Detection.AgentToken; tok != "" {
+		t.Errorf("default agent_token = %q, want empty", tok)
+	}
+	cfg := Default()
+	cfg.LLMProxy.Detection.AgentURL = "http://127.0.0.1:8090"
+	cfg.LLMProxy.Detection.AgentToken = "abc.DEF-123_~+/="
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v for a plain token", err)
+	}
+	for _, bad := range []string{"has space", "line\nbreak", "tab\there", "caf\u00e9"} {
+		cfg.LLMProxy.Detection.AgentToken = bad
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "agent_token") || strings.Contains(err.Error(), bad) {
+			t.Errorf("token %q: Validate() = %v; want an agent_token error that does not echo it", bad, err)
+		}
 	}
 }
 

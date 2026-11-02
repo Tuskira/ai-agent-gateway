@@ -539,6 +539,11 @@ type LLMDetection struct {
 	// AgentURL is the agent's base URL (e.g. http://127.0.0.1:8090).
 	// Empty (the default) turns detection off.
 	AgentURL string `yaml:"agent_url"`
+	// AgentToken, when set, is sent to the agent on every request as
+	// "Authorization: Bearer <token>" (turns, events, policy and inline
+	// verdicts). The agent checks it against its DETECTION_INBOUND_TOKEN.
+	// Empty (the default): no Authorization header is sent. Never logged.
+	AgentToken string `yaml:"agent_token"`
 	// Timeout bounds one post of a turn to the agent.
 	Timeout time.Duration `yaml:"timeout"`
 	// QueueSize caps turns waiting to be posted; past it a turn is dropped.
@@ -1275,6 +1280,9 @@ func (c *Config) Validate() error {
 		if err := validateAgentURL(d.AgentURL); err != nil {
 			return fmt.Errorf("llm_proxy.detection: invalid agent_url: %w", err)
 		}
+		if !validBearerToken(d.AgentToken) {
+			return fmt.Errorf("llm_proxy.detection: agent_token must be printable ASCII without spaces")
+		}
 		if d.Timeout <= 0 {
 			return fmt.Errorf("llm_proxy.detection: timeout must be > 0, got %s", d.Timeout)
 		}
@@ -1759,6 +1767,18 @@ func validateAgentURL(raw string) error {
 		return fmt.Errorf("must not carry userinfo (user:password@)")
 	}
 	return nil
+}
+
+// validBearerToken reports whether t can be sent as an Authorization bearer
+// value: empty (no token), or printable ASCII with no space. The value is
+// never echoed.
+func validBearerToken(t string) bool {
+	for i := 0; i < len(t); i++ {
+		if t[i] <= ' ' || t[i] > '~' {
+			return false
+		}
+	}
+	return true
 }
 
 // isLoopbackAddr reports whether a listen address ("host:port") binds only

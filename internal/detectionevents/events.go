@@ -75,9 +75,10 @@ type batch struct {
 
 // Config tunes an Emitter; a field <= 0 takes its default.
 type Config struct {
-	AgentURL  string
-	Timeout   time.Duration // one post; default 5s
-	QueueSize int           // events waiting; default 4096
+	AgentURL   string
+	AgentToken string        // sent as "Authorization: Bearer <token>" when set
+	Timeout    time.Duration // one post; default 5s
+	QueueSize  int           // events waiting; default 4096
 	// FlushInterval is how long a partial batch waits for more events;
 	// default 200ms.
 	FlushInterval time.Duration
@@ -87,6 +88,7 @@ type Config struct {
 // valid no-op, so callers need no nil checks.
 type Emitter struct {
 	url     string
+	token   string
 	timeout time.Duration
 	flush   time.Duration
 	client  *http.Client
@@ -120,6 +122,7 @@ func New(cfg Config) *Emitter {
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Emitter{
 		url:     strings.TrimRight(cfg.AgentURL, "/"),
+		token:   cfg.AgentToken,
 		timeout: cfg.Timeout,
 		flush:   cfg.FlushInterval,
 		client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -207,6 +210,9 @@ func (e *Emitter) post(evs []Event) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if e.token != "" {
+		req.Header.Set("Authorization", "Bearer "+e.token)
+	}
 	resp, err := e.client.Do(req)
 	if err != nil {
 		e.fail(len(evs), err)

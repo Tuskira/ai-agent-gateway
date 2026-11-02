@@ -296,6 +296,13 @@ llm_proxy:
     agent_url: http://127.0.0.1:8090
 ```
 
+To require a token from callers, start the agent with
+`DETECTION_INBOUND_TOKEN` and give the gateway the same value in
+`GATEWAY_LLM_PROXY_DETECTION_AGENT_TOKEN` (`llm_proxy.detection.agent_token`).
+The gateway then sends `Authorization: Bearer <token>` on every request to the
+agent; the agent answers `401` to a request without the matching token.
+`GET /healthz` stays open. Both unset (the default) is no authentication.
+
 ### Kubernetes sidecar
 
 `deploy/k8s/components/detection-agent` is an **example** kustomize
@@ -337,6 +344,7 @@ is not positive, fails startup.
 |---|---|---|
 | `DETECTION_ENGINE_URL` | required | Base URL of the engine (`/v1/policy` and `/v1/detect` are appended; a trailing `/` is ignored). Use `https`. |
 | `DETECTION_AGENT_TOKEN` | required | Bearer token sent to the engine on every call. |
+| `DETECTION_INBOUND_TOKEN` | unset (no authentication) | Optional bearer token the agent requires on every request to it except `GET /healthz`: `Authorization: Bearer <token>`, compared in constant time; any other request is refused with `401` before it reaches a handler. Set the gateway's `llm_proxy.detection.agent_token` to the same value. |
 | `AGENT_LISTEN` | `127.0.0.1:8090` | Address the agent serves the gateway on. |
 | `AGENT_MAX_IN_FLIGHT` | `256` | Background judgments running at once (also the engine connection pool size). |
 | `AGENT_QUEUE_SIZE` | `1024` | Background turns waiting for a worker. |
@@ -569,9 +577,14 @@ the batch's order, from one worker.
 
 ## Security notes
 
-- **The agent's port has no authentication.** Anyone who can reach it can
-  submit turns, fill the queue and spend your engine
-  quota. It listens on `127.0.0.1:8090` by default; keep it
+- **The agent's port has no authentication unless you set one.** Anyone who
+  can reach it can submit turns, fill the queue and spend your engine
+  quota. Set `DETECTION_INBOUND_TOKEN` (and the gateway's
+  `llm_proxy.detection.agent_token` to match) to require a bearer token on
+  every request except `GET /healthz`; use it whenever the agent is
+  reachable by anything besides the gateway (a shared host, a pod network,
+  another listen address), and over `https` or a loopback or pod-local
+  connection only, since the token travels in a header. It listens on `127.0.0.1:8090` by default; keep it
   on loopback or pod-local. A sidecar in the same pod, or a process on the
   same host, reaches it there with no other configuration. Do not publish
   the port or bind it to a wider address.

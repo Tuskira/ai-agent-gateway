@@ -350,8 +350,9 @@ Any 2xx answer counts as success; the body is not read for values.
   tenant's source does not resolve.
 - A disabled source, or one of a different provider, does not resolve.
 - Each call is bounded by `secret_store.external_service.timeout` and dials
-  through the same egress guard as connector endpoints, with redirects
-  capped.
+  through the same egress guard as connector endpoints. Redirects are
+  capped, and every hop must pass the same URL rule as the source, so a
+  service cannot redirect the call to plain `http`.
 - Values are cached per tenant, keyed by source, `credential_id` and
   `field`, for `min(ttl_seconds, secret_store.external_service.cache_ttl)`.
   A `ttl_seconds` of 0 or less means the `cache_ttl`.

@@ -3,8 +3,10 @@ package secrets
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -337,5 +339,82 @@ func TestExternalService_TestSource(t *testing.T) {
 	rs.mu.Unlock()
 	if err := p.TestSource(context.Background(), src); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("TestSource with a rejected token = %v, want HTTP 401", err)
+	}
+}
+
+// redirectFixture runs the provider against an https credential service
+// on loopback, reached as "localhost", under a policy that allowlists only
+// that hostname. Plain http to 127.0.0.1 is therefore refused, while
+// https to localhost is allowed.
+func redirectFixture(t *testing.T, first http.HandlerFunc) (*ExternalServiceProvider, *headers.Source) {
+	t.Helper()
+	policy, err := netguard.NewPolicy(nil, []string{"localhost"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := netguard.Current()
+	netguard.SetPolicy(policy)
+	t.Cleanup(func() { netguard.SetPolicy(prev) })
+
+	srv := httptest.NewTLSServer(first)
+	t.Cleanup(srv.Close)
+
+	svc, _ := newTestService(t)
+	if _, err := svc.Create(context.Background(), "tenant-a", "vault-auth", "generic", map[string]string{"token": "gw-token"}, "u"); err != nil {
+		t.Fatal(err)
+	}
+	p := NewExternalServiceProvider(svc.Fetcher(), 2*time.Second, time.Minute)
+	// Trust httptest's certificate (issued for example.com and 127.0.0.1).
+	tr := p.client.Transport.(*http.Transport)
+	tr.TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	tr.TLSClientConfig.ServerName = "example.com"
+
+	src := &headers.Source{
+		ID: "src-1", TenantID: "tenant-a", Name: "vault-a", Provider: ExternalServiceProviderID, Enabled: true,
+		Config: map[string]any{"url": "https://localhost:" + strconv.Itoa(srv.Listener.Addr().(*net.TCPAddr).Port), "auth_credential": "vault-auth"},
+	}
+	return p, src
+}
+
+func TestExternalService_RedirectToPlainHTTPIsRefused(t *testing.T) {
+	var reached atomic.Bool
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Store(true)
+		_ = json.NewEncoder(w).Encode(map[string]any{"value": "leaked"})
+	}))
+	t.Cleanup(plain.Close)
+
+	p, src := redirectFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	})
+	_, err := p.Resolve(resolveCtx("tenant-a", src), map[string]any{"credential_id": "c", "field": "f"})
+	if err == nil || !strings.Contains(err.Error(), "refusing redirect") || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("Resolve = %v, want a refused redirect requiring https", err)
+	}
+	if reached.Load() {
+		t.Error("the plain-http redirect target was contacted")
+	}
+}
+
+func TestExternalService_RedirectHTTPSToHTTPSIsFollowed(t *testing.T) {
+	second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/credentials/resolve" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"value": "moved-value"})
+	}))
+	t.Cleanup(second.Close)
+	target := "https://localhost:" + strconv.Itoa(second.Listener.Addr().(*net.TCPAddr).Port)
+
+	p, src := redirectFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target+r.URL.Path, http.StatusTemporaryRedirect)
+	})
+	v, err := p.Resolve(resolveCtx("tenant-a", src), map[string]any{"credential_id": "c", "field": "f"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if v != "moved-value" {
+		t.Errorf("Resolve = %q, want moved-value", v)
 	}
 }

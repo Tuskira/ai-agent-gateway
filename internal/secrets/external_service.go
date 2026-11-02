@@ -86,7 +86,7 @@ func NewExternalServiceProvider(fetch headers.CredentialFetcher, timeout, cacheT
 		fetch: fetch,
 		client: &http.Client{
 			Timeout:       timeout,
-			CheckRedirect: netguard.LimitRedirects,
+			CheckRedirect: checkServiceRedirect,
 			Transport:     netguard.Transport(),
 		},
 		timeout:  timeout,
@@ -406,29 +406,50 @@ func validateServiceURL(raw string) (*url.URL, error) {
 	if err != nil {
 		return nil, errors.New("\"url\" is not a valid URL")
 	}
-	if u.Host == "" || u.Hostname() == "" {
-		return nil, errors.New("\"url\" must include a host")
-	}
-	if u.User != nil {
-		return nil, errors.New("\"url\" must not carry credentials")
-	}
 	if u.RawQuery != "" || u.Fragment != "" {
 		return nil, errors.New("\"url\" must not have a query or fragment")
+	}
+	if err := checkServiceTarget(u); err != nil {
+		return nil, fmt.Errorf("\"url\" %w", err)
+	}
+	return u, nil
+}
+
+// checkServiceTarget applies the scheme, host and credential rules of
+// validateServiceURL to u. It also guards every redirect hop, so a
+// service cannot send the request (and the secret in its answer) to a
+// plain-http or otherwise refused target.
+func checkServiceTarget(u *url.URL) error {
+	if u.Host == "" || u.Hostname() == "" {
+		return errors.New("must include a host")
+	}
+	if u.User != nil {
+		return errors.New("must not carry credentials")
 	}
 	host := u.Hostname()
 	switch u.Scheme {
 	case "https":
 		if err := netguard.CheckHost(host); err != nil {
-			return nil, fmt.Errorf("\"url\": %w", err)
+			return fmt.Errorf("is refused: %w", err)
 		}
 	case "http":
 		if !plainHTTPAllowed(host) {
-			return nil, errors.New("\"url\" must use https (http is accepted only for a loopback or private address the egress policy allows)")
+			return errors.New("must use https (http is accepted only for a loopback or private address the egress policy allows)")
 		}
 	default:
-		return nil, errors.New("\"url\" must use https")
+		return errors.New("must use https")
 	}
-	return u, nil
+	return nil
+}
+
+// checkServiceRedirect refuses a redirect whose target fails the same
+// rules as a source URL, then caps the chain like every other guarded
+// client.
+func checkServiceRedirect(req *http.Request, via []*http.Request) error {
+	if err := checkServiceTarget(req.URL); err != nil {
+		return fmt.Errorf("refusing redirect to %s://%s: target %w", req.URL.Scheme, req.URL.Host, err)
+	}
+	return netguard.LimitRedirects(req, via)
 }
 
 func plainHTTPAllowed(host string) bool {

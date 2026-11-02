@@ -1,0 +1,14 @@
+/* Self-hosted Inter/JetBrains Mono (see src/styles/tokens.css --font-ui /
+   --font-mono / --font-display), replacing the fonts.googleapis.com /
+   fonts.gstatic.com <link> tags index.html used to carry -- the console
+   makes no request to a Google host. Only the weights the console uses:
+   Inter 400/500/600/700, JetBrains Mono 400/500/600. Each package's own
+   OFL-1.1-licensed font files and LICENSE are picked up by
+   rollup-plugin-license into dist/licenses.txt (see vite.config.ts). */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/600.css';

@@ -90,7 +90,7 @@ export interface AddCatalogResult {
   }
 }
 
-interface Page<T> {
+export interface Page<T> {
   items: T[]
   total: number
 }

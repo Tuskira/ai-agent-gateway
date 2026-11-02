@@ -8,6 +8,31 @@ import type { ApiErrorBody } from '@/lib/types'
  */
 export const API_BASE = '/api/v1'
 
+/** Host-supplied overrides for embedding the console as a library. */
+export interface GatewayConfig {
+  /** Base path for gateway API calls. Default `/api/v1`. */
+  apiBase?: string
+  /** Called after a 401 clears the session. Default: navigate to `/login`. */
+  onUnauthenticated?: () => void
+  /** Absolute MCP endpoint URL shown in connector snippets. Default: guessed from the page origin. */
+  mcpBase?: string
+}
+
+let gatewayConfig: GatewayConfig = {}
+
+/** Sets the embedding options. Call once before rendering; later calls replace earlier ones. */
+export function configureGateway(config: GatewayConfig): void {
+  gatewayConfig = { ...config }
+}
+
+export function getApiBase(): string {
+  return gatewayConfig.apiBase ?? API_BASE
+}
+
+export function getConfiguredMcpBase(): string | undefined {
+  return gatewayConfig.mcpBase
+}
+
 export const API_KEY_STORAGE_KEY = 'gateway.api_key'
 
 /** Thrown for any non-2xx API response. */
@@ -190,7 +215,7 @@ export async function apiFetch<T>(
   const acting =
     actingTenantId !== null && !isSelfServicePath(path) ? actingTenantId : null
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${getApiBase()}${path}`, {
     credentials: 'same-origin',
     ...rest,
     headers: {
@@ -206,7 +231,9 @@ export async function apiFetch<T>(
     clearStoredApiKey()
     csrfToken = null
     actingTenantId = null
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    if (gatewayConfig.onUnauthenticated) {
+      gatewayConfig.onUnauthenticated()
+    } else if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
       window.location.assign('/login')
     }
   }

@@ -3,7 +3,7 @@ import { apiFetch } from '@/lib/api'
 /** Data contract for the Credentials page. Values are write-only — the API
  * never echoes them back, only field names and metadata. */
 
-interface Page<T> {
+export interface Page<T> {
   items: T[]
   total: number
 }

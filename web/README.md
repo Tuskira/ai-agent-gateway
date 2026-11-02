@@ -36,6 +36,54 @@ bundle at `/` on :8081, so the app talks to the API same-origin — no proxy nee
 make ui-build   # from the repo root
 ```
 
+## Using the console as a library
+
+The console is also published to npm as `@tuskira/gateway-web`, so you can mount its pages
+inside your own React app. React, React DOM, React Router (`react-router-dom` 7) and
+TanStack Query 5 are peer dependencies; everything else installs with the package.
+
+```sh
+npm install @tuskira/gateway-web react react-dom react-router-dom @tanstack/react-query
+```
+
+```tsx
+import {
+  AppShell, AuthProvider, RequireAuth, LoginPage, Toaster, TooltipProvider,
+  configureGateway, gatewayPageRoutes,
+} from '@tuskira/gateway-web'
+import '@tuskira/gateway-web/style.css' // Tailwind output + design tokens
+import '@tuskira/gateway-web/fonts.css' // optional: self-hosted Inter / JetBrains Mono
+
+configureGateway({
+  apiBase: '/gw/api/v1',                  // default '/api/v1'
+  mcpBase: 'https://gw.example.com/mcp',  // default: guessed from the page origin
+  onUnauthenticated: () => router.navigate('/login'), // default: window.location.assign('/login')
+})
+
+const router = createBrowserRouter(
+  [
+    { path: '/login', element: <LoginPage /> },
+    { element: <RequireAuth />, children: [{ element: <AppShell />, children: gatewayPageRoutes() }] },
+  ],
+  { basename: '/gateway' },
+)
+```
+
+Wrap the router in `QueryClientProvider`, `AuthProvider` and `TooltipProvider`, and render
+`<Toaster />` once, as `src/App.tsx` does. `gatewayRoutes()` returns the complete tree
+(login, docs, change-password, shell and the catch-all redirect) if you want the console
+to own the whole router. Only what `@tuskira/gateway-web` exports is supported; do not
+import from `src/`.
+
+The browser must reach the gateway API on the path you set as `apiBase`. When the host app
+serves the console, add a reverse-proxy rule that forwards `/api/v1/*` (or your `apiBase`
+path, rewritten back to `/api/v1`) to the gateway on port 8081. Keep the path, all request
+and response headers (`Authorization`, `X-CSRF-Token`, `X-Gateway-Acting-Tenant`) and
+cookies unchanged, or sign-in and CSRF checks will fail.
+
+Build the package with `npm run build:lib`, which writes `dist-lib/` (`index.js`, `types/`,
+`style.css`, `fonts.css`). The release workflow publishes it to npm on every `v*` tag.
+
 ## Quality checks
 
 ```sh

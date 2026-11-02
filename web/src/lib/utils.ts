@@ -1,3 +1,4 @@
+import { getConfiguredMcpBase } from '@/lib/api'
 export { cn } from 'cn'
 
 /** "Jan 5, 2026" — shared date formatting for admin-console tables. Returns
@@ -52,6 +53,8 @@ export function shortId(id: string, headLen = 8, tailLen = 6): string {
  * In production (single gateway binary) both are same-origin and this is a
  * no-op replace. */
 export function getMcpUrl(): string {
+  const configured = getConfiguredMcpBase()
+  if (configured) return configured
   if (typeof window === 'undefined') return '/mcp'
   return `${window.location.origin.replace(':8081', ':8080')}/mcp`
 }

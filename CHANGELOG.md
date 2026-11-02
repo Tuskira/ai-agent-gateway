@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Console as an npm library.** The React console is published as
+  `@tuskira/gateway-web` on every release tag: page components, routes
+  (`gatewayRoutes`, `gatewayPageRoutes`), auth, data hooks and UI components,
+  plus `style.css` and an optional `fonts.css`. `configureGateway` sets the API
+  base, the MCP URL and the sign-out handler for hosts that embed it. The
+  embedded console is unchanged.
+
 ## [0.6.1] - 2026-10-22
 
 ### Added

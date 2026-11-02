@@ -6,7 +6,7 @@ import { apiFetch, ApiError } from '@/lib/api'
  * `/connectors` family of endpoints.
  */
 
-interface Page<T> {
+export interface Page<T> {
   items: T[]
   total: number
 }

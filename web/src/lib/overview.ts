@@ -58,7 +58,7 @@ export function periodFromParams(params: URLSearchParams, def: TimeRange): Perio
   return { range }
 }
 
-interface Page<T> {
+export interface Page<T> {
   items: T[]
   total: number
 }

@@ -64,3 +64,43 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publishes the console as the npm library @tuskira/gateway-web. Needs an
+  # NPM_TOKEN repository secret; without it the build still runs and the
+  # publish step is skipped so tagged releases do not fail.
+  npm-publish:
+    name: publish console to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: build library
+        working-directory: web
+        run: |
+          npm ci
+          npm run build:lib
+
+      - name: set version from tag
+        working-directory: web
+        env:
+          TAG: ${{ github.ref_name }}
+        run: npm version --no-git-tag-version "${TAG#v}"
+
+      - name: publish
+        if: env.NPM_TOKEN != ''
+        working-directory: web
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: npm publish --access public --provenance

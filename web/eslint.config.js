@@ -7,7 +7,7 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config([
   {
-    ignores: ['dist', 'coverage', 'node_modules'],
+    ignores: ['dist', 'dist-lib', 'coverage', 'node_modules'],
   },
   {
     extends: [

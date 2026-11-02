@@ -53,6 +53,11 @@ type DetectionTee struct {
 
 	sent, dropped, failed atomic.Uint64
 	dropLog, failLog      rateLog
+
+	// inline is set when requests may be judged before forwarding
+	// (DetectionTeeConfig.Inline); nil = detection only.
+	inline       *inlineJudge
+	inlineFailed atomic.Uint64
 }
 
 // DetectionTeeConfig is the resolved llm_proxy.detection block. A field
@@ -63,6 +68,11 @@ type DetectionTeeConfig struct {
 	QueueSize   int           // turns waiting; default 1024
 	QueueBytes  int64         // bytes held, waiting or being posted; default 256 MiB
 	MaxInFlight int           // concurrent posts; default 8
+	// Inline lets the tenant's engine policy have a generation call's
+	// request judged by the agent before it is forwarded (fail open);
+	// InlineTimeout bounds the policy lookup plus the verdict (default 10s).
+	Inline        bool
+	InlineTimeout time.Duration
 }
 
 // teeVersion is the turn's "v": bumped on a breaking contract change.
@@ -106,6 +116,15 @@ type teeTurn struct {
 	Answer         *teeAnswer       `json:"answer,omitempty"`
 	NormalizeError string           `json:"normalize_error,omitempty"`
 	Items          []teeTurnItem    `json:"items,omitempty"`
+
+	// Headers are the client's request headers named in teeHeaders (lower-
+	// case names): what runtime made the call, never a credential.
+	// ResponseType is the Content-Type the client got. RequestJudged is set
+	// when the request stage was judged inline before forwarding, so the
+	// agent judges only the response stage.
+	Headers       map[string]string `json:"headers,omitempty"`
+	ResponseType  string            `json:"response_type,omitempty"`
+	RequestJudged bool              `json:"request_judged,omitempty"`
 
 	// respType is the Content-Type the client got, and respCut whether the
 	// response copy stopped at teeResponseBytes: how to read Response.
@@ -152,6 +171,12 @@ func NewDetectionTee(cfg DetectionTeeConfig) *DetectionTee {
 		ctx:      ctx,
 		cancel:   cancel,
 	}
+	if cfg.Inline {
+		if cfg.InlineTimeout <= 0 {
+			cfg.InlineTimeout = 10 * time.Second
+		}
+		d.inline = &inlineJudge{timeout: cfg.InlineTimeout, now: time.Now, policies: map[string]cachedPolicy{}}
+	}
 	d.wg.Add(cfg.MaxInFlight)
 	for range cfg.MaxInFlight {
 		go d.run()
@@ -166,13 +191,37 @@ func teed(route RouteInfo) bool {
 	return route.Op == routeGenerate || route.Op == routeBatch
 }
 
+// teeHeaders are the request headers a turn carries (wire.ObservedHeaders
+// in the detection module): the client's identity -- user agent, SDK, OS --
+// and nothing that carries a credential.
+var teeHeaders = []string{
+	"user-agent", "x-app", "anthropic-version", "anthropic-beta",
+	"x-stainless-lang", "x-stainless-os", "x-stainless-arch", "x-stainless-runtime",
+	"x-stainless-runtime-version", "x-stainless-package-version",
+	"x-claude-code-session-id", "x-agent-profile-name",
+}
+
+// observedHeaders is h's teeHeaders that are set; nil when none is.
+func observedHeaders(h http.Header) map[string]string {
+	var out map[string]string
+	for _, name := range teeHeaders {
+		if v := h.Get(name); v != "" {
+			if out == nil {
+				out = make(map[string]string, len(teeHeaders))
+			}
+			out[name] = v
+		}
+	}
+	return out
+}
+
 // teeTurnOf is the turn for a call, without its response.
 func teeTurnOf(r *http.Request, info callInfo, route RouteInfo, start time.Time, status int, reqBody []byte) *teeTurn {
 	ctx := r.Context()
 	return &teeTurn{
 		V: teeVersion, ID: requestIDOf(ctx), TenantID: tenantOf(ctx), SessionID: sessionOf(ctx), KeyID: keyIDOf(ctx),
 		Principal: principalOf(ctx), Model: info.requestedModel, Path: r.URL.Path, At: start, StatusCode: status,
-		Request: reqBody, Dialect: route.Reader, Op: route.Op,
+		Request: reqBody, Dialect: route.Reader, Op: route.Op, Headers: observedHeaders(r.Header),
 	}
 }
 
@@ -424,10 +473,14 @@ func (d *DetectionTee) Close(ctx context.Context) {
 // Status is the tee's /health entry: turns posted, dropped (queue full,
 // shutdown) and failed (agent error or non-202), and what is waiting now.
 func (d *DetectionTee) Status() map[string]any {
-	return map[string]any{
+	st := map[string]any{
 		"enabled": true, "sent": d.sent.Load(), "dropped": d.dropped.Load(), "failed": d.failed.Load(),
 		"queued": len(d.queue), "held_bytes": d.held.Load(),
 	}
+	if d.inline != nil {
+		st["inline"] = map[string]any{"enabled": true, "failed": d.inlineFailed.Load()}
+	}
+	return st
 }
 
 // Sent is how many turns were posted to the detection agent and accepted,

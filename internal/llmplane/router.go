@@ -169,6 +169,23 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Inline prevention (llm_proxy.detection.inline): when the tenant's
+	// engine policy judges requests before forwarding, the agent rules on
+	// the request now; a blocking rule refuses the call (captured like a
+	// denial). Fails open. No round trip unless inline is configured.
+	endpoint := routeOf(p, r.Method, upstreamPath)
+	judgedInline := false
+	if rt.tee != nil && teed(endpoint) {
+		var block *teeRuleBlock
+		judgedInline, block = rt.inlineCheck(r, endpoint, info, start, body)
+		if block != nil {
+			info.fallbackIndex = -1 // no target was tried
+			rt.emitError(r, info, body, start, ruleBlockStatus, "rule_blocked: "+block.RuleID)
+			writeAnthropicError(w, ruleBlockStatus, reqID, blockedMessage(block))
+			return
+		}
+	}
+
 	// One builder per attempt: the passthrough alone on a miss, else the
 	// route's targets. Building is deferred so a credential is fetched only
 	// for a target that is actually tried.
@@ -311,7 +328,6 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dst, cap := captureTargets(rt.storeBodies, rt.maxCaptureResp, toClient, uHead, uTail)
 	// The detection tee gets a bounded copy of what the client received,
 	// independent of body storage.
-	endpoint := routeOf(p, r.Method, upstreamPath)
 	tee := rt.tee != nil && teed(endpoint)
 	var teeCap *boundedCap
 	if tee && resp.StatusCode/100 == 2 {
@@ -357,7 +373,9 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		t := teeTurnOf(r, info, endpoint, start, resp.StatusCode, body)
 		if teeCap != nil && relayErr == "" {
 			t.Response, t.respType, t.respCut = teeCap.Bytes(), resp.Header.Get("Content-Type"), teeCap.Truncated
+			t.ResponseType = t.respType
 		}
+		t.RequestJudged = judgedInline
 		rt.tee.offer(t)
 	}
 }

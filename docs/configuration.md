@@ -93,6 +93,8 @@ Duration values use Go's duration syntax (`30s`, `5m`, `1h`).
 | `llm_proxy.detection.queue_size` | int | `1024` | `GATEWAY_LLM_PROXY_DETECTION_QUEUE_SIZE` | Turns waiting to be posted. Past it a turn is dropped and counted (`/health` `detection.dropped`). |
 | `llm_proxy.detection.queue_bytes` | int | `268435456` (256 MiB) | `GATEWAY_LLM_PROXY_DETECTION_QUEUE_BYTES` | Bytes held by turns waiting (their request and response bodies) or being posted (the turn as posted: raw bodies and canonical conversation). Past it a turn is dropped and counted. |
 | `llm_proxy.detection.max_in_flight` | int | `8` | `GATEWAY_LLM_PROXY_DETECTION_MAX_IN_FLIGHT` | Turns being posted at once. |
+| `llm_proxy.detection.inline` | bool | `false` | `GATEWAY_LLM_PROXY_DETECTION_INLINE` | [Inline prevention](llm-plane.md#inline-prevention): before a generation call is forwarded, ask the agent (per the tenant's engine policy, cached 15s) to judge its request; a blocking rule refuses the call with `400`. Fails open on any agent error. Off: nothing on the request path talks to the agent. |
+| `llm_proxy.detection.inline_timeout` | duration | `10s` | `GATEWAY_LLM_PROXY_DETECTION_INLINE_TIMEOUT` | Bound on one inline judgment (policy lookup plus verdict); past it the call goes through. |
 
 ## database (required)
 

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -107,6 +108,8 @@ type Agent struct {
 	stats stats
 	// prepareRequest prepares an inline request (a test replaces it).
 	prepareRequest func(context.Context, []byte) turn.PreparedTurn
+	// side forwards the gateway's events and the tenant's observations.
+	side *sideband
 }
 
 // stats are the agent's counts since it started, served on /healthz:
@@ -128,12 +131,21 @@ type Health struct {
 	DroppedEngineDown int64  `json:"dropped_engine_down"`
 	DroppedQueueFull  int64  `json:"dropped_queue_full"`
 	NotJudgedSent     int64  `json:"not_judged_sent"`
+	// Events forwarded to the engine and dropped (queue full, engine
+	// failure); observations sent and dropped (queue full, a redaction
+	// that did not finish, engine failure).
+	EventsSent     int64 `json:"events_sent"`
+	EventsDropped  int64 `json:"events_dropped"`
+	ObserveSent    int64 `json:"observe_sent"`
+	ObserveDropped int64 `json:"observe_dropped"`
 }
 
 // Health is the agent's counts as /healthz serves them.
 func (a *Agent) Health() Health {
 	return Health{Status: "ok", Judged: a.stats.judged.Load(), DroppedEngineDown: a.stats.droppedEngineDown.Load(),
-		DroppedQueueFull: a.stats.droppedQueueFull.Load(), NotJudgedSent: a.stats.notJudgedSent.Load()}
+		DroppedQueueFull: a.stats.droppedQueueFull.Load(), NotJudgedSent: a.stats.notJudgedSent.Load(),
+		EventsSent: a.side.eventsSent.Load(), EventsDropped: a.side.eventsDropped.Load(),
+		ObserveSent: a.side.observeSent.Load(), ObserveDropped: a.side.observeDropped.Load()}
 }
 
 // sent counts a turn the engine accepted.
@@ -208,6 +220,7 @@ func New(cfg Config) *Agent {
 
 		prepareRequest: turn.PrepareRequestContext,
 	}
+	a.startSideband()
 	for range cfg.MaxInFlight {
 		a.workers.Go(func() {
 			for j := range a.queue {
@@ -224,6 +237,8 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("POST "+wire.PathTurns, a.turns)
 	mux.HandleFunc("POST "+wire.PathTurnRequest, a.turnRequest)
 	mux.HandleFunc("POST "+wire.PathTurnResponse, a.turnResponse)
+	mux.HandleFunc("POST "+wire.PathEvents, a.eventsHandler)
+	mux.HandleFunc("GET "+wire.PathPolicy, a.policyHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		answerJSON(w, a.Health())
 	})
@@ -235,6 +250,7 @@ func (a *Agent) Handler() http.Handler {
 func (a *Agent) Wait() {
 	a.stop.Do(func() { close(a.queue) })
 	a.workers.Wait()
+	a.stopSideband()
 }
 
 // Queued is how many turns wait in the queue.
@@ -284,19 +300,26 @@ func (a *Agent) turns(w http.ResponseWriter, r *http.Request) {
 		if call.Conversation != nil {
 			m.History = history(call.Conversation.History)
 		}
-		stages = append(stages, stageOf(m, turn.StageRequest, func(ctx context.Context) (turn.PreparedTurn, bool) {
-			return turn.PrepareCallRequest(ctx, call), true
-		}))
+		// A request the gateway already had judged inline is not judged
+		// again: only the response stage goes.
+		if !t.RequestJudged {
+			stages = append(stages, stageOf(m, turn.StageRequest, func(ctx context.Context) (turn.PreparedTurn, bool) {
+				return turn.PrepareCallRequest(ctx, call), true
+			}))
+		}
 		if len(t.Response) > 0 && t.Op != wire.OpBatch { // a batch's response is the batch object
 			stages = append(stages, stageOf(m, turn.StageResponse, func(ctx context.Context) (turn.PreparedTurn, bool) {
 				return turn.PrepareCallResponse(ctx, call)
 			}))
 		}
 	}
-	queued := a.background(turnBytes(t), stages...)
+	queued := len(stages) == 0 || a.background(turnBytes(t), stages...)
 	answer(w, http.StatusAccepted, nil)
 	if !queued {
 		a.notJudged(m, turn.StageRequest)
+	}
+	if len(t.Items) == 0 && t.Op != wire.OpBatch {
+		a.observe(t)
 	}
 }
 
@@ -688,10 +711,31 @@ func (e *engineStatusError) Error() string { return e.msg }
 
 func (a *Agent) detect(ctx context.Context, req wire.DetectRequest) (*wire.Judgment, error) {
 	req.V = wire.Version
-	var out wire.DetectResponse
-	err := a.call(ctx, http.MethodPost, wire.PathDetect, req, &out)
-	return out.Result, err
+	for attempt := 1; ; attempt++ {
+		var out wire.DetectResponse
+		err := a.call(ctx, http.MethodPost, wire.PathDetect, req, &out)
+		// A background stage the engine throttled (429: its tenant is at
+		// the engine's in-flight limit) is retried after a short pause, a
+		// few times, inside its own deadline. An inline stage never is:
+		// the call waits on it, and it fails open instead.
+		var se *engineStatusError
+		if req.Sync || attempt >= detectAttempts || !errors.As(err, &se) || se.code != http.StatusTooManyRequests {
+			return out.Result, err
+		}
+		pause := time.Duration(attempt) * detectRetryPause
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(pause + time.Duration(rand.Int64N(int64(pause)))):
+		}
+	}
 }
+
+// detectAttempts and detectRetryPause bound the retries of a throttled
+// background stage: pauses of about 0.5s, 1s (plus jitter).
+const detectAttempts = 3
+
+var detectRetryPause = 500 * time.Millisecond
 
 // call sends one JSON request to the engine and decodes a 200 answer.
 func (a *Agent) call(ctx context.Context, method, path string, in, out any) error {

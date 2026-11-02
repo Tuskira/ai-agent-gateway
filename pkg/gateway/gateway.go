@@ -652,6 +652,7 @@ func Run(ctx context.Context, opts Options) error {
 			tee := llmplane.NewDetectionTee(llmplane.DetectionTeeConfig{
 				AgentURL: d.AgentURL, Timeout: d.Timeout, QueueSize: d.QueueSize,
 				QueueBytes: d.QueueBytes, MaxInFlight: d.MaxInFlight,
+				Inline: d.Inline, InlineTimeout: d.InlineTimeout,
 			})
 			// Runs after supervisor.Run has stopped the planes, so no handler
 			// is still offering turns: drain for a bounded time, drop the rest.
@@ -664,7 +665,7 @@ func Run(ctx context.Context, opts Options) error {
 			if err := metrics.RegisterDetectionTee(gwMetrics, tee); err != nil {
 				return err
 			}
-			logger.Info("llm detection tee enabled", "agent_url", d.AgentURL)
+			logger.Info("llm detection tee enabled", "agent_url", d.AgentURL, "inline", d.Inline)
 		}
 		core, err := llmplane.Handler(llmCfg, recorder)
 		if err != nil {

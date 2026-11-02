@@ -3,7 +3,7 @@ import tuskiraLogo from '@/assets/tuskira-logo.svg'
 import { BrandWordmark } from '@/components/app/BrandWordmark'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/auth/AuthContext'
-import { navGroups } from '@/lib/nav'
+import { useNavGroups } from '@/lib/extension'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
@@ -15,7 +15,7 @@ interface SidebarProps {
 export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   const { principal, isPlatformAdmin } = useAuth()
   const isAdmin = Boolean(principal?.roles.includes('admin'))
-  const groups = navGroups
+  const groups = useNavGroups()
     .map((group) => ({
       ...group,
       items: group.items.filter(
@@ -61,7 +61,7 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
                 const link = (
                   <NavLink
                     to={item.path}
-                    end={item.path === '/'}
+                    end={item.end ?? item.path === '/'}
                     onClick={onNavigate}
                     aria-label={collapsed ? item.label : undefined}
                     className={({ isActive }) =>

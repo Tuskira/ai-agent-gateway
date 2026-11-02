@@ -3,7 +3,7 @@ import type { UserRole } from '@/lib/types'
 
 /** Data contract for the Users page (admin-only, `users.manage`). */
 
-interface Page<T> {
+export interface Page<T> {
   items: T[]
   total?: number
 }

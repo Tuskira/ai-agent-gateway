@@ -25,7 +25,7 @@ import type { TimeRange } from '@/lib/overview'
  * "discovered". See `MergedModelStatus` for all four states.
  */
 
-interface Page<T> {
+export interface Page<T> {
   items: T[]
   total: number
 }

@@ -1,8 +1,27 @@
 {
   "name": "@tuskira/gateway-web",
-  "private": true,
+  "private": false,
   "version": "0.1.0",
   "type": "module",
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "main": "./dist-lib/index.js",
+  "module": "./dist-lib/index.js",
+  "types": "./dist-lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist-lib/types/index.d.ts",
+      "import": "./dist-lib/index.js"
+    },
+    "./style.css": "./dist-lib/style.css",
+    "./fonts.css": "./dist-lib/fonts.css",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist-lib"
+  ],
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -15,7 +34,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "gen:tokens": "node scripts/gen-tokens.mjs"
+    "gen:tokens": "node scripts/gen-tokens.mjs",
+    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json && tsc-alias -p tsconfig.lib.json"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -34,7 +54,6 @@
     "@lezer/common": "^1.5.3",
     "@lezer/highlight": "^1.2.5",
     "@shadcn/react": "^0.3.1",
-    "@tanstack/react-query": "^5.103.2",
     "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -45,12 +64,9 @@
     "input-otp": "^1.5.0",
     "lucide-react": "^1.47.0",
     "motion": "^12.43.0",
-    "react": "^19.2.8",
     "react-day-picker": "^10.0.1",
-    "react-dom": "^19.2.8",
     "react-hook-form": "^7.88.0",
     "react-resizable-panels": "^4.14.1",
-    "react-router-dom": "^7.18.4",
     "recharts": "^3.10.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0",
@@ -60,6 +76,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query": "^5.103.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
@@ -75,12 +92,22 @@
     "globals": "^17.12.0",
     "jsdom": "^25.0.1",
     "prettier": "^3.9.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.4",
     "rollup-plugin-license": "^3.7.1",
     "shadcn": "^4.21.0",
     "tailwindcss": "^4.3.3",
+    "tsc-alias": "^1.9.10",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.70.1",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.0.0",
+    "@tanstack/react-query": "^5.0.0"
   }
 }

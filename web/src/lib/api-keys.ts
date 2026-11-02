@@ -2,7 +2,7 @@ import { apiFetch } from '@/lib/api'
 
 /** Data contract for the API Keys page (admin-only). */
 
-interface Page<T> {
+export interface Page<T> {
   items: T[]
   total: number
 }

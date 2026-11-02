@@ -3,7 +3,7 @@ import type { SkillKind } from '@/lib/skills'
 
 /** Data contract for the Profiles page and the Profile Studio tool manager. */
 
-interface Page<T> {
+export interface Page<T> {
   items: T[]
   total: number
 }

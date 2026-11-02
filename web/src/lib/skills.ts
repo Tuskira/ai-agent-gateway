@@ -9,7 +9,7 @@ import { apiFetch } from '@/lib/api'
  * MCP prompts) -- `kind` tells them apart.
  */
 
-interface Page<T> {
+export interface Page<T> {
   items: T[]
   total: number
 }

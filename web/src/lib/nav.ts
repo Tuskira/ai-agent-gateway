@@ -30,16 +30,21 @@ export interface NavItem {
   /** Hide from the nav unless the principal holds `platform-admin`. These
    * pages are platform-wide: they do not follow the acting tenant. */
   platformOnly?: boolean
+  /** Active only on this exact path, not on paths under it (the overview
+   * always is). For an item whose path is a prefix of other items'. */
+  end?: boolean
 }
 
 export interface NavGroup {
   label: string
   items: NavItem[]
+  /** For a group an extension adds: the core group it goes before. */
+  before?: string
 }
 
 export const OVERVIEW_PATH = '/'
 
-export const navGroups: NavGroup[] = [
+export const coreNavGroups: NavGroup[] = [
   {
     label: 'Dashboards',
     items: [
@@ -172,14 +177,40 @@ export const navGroups: NavGroup[] = [
   },
 ]
 
+/** core with the extension's groups merged in: a group whose label matches a
+ * core group adds its items to that group; any other group is inserted before
+ * the core group named by its `before`, or at the end without one. Does not
+ * mutate its arguments. */
+export function mergeNavGroups(core: NavGroup[], extra: NavGroup[] = []): NavGroup[] {
+  const out = core.map((group) => ({ ...group, items: [...group.items] }))
+  for (const group of extra) {
+    const same = out.find((g) => g.label === group.label)
+    if (same) {
+      same.items.push(...group.items)
+      continue
+    }
+    const at = group.before ? out.findIndex((g) => g.label === group.before) : -1
+    out.splice(at < 0 ? out.length : at, 0, { ...group, items: [...group.items] })
+  }
+  return out
+}
+
+/** The nav the embedded console renders: the core groups, no extension. */
+export const navGroups: NavGroup[] = coreNavGroups
+
 export const navItems: NavItem[] = navGroups.flatMap((group) => group.items)
 
 /** The nav item for path: an exact match, else the deepest item the path
- * sits under by whole segments (a drill-down names its section). */
-export function findNavItem(path: string): NavItem | undefined {
-  const exact = navItems.find((item) => item.path === path)
+ * sits under by whole segments (a drill-down names its section). Searches
+ * `groups` (default: the core nav). */
+export function findNavItem(
+  path: string,
+  groups: NavGroup[] = navGroups,
+): NavItem | undefined {
+  const items = groups === navGroups ? navItems : groups.flatMap((group) => group.items)
+  const exact = items.find((item) => item.path === path)
   if (exact) return exact
-  return navItems
+  return items
     .filter((item) => item.path !== OVERVIEW_PATH && path.startsWith(item.path + '/'))
     .sort((a, b) => b.path.length - a.path.length)[0]
 }

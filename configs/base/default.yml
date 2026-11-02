@@ -96,6 +96,7 @@ llm_proxy:
   # Empty agent_url (the default) turns it off.
   # detection:
   #   agent_url: ""            # e.g. http://127.0.0.1:8090
+  #   agent_token: ""          # sent as "Authorization: Bearer <token>" on every request to the agent; empty sends none
   #   timeout: 5s              # one post to the agent
   #   queue_size: 1024         # turns waiting; more are dropped
   #   queue_bytes: 268435456   # 256 MiB of turns held (bodies; as posted while posting); more are dropped

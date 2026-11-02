@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suspended, revoked or expired key is posted to the agent's `/v1/events`.
 - The detection tee's turn adds `headers` (the client's identity headers
   only), `response_type` and `request_judged`.
+- **Authentication to the detection agent.** `llm_proxy.detection.agent_token`
+  (default empty: no header) is sent as `Authorization: Bearer <token>` on
+  every request the gateway makes to the agent (turns, events, policy,
+  inline verdicts). The detection agent takes an optional
+  `DETECTION_INBOUND_TOKEN`; when set it refuses, with `401`, any request
+  other than `GET /healthz` that lacks the matching bearer token (constant-time
+  compare). Both unset keeps today's behavior.
 - `GET /api/v1/auth/me` reports the caller's resolved `permissions`.
 - Detection agent: `GET /v1/policy` for the gateway, `POST /v1/events`
   (forwarded to the engine with monitored arguments redacted), and, when

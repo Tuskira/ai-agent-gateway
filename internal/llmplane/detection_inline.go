@@ -170,6 +170,7 @@ func (d *DetectionTee) call(ctx context.Context, method, path string, body []byt
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	d.authorize(req)
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return err

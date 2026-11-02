@@ -226,8 +226,13 @@ func startPlane(t *testing.T, st store.Store, secretSvc *secrets.Service) (strin
 // middleware before handing it to its listener.
 func startPlaneWrapped(t *testing.T, st store.Store, secretSvc *secrets.Service, wrap func(http.Handler) http.Handler) (string, *dataplane.Plane) {
 	t.Helper()
+	return startPlaneWithRegistry(t, st, newHeaderRegistry(t, secretSvc), wrap)
+}
 
-	registry := newHeaderRegistry(t, secretSvc)
+// startPlaneWithRegistry is startPlaneWrapped over a header registry the
+// caller built, for tests that register more providers than secret_store.
+func startPlaneWithRegistry(t *testing.T, st store.Store, registry *dpheaders.Registry, wrap func(http.Handler) http.Handler) (string, *dataplane.Plane) {
+	t.Helper()
 
 	cfg := config.Default()
 	cfg.Service.Version = "e2e"

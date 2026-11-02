@@ -327,6 +327,7 @@ func buildRoutes(deps Deps) []routeSpec {
 	tenants := handlers.Tenants{Deps: hdeps}
 	apiKeys := handlers.APIKeys{Deps: hdeps}
 	credentials := handlers.Credentials{Deps: hdeps}
+	credentialSources := handlers.CredentialSources{Deps: hdeps}
 	connectors := handlers.Connectors{Deps: hdeps}
 	profiles := handlers.Profiles{Deps: hdeps}
 	headerProviders := handlers.Headers{Deps: hdeps}
@@ -418,6 +419,13 @@ func buildRoutes(deps Deps) []routeSpec {
 		{Method: http.MethodGet, Pattern: "/credentials/{name}", Tag: "credentials", Summary: "Get a credential's metadata", Permission: "admin.manage", Handler: credentials.Get},
 		{Method: http.MethodPut, Pattern: "/credentials/{name}", Tag: "credentials", Summary: "Rotate a credential's payload", Permission: "admin.manage", Handler: credentials.Rotate},
 		{Method: http.MethodDelete, Pattern: "/credentials/{name}", Tag: "credentials", Summary: "Delete a credential", Permission: "admin.manage", Handler: credentials.Delete},
+
+		{Method: http.MethodPost, Pattern: "/credential-sources", Tag: "credential-sources", Summary: "Register an outside credential service as a credential source", Permission: "admin.manage", Handler: credentialSources.Create},
+		{Method: http.MethodGet, Pattern: "/credential-sources", Tag: "credential-sources", Summary: "List credential sources", Permission: "admin.manage", Handler: credentialSources.List},
+		{Method: http.MethodGet, Pattern: "/credential-sources/{id}", Tag: "credential-sources", Summary: "Get a credential source", Permission: "admin.manage", Handler: credentialSources.Get},
+		{Method: http.MethodPut, Pattern: "/credential-sources/{id}", Tag: "credential-sources", Summary: "Update a credential source's name, config or enabled flag", Permission: "admin.manage", Handler: credentialSources.Update},
+		{Method: http.MethodDelete, Pattern: "/credential-sources/{id}", Tag: "credential-sources", Summary: "Delete a credential source (409 while a connector header names it)", Permission: "admin.manage", Handler: credentialSources.Delete},
+		{Method: http.MethodPost, Pattern: "/credential-sources/{id}/test", Tag: "credential-sources", Summary: "Check a credential source is reachable and accepts the gateway's token (no secret is returned)", Permission: "admin.manage", Handler: credentialSources.Test},
 
 		{Method: http.MethodPost, Pattern: "/connectors", Tag: "connectors", Summary: "Create a connector", Permission: "connector.create", Handler: connectors.Create},
 		{Method: http.MethodGet, Pattern: "/connectors", Tag: "connectors", Summary: "List connectors", Permission: "connector.read", Handler: connectors.List},

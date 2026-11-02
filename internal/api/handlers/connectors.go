@@ -324,6 +324,9 @@ func (h Connectors) Create(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = h.Headers.CheckConnectorHeaders(meta)
 	}
+	if err == nil {
+		err = h.Headers.CheckConnectorSources(r.Context(), tid, meta)
+	}
 	if err != nil {
 		writeConnectorValidationErr(w, err)
 		return
@@ -429,7 +432,12 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 		// the headers this request adds or changes: one saved before save-time
 		// validation existed must not block an edit or Enable/Disable, which
 		// send every header back.
-		if err := h.Headers.CheckConnectorHeaders(changedHeaders(existing.Metadata, storedHeaders)); err != nil {
+		changed := changedHeaders(existing.Metadata, storedHeaders)
+		if err := h.Headers.CheckConnectorHeaders(changed); err != nil {
+			writeConnectorValidationErr(w, err)
+			return
+		}
+		if err := h.Headers.CheckConnectorSources(r.Context(), tid, changed); err != nil {
 			writeConnectorValidationErr(w, err)
 			return
 		}

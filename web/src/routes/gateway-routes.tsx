@@ -3,7 +3,8 @@ import { Navigate, type RouteObject } from 'react-router-dom'
 import { RequireAuth } from '@/auth/RequireAuth'
 import { AppShell } from '@/components/layout/AppShell'
 import { ComingSoon } from '@/components/app/ComingSoon'
-import { navGroups, OVERVIEW_PATH } from '@/lib/nav'
+import { type ConsoleExtension } from '@/lib/extension'
+import { mergeNavGroups, navGroups, OVERVIEW_PATH } from '@/lib/nav'
 import DocsPage from '@/routes/DocsPage'
 import LoginPage from '@/routes/LoginPage'
 import OverviewPage from '@/routes/OverviewPage'
@@ -50,12 +51,22 @@ const builtPages: Record<string, ComponentType> = {
  * The routes rendered inside the app shell: overview, every built page, the
  * detail pages and the coming-soon placeholders. Mount these under your own
  * layout or router (with a `basename`) when embedding the console.
+ *
+ * An `extension` adds the host's own pages here. Pass the same object to the
+ * `extension` prop of `<AppShell />` so its nav groups show in the sidebar.
  */
-export function gatewayPageRoutes(): RouteObject[] {
-  const items = navGroups.flatMap((group) => group.items)
+export function gatewayPageRoutes(extension?: ConsoleExtension): RouteObject[] {
+  const items = mergeNavGroups(navGroups, extension?.navGroups).flatMap(
+    (group) => group.items,
+  )
+  const extensionRoutes = extension?.routes ?? []
+  const extensionPaths = new Set(extensionRoutes.map((r) => r.path))
   const builtItems = items.filter((item) => !!builtPages[item.path])
   const comingSoonItems = items.filter(
-    (item) => item.path !== OVERVIEW_PATH && !builtPages[item.path],
+    (item) =>
+      item.path !== OVERVIEW_PATH &&
+      !builtPages[item.path] &&
+      !extensionPaths.has(item.path),
   )
 
   return [
@@ -73,6 +84,7 @@ export function gatewayPageRoutes(): RouteObject[] {
       path: '/token-monitoring/keys/:id',
       element: <TokenMonitoringDetailPage kind="key" />,
     },
+    ...extensionRoutes.map(({ path, Component }) => ({ path, element: <Component /> })),
     ...comingSoonItems.map((item) => ({
       path: item.path,
       element: <ComingSoon title={item.label} description={item.description} />,
@@ -81,8 +93,13 @@ export function gatewayPageRoutes(): RouteObject[] {
 }
 
 /** The full console route tree: login, docs, the authenticated app shell and
- * the catch-all redirect. This is what the embedded console mounts. */
-export function gatewayRoutes(): RouteObject[] {
+ * the catch-all redirect. This is what the embedded console mounts. An
+ * `extension` adds the host's nav groups and pages inside the shell, behind the
+ * login. */
+export function gatewayRoutes(
+  options: { extension?: ConsoleExtension } = {},
+): RouteObject[] {
+  const { extension } = options
   return [
     {
       path: '/login',
@@ -99,8 +116,8 @@ export function gatewayRoutes(): RouteObject[] {
         // the only page a session may use.
         { path: '/change-password', element: <ChangePasswordPage /> },
         {
-          element: <AppShell />,
-          children: gatewayPageRoutes(),
+          element: <AppShell extension={extension} />,
+          children: gatewayPageRoutes(extension),
         },
       ],
     },

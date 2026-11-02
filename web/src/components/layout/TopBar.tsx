@@ -10,6 +10,7 @@ import {
   PanelLeftOpen,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
+import { useNavGroups } from '@/lib/extension'
 import { findNavItem, OVERVIEW_PATH } from '@/lib/nav'
 import { TenantSwitcher } from '@/components/layout/TenantSwitcher'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
@@ -37,8 +38,10 @@ export function TopBar({ collapsed, onToggleCollapsed, onOpenMobileNav }: TopBar
   const location = useLocation()
   const [copied, setCopied] = useState(false)
 
-  const current = findNavItem(location.pathname)
-  const pageLabel = current?.label ?? findNavItem(OVERVIEW_PATH)?.label ?? 'Overview'
+  const groups = useNavGroups()
+  const current = findNavItem(location.pathname, groups)
+  const pageLabel =
+    current?.label ?? findNavItem(OVERVIEW_PATH, groups)?.label ?? 'Overview'
   const sessionUser = principal?.kind === 'user' ? principal.user : undefined
   const accountName = sessionUser?.username ?? principal?.subject ?? ''
   const accountDetail = sessionUser

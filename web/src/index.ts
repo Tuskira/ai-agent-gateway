@@ -18,8 +18,17 @@ export * from './auth/AuthContext'
 export * from './auth/RequireAuth'
 
 // Navigation and routes
-export { navGroups, navItems, findNavItem, OVERVIEW_PATH } from './lib/nav'
+export {
+  navGroups,
+  navItems,
+  findNavItem,
+  mergeNavGroups,
+  OVERVIEW_PATH,
+} from './lib/nav'
 export type { NavItem, NavGroup } from './lib/nav'
+export { ExtensionProvider } from './components/layout/ExtensionProvider'
+export { useNavGroups } from './lib/extension'
+export type { ConsoleExtension, ExtensionRoute } from './lib/extension'
 export { gatewayRoutes, gatewayPageRoutes } from './routes/gateway-routes'
 
 // Pages

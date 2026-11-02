@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plus `style.css` and an optional `fonts.css`. `configureGateway` sets the API
   base, the MCP URL and the sign-out handler for hosts that embed it. The
   embedded console is unchanged.
+- **Console extension.** `gatewayRoutes({ extension })` and
+  `gatewayPageRoutes(extension)` accept `{ navGroups, routes }`, so a host app
+  can add its own sidebar groups and pages inside the console's shell and
+  sign-in guard. Nav groups merge by label or insert before a named core group
+  (`before`); a nav item can set `end`. `AppShell` takes the same `extension`
+  prop. Called with no argument, nothing changes.
 
 ## [0.6.1] - 2026-10-22
 

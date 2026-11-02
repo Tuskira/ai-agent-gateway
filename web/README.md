@@ -80,6 +80,44 @@ Wrap the router in `QueryClientProvider`, `AuthProvider` and `TooltipProvider`, 
 to own the whole router. Only what `@tuskira/gateway-web` exports is supported; do not
 import from `src/`.
 
+### Adding your own pages
+
+Pass an `extension` to put your own sidebar groups and pages inside the console's shell and
+sign-in guard:
+
+```tsx
+gatewayRoutes({ extension: { navGroups: [...], routes: [...] } })
+```
+
+```tsx
+import { Plug } from 'lucide-react'
+import { AppShell, gatewayPageRoutes, type ConsoleExtension } from '@tuskira/gateway-web'
+
+const extension: ConsoleExtension = {
+  navGroups: [
+    // New group, placed before the core "Observe" group (appended without `before`).
+    { label: 'Billing', before: 'Observe', items: [
+      { label: 'Invoices', path: '/invoices', icon: Plug, description: 'Invoices and usage.' },
+    ] },
+    // Same label as a core group: the items are added to that group.
+    { label: 'Access', items: [
+      { label: 'Audit', path: '/audit', icon: Plug, description: 'Audit trail.' },
+    ] },
+  ],
+  routes: [
+    { path: '/invoices', Component: InvoicesPage },
+    { path: '/audit', Component: AuditPage },
+  ],
+}
+
+// Own router: pass the extension to both the routes and the shell.
+{ element: <AppShell extension={extension} />, children: gatewayPageRoutes(extension) }
+```
+
+`gatewayRoutes({ extension })` does both for you. A nav item whose path has no route shows the
+"coming soon" placeholder. Set `end: true` on an item whose path is a prefix of other items'
+paths so it is active only on its own path.
+
 The browser must reach the gateway API on the path you set as `apiBase`. When the host app
 serves the console, add a reverse-proxy rule that forwards `/api/v1/*` (or your `apiBase`
 path, rewritten back to `/api/v1`) to the gateway on port 8081. Keep the path, all request

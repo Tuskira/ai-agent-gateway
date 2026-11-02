@@ -141,6 +141,9 @@ Duration values use Go's duration syntax (`30s`, `5m`, `1h`).
 | `secret_store.allow_env_provider` | bool | `false` | `GATEWAY_SECRET_STORE_ALLOW_ENV_PROVIDER` | Enables the `env` header provider. Off by default — see [security-model.md](security-model.md). |
 | `secret_store.allow_file_provider` | bool | `false` | `GATEWAY_SECRET_STORE_ALLOW_FILE_PROVIDER` | Enables the `file` header provider. |
 | `secret_store.file_provider_root` | string | `""` | `GATEWAY_SECRET_STORE_FILE_PROVIDER_ROOT` | Directory the `file` provider's paths must resolve under. Required when `allow_file_provider` is true. |
+| `secret_store.external_service.enabled` | bool | `false` | `GATEWAY_SECRET_STORE_EXTERNAL_SERVICE_ENABLED` | Registers the `external_service` header provider, which resolves header values from a tenant's outside credential service. See [Credential sources](connectors-and-credentials.md#credential-sources). |
+| `secret_store.external_service.timeout` | duration | `5s` | `GATEWAY_SECRET_STORE_EXTERNAL_SERVICE_TIMEOUT` | Bound on one call to a credential service. Must be positive when enabled. |
+| `secret_store.external_service.cache_ttl` | duration | `5m` | `GATEWAY_SECRET_STORE_EXTERNAL_SERVICE_CACHE_TTL` | Upper bound on how long a resolved value is cached per tenant. The service's `ttl_seconds` can shorten it, never lengthen it. Must be positive when enabled. |
 
 ## redis
 

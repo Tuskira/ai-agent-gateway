@@ -104,7 +104,7 @@ implementations:
 |---|---|---|---|
 | Authorization | `pkg/auth.Authorizer` | `pkg/auth.RoleAuthorizer` | every plane's permission checks |
 | Log sinks | `pkg/sink.LogSink` / `BatchSink` | `pkg/sink/{stdout,otel,clickhouse,postgres}` | access log, LLM capture |
-| Outbound headers | `pkg/headers.ExternalProvider` | `internal/secrets` (`secret_store`, `env`, `file`) | connector credential injection |
+| Outbound headers | `pkg/headers.ExternalProvider` (+ optional `SourceSchemaProvider`, `SourceTester`) | `internal/secrets` (`secret_store`, `env`, `file`, `external_service`) | connector credential injection |
 | Persistence | `pkg/store.Store` (driver registry) | `internal/store/postgres` | every plane |
 | MCP sessions | `pkg/session.Store` + `Notifier` (driver registry) | `pkg/session/memory`, `pkg/session/redis` | MCP plane's session manager and cross-replica notifications (`tools/list_changed`, per-session messages) |
 | Connector/cache/profile ops | `pkg/ops.ConnectorOps` / `CacheOps` / `ProfileOps` | `internal/dataplane`'s `opsAdapter` | API plane's health/discover/cache routes and profile-cache invalidation |
@@ -761,6 +761,7 @@ or through their parent row; a NULL `tenant_id` (`models`, `skills`,
 | `tenants` | the isolation boundary |
 | `api_keys` | hashed, role-scoped bearer credentials (with optional limits and a bound profile) |
 | `credentials` | AES-256-GCM-encrypted secret payloads |
+| `credential_sources` | a tenant's outside credential services (non-secret settings only) |
 | `connectors` | registered MCP backends |
 | `agent_profiles` | named tool allow-lists |
 | `agent_profile_tools` | the (profile, connector, tool) grants |

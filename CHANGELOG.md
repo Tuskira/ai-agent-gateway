@@ -23,6 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`before`); a nav item can set `end`. `AppShell` takes the same `extension`
   prop. Called with no argument, nothing changes.
 
+- **Credential sources and the `external_service` header provider.** A
+  tenant can keep connector header secrets in an outside credential service.
+  `POST /api/v1/credential-sources` registers one (its URL and the name of a
+  gateway credential whose `token` authenticates to it); a connector header
+  `{"type":"external","provider":"external_service","source":"<name>",
+  "config":{"credential_id":"...","field":"...","prefix":"..."}}` then
+  resolves through `POST {url}/v1/credentials/resolve`. Values are cached
+  per tenant for `min(ttl_seconds, cache_ttl)` and evicted on a backend
+  `401` before one replay. Sources are tenant-scoped; a disabled or other
+  tenant's source never resolves. Deleting or renaming a source a connector
+  still names is `409`. `POST /credential-sources/{id}/test` checks
+  reachability without returning a secret, and `GET /headers/providers`
+  now adds `source_schema` and the tenant's enabled `sources` for such a
+  provider. Off by default: `secret_store.external_service.enabled`, with
+  `timeout` (5s) and `cache_ttl` (5m). New migration `000011` adds the
+  `credential_sources` table.
+
 ## [0.6.1] - 2026-10-22
 
 ### Added

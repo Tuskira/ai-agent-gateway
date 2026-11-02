@@ -249,7 +249,10 @@ While off, a connector header that uses one is refused with `400 validation_erro
 
 `GET /api/v1/headers/providers` lists every registered provider (id, name,
 JSON-Schema `config_schema`) plus the four resolver type names, for a
-UI to build a schema-driven form.
+UI to build a schema-driven form. A provider that reads a
+[credential source](#credential-sources) also carries `source_schema` (the
+source's config shape) and `sources` (the caller's tenant's enabled source
+names for it), so a console can offer a source dropdown.
 
 An `external` value (a stored credential, `env` or `file`) that contains
 CR or LF, such as a multi-line PEM key, has its trailing newline trimmed
@@ -259,6 +262,112 @@ LF byte is refused instead,
 which prevents header injection. Header resolution is best-effort per
 header: one that fails to resolve is logged and skipped, not a whole-call failure — the
 backend decides whether the missing header matters, by answering 401.
+
+## Credential sources
+
+A tenant can keep connector header secrets in an outside credential service
+instead of the gateway's own store. The gateway ships one generic provider,
+`external_service`, that speaks the fixed HTTP contract below. It never
+learns the service's own vendor API: the service adapts whatever it fronts
+(a vault, a cloud secret manager, a product's own credential store).
+
+The provider is off by default. Enable it with
+`secret_store.external_service.enabled: true` (see
+[configuration.md](configuration.md#secret_store)); until then it is not
+registered, so sources for it cannot be created and headers naming it are
+refused.
+
+**1. Store the gateway's token for the service** as an ordinary credential
+with a `token` field:
+
+```sh
+curl -X POST "$GW/api/v1/credentials" -H "Authorization: Bearer $ADMIN_KEY" \
+  -d '{"name":"vault-auth","type":"generic","payload":{"token":"<service token>"}}'
+```
+
+**2. Register the service as a source.** A source holds only non-secret
+settings: the base `url` and the NAME of the credential above.
+
+```sh
+curl -X POST "$GW/api/v1/credential-sources" -H "Authorization: Bearer $ADMIN_KEY" \
+  -d '{"name":"vault-a","provider":"external_service",
+       "config":{"url":"https://creds.internal.example.com","auth_credential":"vault-auth"}}'
+```
+
+`url` must be `https`. Plain `http` is accepted only for a loopback or
+private address that the egress policy (`egress.allowed_cidrs` /
+`egress.allowed_hosts`) already lets the gateway reach. A URL carrying
+credentials, a query or a fragment is refused. `POST
+/api/v1/credential-sources/{id}/test` checks the service is reachable and
+accepts the token; it answers `{"ok":true}` or `{"ok":false,"error":"..."}`
+and never returns a secret.
+
+**3. Point a connector header at it** with `"source"` next to `"provider"`:
+
+```json
+{"type": "external", "provider": "external_service", "source": "vault-a",
+ "config": {"credential_id": "splunk-prod", "field": "token", "prefix": "Bearer "}}
+```
+
+`credential_id` and `field` are required; `prefix` is optional and is
+prepended to the resolved value. Saving the connector checks the source
+exists in the caller's tenant and belongs to `external_service`
+(`400 validation_error` otherwise). A header of this provider without a
+`source`, or a `source` on a provider that does not use sources, is refused
+the same way.
+
+### Wire contract
+
+Resolve, called on a cache miss:
+
+```http
+POST {url}/v1/credentials/resolve
+Authorization: Bearer <token field of auth_credential>
+Content-Type: application/json
+
+{"tenant_id": "<gateway tenant id>", "connector_slug": "splunk",
+ "header_name": "Authorization", "credential_id": "splunk-prod", "field": "token"}
+```
+
+```json
+{"value": "<secret>", "ttl_seconds": 300}
+```
+
+A non-2xx answer, an empty `value` or a body that is not this JSON fails
+the header. Options, called only by the test route:
+
+```http
+GET {url}/v1/credentials/options?tenant_id=<gateway tenant id>&field=credential_id
+Authorization: Bearer <token>
+```
+
+Any 2xx answer counts as success; the body is not read for values.
+
+### Resolution rules
+
+- The tenant is always the caller's own, from the authenticated key. The
+  source is loaded for that tenant only, so a header naming another
+  tenant's source does not resolve.
+- A disabled source, or one of a different provider, does not resolve.
+- Each call is bounded by `secret_store.external_service.timeout` and dials
+  through the same egress guard as connector endpoints, with redirects
+  capped.
+- Values are cached per tenant, keyed by source, `credential_id` and
+  `field`, for `min(ttl_seconds, secret_store.external_service.cache_ttl)`.
+  A `ttl_seconds` of 0 or less means the `cache_ttl`.
+- When a backend answers `401`, the gateway drops the tenant's cached values
+  and replays the call once with freshly resolved ones. Editing or deleting
+  a source drops them too.
+- As with every header, one that fails to resolve is skipped with a warning
+  naming the source, and the backend decides whether that matters.
+
+### Managing sources
+
+`GET /api/v1/credential-sources` lists the tenant's sources, each with
+`used_by`: the connectors whose headers name it. `PUT
+/api/v1/credential-sources/{id}` changes `name`, `config` or `enabled`; the
+provider is fixed. Renaming or deleting a source that a connector header
+still names is `409 conflict`; point the headers elsewhere first.
 
 ## Credentials and rotation
 

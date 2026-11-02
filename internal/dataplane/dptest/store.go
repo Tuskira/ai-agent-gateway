@@ -24,6 +24,7 @@ type Store struct {
 
 	tenants    map[string]*store.Tenant
 	connectors map[string]*store.Connector
+	sources    map[string]*store.CredentialSource
 	catalog    map[string]*store.MCPCatalogEntry
 	profiles   map[string]*store.AgentProfile
 	profileIdx map[string][]store.ProfileTool // profile id -> tools
@@ -45,6 +46,7 @@ func New() *Store {
 	return &Store{
 		tenants:    make(map[string]*store.Tenant),
 		connectors: make(map[string]*store.Connector),
+		sources:    make(map[string]*store.CredentialSource),
 		catalog:    make(map[string]*store.MCPCatalogEntry),
 		profiles:   make(map[string]*store.AgentProfile),
 		profileIdx: make(map[string][]store.ProfileTool),
@@ -71,6 +73,11 @@ func (s *Store) APIKeys() store.APIKeyStore { return nil }
 
 // Credentials implements store.Store; unused by the MCP plane's tests.
 func (s *Store) Credentials() store.CredentialStore { return nil }
+
+// CredentialSources implements store.Store.
+func (s *Store) CredentialSources() store.CredentialSourceStore {
+	return (*credentialSourceStore)(s)
+}
 
 // Connectors implements store.Store.
 func (s *Store) Connectors() store.ConnectorStore { return (*connectorStore)(s) }
@@ -254,6 +261,110 @@ func (c *connectorStore) SoftDelete(_ context.Context, tenantID, id string) erro
 	}
 	now := time.Now()
 	conn.DeletedAt = &now
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+
+type credentialSourceStore Store
+
+func copySource(src *store.CredentialSource) *store.CredentialSource {
+	cp := *src
+	cp.Config = make(map[string]any, len(src.Config))
+	for k, v := range src.Config {
+		cp.Config[k] = v
+	}
+	return &cp
+}
+
+func (c *credentialSourceStore) liveByName(tenantID, name, exceptID string) bool {
+	for _, src := range c.sources {
+		if src.TenantID == tenantID && src.Name == name && src.DeletedAt == nil && src.ID != exceptID {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *credentialSourceStore) Create(_ context.Context, src *store.CredentialSource) error {
+	s := (*Store)(c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c.liveByName(src.TenantID, src.Name, "") {
+		return store.ErrConflict
+	}
+	src.ID = s.id("src")
+	src.CreatedAt, src.UpdatedAt = time.Now(), time.Now()
+	s.sources[src.ID] = copySource(src)
+	return nil
+}
+
+func (c *credentialSourceStore) Get(_ context.Context, tenantID, id string) (*store.CredentialSource, error) {
+	s := (*Store)(c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	src, ok := s.sources[id]
+	if !ok || src.TenantID != tenantID || src.DeletedAt != nil {
+		return nil, store.ErrNotFound
+	}
+	return copySource(src), nil
+}
+
+func (c *credentialSourceStore) GetByName(_ context.Context, tenantID, name string) (*store.CredentialSource, error) {
+	s := (*Store)(c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, src := range s.sources {
+		if src.TenantID == tenantID && src.Name == name && src.DeletedAt == nil {
+			return copySource(src), nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (c *credentialSourceStore) List(_ context.Context, tenantID string) ([]*store.CredentialSource, error) {
+	s := (*Store)(c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*store.CredentialSource
+	for _, src := range s.sources {
+		if src.TenantID == tenantID && src.DeletedAt == nil {
+			out = append(out, copySource(src))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (c *credentialSourceStore) Update(_ context.Context, src *store.CredentialSource) error {
+	s := (*Store)(c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.sources[src.ID]
+	if !ok || existing.TenantID != src.TenantID || existing.DeletedAt != nil {
+		return store.ErrNotFound
+	}
+	if c.liveByName(src.TenantID, src.Name, src.ID) {
+		return store.ErrConflict
+	}
+	src.UpdatedAt = time.Now()
+	updated := copySource(src)
+	updated.Provider = existing.Provider
+	updated.CreatedAt = existing.CreatedAt
+	s.sources[src.ID] = updated
+	return nil
+}
+
+func (c *credentialSourceStore) SoftDelete(_ context.Context, tenantID, id string) error {
+	s := (*Store)(c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	src, ok := s.sources[id]
+	if !ok || src.TenantID != tenantID || src.DeletedAt != nil {
+		return store.ErrNotFound
+	}
+	now := time.Now()
+	src.DeletedAt = &now
 	return nil
 }
 

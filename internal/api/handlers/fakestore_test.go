@@ -61,10 +61,13 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-func (f *fakeStore) Tenants() store.TenantStore             { return f.tenants }
-func (f *fakeStore) APIKeys() store.APIKeyStore             { return f.apiKeys }
-func (f *fakeStore) Credentials() store.CredentialStore     { return f.credentials }
-func (f *fakeStore) Connectors() store.ConnectorStore       { return f.connectors }
+func (f *fakeStore) Tenants() store.TenantStore         { return f.tenants }
+func (f *fakeStore) APIKeys() store.APIKeyStore         { return f.apiKeys }
+func (f *fakeStore) Credentials() store.CredentialStore { return f.credentials }
+func (f *fakeStore) Connectors() store.ConnectorStore   { return f.connectors }
+func (f *fakeStore) CredentialSources() store.CredentialSourceStore {
+	return f.authn.CredentialSources()
+}
 func (f *fakeStore) MCPCatalog() store.MCPCatalogStore      { return f.authn.MCPCatalog() }
 func (f *fakeStore) AgentProfiles() store.AgentProfileStore { return f.profiles }
 func (f *fakeStore) ToolCache() store.ToolCacheStore        { return f.toolCache }

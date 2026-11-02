@@ -244,9 +244,12 @@ var nopAuthn = dptest.New()
 func (nopStore) Users() store.UserStore               { return nopAuthn.Users() }
 func (nopStore) UserSessions() store.UserSessionStore { return nopAuthn.UserSessions() }
 func (nopStore) AuthAudit() store.AuthAuditStore      { return nopAuthn.AuthAudit() }
-func (nopStore) Migrate(context.Context) error        { return nil }
-func (nopStore) Ping(context.Context) error           { return nil }
-func (nopStore) Close() error                         { return nil }
+func (nopStore) CredentialSources() store.CredentialSourceStore {
+	return nopAuthn.CredentialSources()
+}
+func (nopStore) Migrate(context.Context) error { return nil }
+func (nopStore) Ping(context.Context) error    { return nil }
+func (nopStore) Close() error                  { return nil }
 
 type nopTenants struct{}
 

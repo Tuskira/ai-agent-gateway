@@ -75,7 +75,7 @@ responses can't be used to enumerate which keys exist.
 ## Pagination
 
 The list routes `/users`, `/tenants`, `/api-keys`, `/credentials`,
-`/connectors`, `/mcp-catalog`, `/profiles`, `/models`, `/skills` and
+`/credential-sources`, `/connectors`, `/mcp-catalog`, `/profiles`, `/models`, `/skills` and
 `/auth/audit` accept `?limit=&offset=`, clamped to `[1, 500]` /
 `[0, +inf)` (defaults: `limit=50`, `offset=0`); an invalid value falls
 back to the default rather than erroring. The response shape is:
@@ -131,6 +131,12 @@ authentication.
 | GET | `/credentials/{name}` | `admin.manage` | Get one credential's metadata. |
 | PUT | `/credentials/{name}` | `admin.manage` | Rotate a credential's payload. |
 | DELETE | `/credentials/{name}` | `admin.manage` | Delete a credential. |
+| POST | `/credential-sources` | `admin.manage` | Register an outside credential service as a [credential source](connectors-and-credentials.md#credential-sources): `name`, `provider`, `config`, optional `enabled` (default `true`). `400` for a provider that is not enabled or takes no sources, or a config it rejects; `409` for a duplicate name. |
+| GET | `/credential-sources` | `admin.manage` | List the tenant's credential sources, each with `used_by`. |
+| GET | `/credential-sources/{id}` | `admin.manage` | Get one credential source. |
+| PUT | `/credential-sources/{id}` | `admin.manage` | Change `name`, `config` or `enabled` (each optional). `409` when renaming a source a connector header names. |
+| DELETE | `/credential-sources/{id}` | `admin.manage` | Soft-delete a source; `409` while any connector header names it. |
+| POST | `/credential-sources/{id}/test` | `admin.manage` | Check the source's service is reachable and accepts its token: `{"ok":true}` or `{"ok":false,"error":"..."}`. No secret is returned. |
 | POST | `/connectors` | `connector.create` | Register a connector (an MCP server registered with the gateway; the console's **MCPs** page). `name`/`slug` of `gateway` (case-insensitive) is rejected: it's reserved for the gateway's own native `gateway__skill` tool and command prompts. |
 | GET | `/connectors` | `connector.read` | List connectors. |
 | GET | `/connectors/{id}` | `connector.read` | Get one connector. |
@@ -179,7 +185,7 @@ authentication.
 | POST | `/skills/{id}/versions` | `skill.update` | Add a new version: `{files:[{path, content}]}`, same file/frontmatter validation as create. The skill's `description`/frontmatter are refreshed from the new `SKILL.md`; `name`, `kind` and `arguments` carry over unchanged (use `PUT /skills/{id}` to change `arguments`). Platform rows are `403`. Response is the new version (`{version, files, created_by, created_at}`). |
 | GET | `/skills/{id}/versions` | `skill.read` | List a skill/command's versions, newest first, without file bodies: `{items:[{version, created_by, created_at, file_count}]}`. |
 | GET | `/skills/{id}/versions/{v}` | `skill.read` | Get one version's files: `{version, files, created_by, created_at}`. |
-| GET | `/headers/providers` | `headers.read` | List header resolver types and registered external providers. |
+| GET | `/headers/providers` | `headers.read` | List header resolver types and registered external providers. A provider that uses credential sources also carries `source_schema` and `sources` (the caller's tenant's enabled source names). |
 | GET | `/cache/stats` | `cache.read` | Per-connector tool-cache counts. |
 | GET | `/cache/search` | `cache.read` | Full-text search over cached tools. |
 | POST | `/cache/refresh` | `cache.manage` | Re-discover and rewrite the cache for every connector. |

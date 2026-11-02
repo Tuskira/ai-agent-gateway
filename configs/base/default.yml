@@ -241,6 +241,17 @@ secret_store:
   # Directory the "file" provider's paths must resolve under. Required
   # when allow_file_provider is true.
   file_provider_root: ""
+  # external_service enables the "external_service" header provider: a
+  # tenant registers an outside credential service as a credential source
+  # (POST /api/v1/credential-sources) and connector headers resolve their
+  # values from it over HTTPS. Off by default.
+  external_service:
+    enabled: false
+    # Bound on one call to a credential service.
+    timeout: 5s
+    # Upper bound on how long a resolved value is cached per tenant; the
+    # service's ttl_seconds can only shorten it.
+    cache_ttl: 5m
 
 logging:
   # debug | info | warn | error

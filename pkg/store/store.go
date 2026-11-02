@@ -206,6 +206,24 @@ type Credential struct {
 	RotatedAt *time.Time
 }
 
+// CredentialSource is a tenant's registration of an outside credential
+// service: a name unique among the tenant's live sources, the header
+// provider that talks to it (e.g. "external_service"), and that
+// provider's non-secret settings. Secret material never lives here; a
+// source names a gateway Credential when it needs one to authenticate.
+type CredentialSource struct {
+	ID       string
+	TenantID string
+	Name     string
+	Provider string
+	Config   map[string]any
+	Enabled  bool
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt *time.Time
+}
+
 // Connector is a backend MCP server registration.
 type Connector struct {
 	ID       string
@@ -597,6 +615,19 @@ type CredentialStore interface {
 	// contains) and sets RotatedAt.
 	Rotate(ctx context.Context, tenantID, name string, ciphertext, nonce []byte, keyID string, fieldNames []string) error
 	Delete(ctx context.Context, tenantID, name string) error
+}
+
+// CredentialSourceStore manages CredentialSource rows. Names are unique
+// per tenant among live rows (ErrConflict otherwise); SoftDelete hides a
+// row from Get/GetByName/List and frees its name.
+type CredentialSourceStore interface {
+	Create(ctx context.Context, s *CredentialSource) error
+	Get(ctx context.Context, tenantID, id string) (*CredentialSource, error)
+	GetByName(ctx context.Context, tenantID, name string) (*CredentialSource, error)
+	List(ctx context.Context, tenantID string) ([]*CredentialSource, error)
+	// Update writes Name, Config and Enabled; Provider is immutable.
+	Update(ctx context.Context, s *CredentialSource) error
+	SoftDelete(ctx context.Context, tenantID, id string) error
 }
 
 // ConnectorStore manages Connector rows. SoftDelete hides a row from Get/
@@ -1114,6 +1145,7 @@ type Store interface {
 	Tenants() TenantStore
 	APIKeys() APIKeyStore
 	Credentials() CredentialStore
+	CredentialSources() CredentialSourceStore
 	Connectors() ConnectorStore
 	MCPCatalog() MCPCatalogStore
 	AgentProfiles() AgentProfileStore

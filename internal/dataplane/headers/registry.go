@@ -13,12 +13,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	pkgheaders "github.com/Tuskira/tusk-ai-secured-gateway/pkg/headers"
 
 	"golang.org/x/net/http/httpguts"
@@ -36,6 +38,123 @@ type Registry struct {
 	// allowBearer permits token_field/bearer_token (connectors
 	// .allow_bearer_token_forwarding). Off by default.
 	allowBearer atomic.Bool
+
+	// sources loads a credential source by name for a tenant (see
+	// SetSourceLookup). Nil means no header may name a source.
+	sources atomic.Pointer[SourceLookup]
+}
+
+// SourceLookup loads the live credential source named name in tenantID's
+// own tenant. It returns an error wrapping ErrSourceNotFound when there is
+// none; a source of another tenant is never returned.
+type SourceLookup func(ctx context.Context, tenantID, name string) (*pkgheaders.Source, error)
+
+// ErrSourceNotFound is wrapped by a SourceLookup that finds no source.
+var ErrSourceNotFound = errors.New("credential source not found")
+
+// SetSourceLookup installs the function that resolves a header config's
+// "source" name to a credential source. cmd/gateway wires it to the
+// store's CredentialSources.
+func (reg *Registry) SetSourceLookup(fn SourceLookup) {
+	if fn == nil {
+		reg.sources.Store(nil)
+		return
+	}
+	reg.sources.Store(&fn)
+}
+
+// headerSource returns cfg["source"], the credential source a header names.
+func headerSource(cfg map[string]any) string {
+	name, _ := cfg["source"].(string)
+	return name
+}
+
+// withSource loads the source cfg names for the principal's tenant and
+// returns ctx carrying it (with connector/header names) for the provider.
+// The source must exist in the caller's own tenant, be enabled and belong
+// to the header's provider; otherwise the header fails to resolve, and a
+// warning names the source.
+func (reg *Registry) withSource(ctx context.Context, headerName string, cfg map[string]any) (context.Context, error) {
+	info, _ := pkgheaders.ResolveInfoFrom(ctx)
+	info.HeaderName = headerName
+	info.Source = nil
+
+	name := headerSource(cfg)
+	if typ, _ := cfg["type"].(string); name == "" || typ != "external" {
+		return pkgheaders.WithResolveInfo(ctx, info), nil
+	}
+
+	src, err := reg.loadSource(ctx, cfg)
+	if err != nil {
+		slog.Default().Warn("credential source refused for header",
+			"source", name, "header", headerName, "connector", info.ConnectorSlug, "error", err)
+		return ctx, err
+	}
+	info.Source = src
+	return pkgheaders.WithResolveInfo(ctx, info), nil
+}
+
+func (reg *Registry) loadSource(ctx context.Context, cfg map[string]any) (*pkgheaders.Source, error) {
+	name := headerSource(cfg)
+	provider, _ := cfg["provider"].(string)
+	lookup := reg.sources.Load()
+	if lookup == nil {
+		return nil, fmt.Errorf("source %q: credential sources are not available", name)
+	}
+	principal, ok := pkgauth.PrincipalFrom(ctx)
+	if !ok || principal == nil || principal.TenantID == "" {
+		return nil, fmt.Errorf("source %q: no authenticated principal in context", name)
+	}
+	src, err := (*lookup)(ctx, principal.TenantID, name)
+	if err != nil {
+		return nil, fmt.Errorf("source %q: %w", name, err)
+	}
+	if src == nil || src.TenantID != principal.TenantID {
+		return nil, fmt.Errorf("source %q: %w", name, ErrSourceNotFound)
+	}
+	if !src.Enabled {
+		return nil, fmt.Errorf("source %q is disabled", name)
+	}
+	if src.Provider != provider {
+		return nil, fmt.Errorf("source %q belongs to provider %q, not %q", name, src.Provider, provider)
+	}
+	return src, nil
+}
+
+// CheckConnectorSources checks, at connector save time, that every header
+// in meta naming a credential source names one that exists in tenantID
+// and belongs to the header's provider. A disabled source is accepted (it
+// can be enabled later); resolving through it is refused until then.
+func (reg *Registry) CheckConnectorSources(ctx context.Context, tenantID string, meta map[string]any) error {
+	if reg == nil {
+		return nil
+	}
+	hdrs, _ := meta["headers"].(map[string]any)
+	names := make([]string, 0, len(hdrs))
+	for name := range hdrs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		cfg, _ := hdrs[name].(map[string]any)
+		srcName := headerSource(cfg)
+		if typ, _ := cfg["type"].(string); srcName == "" || typ != "external" {
+			continue
+		}
+		lookup := reg.sources.Load()
+		if lookup == nil {
+			return fmt.Errorf("header %q: source %q: credential sources are not available", name, srcName)
+		}
+		src, err := (*lookup)(ctx, tenantID, srcName)
+		if err != nil {
+			return fmt.Errorf("header %q: source %q: %w", name, srcName, err)
+		}
+		provider, _ := cfg["provider"].(string)
+		if src.Provider != provider {
+			return fmt.Errorf("header %q: source %q belongs to provider %q, not %q", name, srcName, src.Provider, provider)
+		}
+	}
+	return nil
 }
 
 var crlfEscaper = strings.NewReplacer("\r\n", `\n`, "\r", `\n`, "\n", `\n`)
@@ -231,6 +350,11 @@ func (reg *Registry) Resolve(ctx context.Context, headerName string, cfg map[str
 
 	if r != nil {
 		ctx = withIncomingRequest(ctx, r)
+	}
+
+	ctx, err := reg.withSource(ctx, headerName, cfg)
+	if err != nil {
+		return "", fmt.Errorf("headers: header %q: %w", headerName, err)
 	}
 
 	value, err := resolver.Resolve(ctx, cfg)

@@ -80,6 +80,13 @@ var liveSlugsMigration string
 //go:embed migrations/000010_platform_admin.up.sql
 var platformAdminMigration string
 
+// credentialSourcesMigration (000011) adds credential_sources, the
+// tenant-scoped registrations of outside credential services the
+// external_service header provider resolves through.
+//
+//go:embed migrations/000011_credential_sources.up.sql
+var credentialSourcesMigration string
+
 // migrations are applied in version order; each is recorded in
 // schema_migrations once applied. Append new migrations here (with the next
 // version) — never edit one that has already shipped.
@@ -97,6 +104,7 @@ var migrations = []struct {
 	{8, keyProfilesMigration},
 	{9, liveSlugsMigration},
 	{10, platformAdminMigration},
+	{11, credentialSourcesMigration},
 }
 
 // migrationLockKey is an arbitrary constant used as a Postgres advisory
@@ -135,10 +143,13 @@ func init() {
 // itself stays private.
 func (s *Store) Stats() sql.DBStats { return s.db.Stats() }
 
-func (s *Store) Tenants() store.TenantStore             { return &tenantStore{db: s.db} }
-func (s *Store) APIKeys() store.APIKeyStore             { return &apiKeyStore{db: s.db} }
-func (s *Store) Credentials() store.CredentialStore     { return &credentialStore{db: s.db} }
-func (s *Store) Connectors() store.ConnectorStore       { return &connectorStore{db: s.db} }
+func (s *Store) Tenants() store.TenantStore         { return &tenantStore{db: s.db} }
+func (s *Store) APIKeys() store.APIKeyStore         { return &apiKeyStore{db: s.db} }
+func (s *Store) Credentials() store.CredentialStore { return &credentialStore{db: s.db} }
+func (s *Store) Connectors() store.ConnectorStore   { return &connectorStore{db: s.db} }
+func (s *Store) CredentialSources() store.CredentialSourceStore {
+	return &credentialSourceStore{db: s.db}
+}
 func (s *Store) MCPCatalog() store.MCPCatalogStore      { return &mcpCatalogStore{db: s.db} }
 func (s *Store) AgentProfiles() store.AgentProfileStore { return &agentProfileStore{db: s.db} }
 func (s *Store) ToolCache() store.ToolCacheStore        { return &toolCacheStore{db: s.db} }

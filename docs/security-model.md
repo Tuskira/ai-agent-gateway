@@ -441,6 +441,39 @@ behind explicit config, off by default:
   symlinks) is re-checked against the root, so a symlink planted under
   the root cannot be used to read a file outside it.
 
+## External credential service: two hops of trust
+
+The `external_service` header provider (off unless
+`secret_store.external_service.enabled`) adds a second network hop to
+credential resolution:
+
+1. **Agent to gateway.** The caller authenticates with its gateway API key.
+   The tenant comes from that key, never from the connector config or the
+   request.
+2. **Gateway to credential service.** The gateway calls the tenant's
+   registered service over HTTPS with `Authorization: Bearer <token>`, where
+   the token is a credential in the tenant's own encrypted store. The call
+   dials through `internal/netguard`, so the service is subject to the same
+   egress policy as connector endpoints: loopback, private and metadata
+   addresses are refused unless allowlisted, the resolved IP is checked at
+   connect time, and redirects are capped. Plain `http` is accepted only for
+   a loopback or private address the egress policy already allows.
+
+The service sees the gateway tenant id, connector slug, header name and the
+requested `credential_id`/`field`, and returns the secret value. It must
+check the token and the tenant itself: the gateway does not trust it with
+anything beyond answering for that tenant, and it never receives the
+caller's API key. A credential source holds no secret, only the service URL
+and the name of the token credential, so reading a source over the API
+reveals nothing secret. The token itself is only readable through the
+existing credential store, never through the source routes.
+
+Within the gateway, a header resolves only through a source of the caller's
+own tenant that is enabled and belongs to the header's provider; anything
+else fails the header and logs a warning naming the source. Resolved values
+are cached in memory per tenant for at most `cache_ttl` and are dropped on a
+backend `401`, on any edit or delete of a source, and on restart.
+
 ## Server-initiated MCP requests: off by default, and why
 
 A connector (backend MCP server) can ask the gateway to relay

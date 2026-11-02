@@ -43,6 +43,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("APIKeyLimits", func(t *testing.T) { testAPIKeyLimits(t, newStore(t)) })
 	t.Run("Credentials", func(t *testing.T) { testCredentials(t, newStore(t)) })
 	t.Run("Connectors", func(t *testing.T) { testConnectors(t, newStore(t)) })
+	t.Run("CredentialSources", func(t *testing.T) { testCredentialSources(t, newStore(t)) })
 	t.Run("MCPCatalog", func(t *testing.T) { testMCPCatalog(t, newStore(t)) })
 	t.Run("AgentProfiles", func(t *testing.T) { testAgentProfiles(t, newStore(t)) })
 	t.Run("ToolCache", func(t *testing.T) { testToolCache(t, newStore(t)) })
@@ -610,6 +611,141 @@ func testConnectors(t *testing.T, s store.Store) {
 	again := &store.Connector{TenantID: tenantA.ID, Name: "Again", Slug: c.Slug, Endpoint: "https://mcp.example.com/again", TimeoutMS: 1000}
 	if err := s.Connectors().Create(ctx, again); err != nil {
 		t.Errorf("Create with a soft-deleted connector's slug: %v", err)
+	}
+}
+
+func testCredentialSources(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	cs := s.CredentialSources()
+
+	tenantA := mustCreateTenant(t, ctx, s, "src-a")
+	tenantB := mustCreateTenant(t, ctx, s, "src-b")
+
+	name := unique("vault")
+	src := &store.CredentialSource{
+		TenantID: tenantA.ID,
+		Name:     name,
+		Provider: "external_service",
+		Config:   map[string]any{"url": "https://creds.example.com", "auth_credential": "vault-auth"},
+		Enabled:  true,
+	}
+	if err := cs.Create(ctx, src); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if src.ID == "" || src.CreatedAt.IsZero() {
+		t.Fatalf("Create did not populate ID/CreatedAt: %+v", src)
+	}
+
+	byID, err := cs.Get(ctx, tenantA.ID, src.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if byID.Name != name || byID.Provider != "external_service" || !byID.Enabled || byID.Config["url"] != "https://creds.example.com" {
+		t.Errorf("Get = %+v", byID)
+	}
+	byName, err := cs.GetByName(ctx, tenantA.ID, name)
+	if err != nil {
+		t.Fatalf("GetByName: %v", err)
+	}
+	if byName.ID != src.ID {
+		t.Errorf("GetByName.ID = %q, want %q", byName.ID, src.ID)
+	}
+
+	// Tenant isolation.
+	if _, err := cs.Get(ctx, tenantB.ID, src.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Get(tenantB) error = %v, want ErrNotFound", err)
+	}
+	if _, err := cs.GetByName(ctx, tenantB.ID, name); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetByName(tenantB) error = %v, want ErrNotFound", err)
+	}
+	if list, err := cs.List(ctx, tenantB.ID); err != nil || len(list) != 0 {
+		t.Errorf("List(tenantB) = %v, %v; want empty", list, err)
+	}
+	if err := cs.SoftDelete(ctx, tenantB.ID, src.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SoftDelete(tenantB) error = %v, want ErrNotFound", err)
+	}
+	cross := *byID
+	cross.TenantID = tenantB.ID
+	cross.Name = unique("hijack")
+	if err := cs.Update(ctx, &cross); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Update(tenantB) error = %v, want ErrNotFound", err)
+	}
+
+	// Missing rows.
+	if _, err := cs.Get(ctx, tenantA.ID, uuid.NewString()); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Get(unknown) error = %v, want ErrNotFound", err)
+	}
+	if _, err := cs.GetByName(ctx, tenantA.ID, "no-such-source"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetByName(unknown) error = %v, want ErrNotFound", err)
+	}
+
+	// Names are unique per tenant; the same name in another tenant is fine.
+	dup := &store.CredentialSource{TenantID: tenantA.ID, Name: name, Provider: "external_service", Enabled: true}
+	if err := cs.Create(ctx, dup); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("Create(duplicate name) error = %v, want ErrConflict", err)
+	}
+	other := &store.CredentialSource{TenantID: tenantB.ID, Name: name, Provider: "external_service", Enabled: true}
+	if err := cs.Create(ctx, other); err != nil {
+		t.Errorf("Create(same name, other tenant) error = %v", err)
+	}
+
+	// Update writes name, config and enabled; provider stays.
+	second := &store.CredentialSource{TenantID: tenantA.ID, Name: unique("second"), Provider: "external_service", Enabled: true}
+	if err := cs.Create(ctx, second); err != nil {
+		t.Fatalf("Create second: %v", err)
+	}
+	newName := unique("vault-renamed")
+	src.Name = newName
+	src.Config = map[string]any{"url": "https://creds2.example.com", "auth_credential": "vault-auth"}
+	src.Enabled = false
+	src.Provider = "something_else"
+	if err := cs.Update(ctx, src); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	byID, err = cs.Get(ctx, tenantA.ID, src.ID)
+	if err != nil {
+		t.Fatalf("Get after Update: %v", err)
+	}
+	if byID.Name != newName || byID.Enabled || byID.Config["url"] != "https://creds2.example.com" {
+		t.Errorf("Update did not persist: %+v", byID)
+	}
+	if byID.Provider != "external_service" {
+		t.Errorf("Update changed Provider to %q; it is immutable", byID.Provider)
+	}
+	src.Name = second.Name
+	if err := cs.Update(ctx, src); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("Update(colliding name) error = %v, want ErrConflict", err)
+	}
+	src.Name = newName
+
+	list, err := cs.List(ctx, tenantA.ID)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("List(tenantA) len = %d, want 2", len(list))
+	}
+
+	// SoftDelete hides the row and frees its name.
+	if err := cs.SoftDelete(ctx, tenantA.ID, src.ID); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+	if _, err := cs.Get(ctx, tenantA.ID, src.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Get after SoftDelete error = %v, want ErrNotFound", err)
+	}
+	if _, err := cs.GetByName(ctx, tenantA.ID, newName); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetByName after SoftDelete error = %v, want ErrNotFound", err)
+	}
+	if err := cs.SoftDelete(ctx, tenantA.ID, src.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second SoftDelete error = %v, want ErrNotFound", err)
+	}
+	list, _ = cs.List(ctx, tenantA.ID)
+	if len(list) != 1 || list[0].ID != second.ID {
+		t.Errorf("List after SoftDelete = %+v, want only the second source", list)
+	}
+	again := &store.CredentialSource{TenantID: tenantA.ID, Name: newName, Provider: "external_service", Enabled: true}
+	if err := cs.Create(ctx, again); err != nil {
+		t.Errorf("Create with a deleted source's name: %v", err)
 	}
 }
 

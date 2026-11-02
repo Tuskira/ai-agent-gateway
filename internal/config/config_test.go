@@ -930,3 +930,43 @@ func TestValidate_ConnectorDefaultTimeoutRange(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalServiceConfig(t *testing.T) {
+	def := Default()
+	es := def.SecretStore.ExternalService
+	if es.Enabled || es.Timeout != 5*time.Second || es.CacheTTL != 5*time.Minute {
+		t.Fatalf("default external_service = %+v, want disabled, 5s, 5m", es)
+	}
+
+	t.Setenv("GATEWAY_SECRET_STORE_EXTERNAL_SERVICE_ENABLED", "true")
+	t.Setenv("GATEWAY_SECRET_STORE_EXTERNAL_SERVICE_TIMEOUT", "2s")
+	t.Setenv("GATEWAY_SECRET_STORE_EXTERNAL_SERVICE_CACHE_TTL", "90s")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	es = cfg.SecretStore.ExternalService
+	if !es.Enabled || es.Timeout != 2*time.Second || es.CacheTTL != 90*time.Second {
+		t.Errorf("env overlay external_service = %+v", es)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*ExternalService)
+		wantErr bool
+	}{
+		{"disabled ignores zero values", func(e *ExternalService) { e.Enabled, e.Timeout, e.CacheTTL = false, 0, 0 }, false},
+		{"enabled with defaults", func(e *ExternalService) { e.Enabled = true }, false},
+		{"enabled zero timeout", func(e *ExternalService) { e.Enabled, e.Timeout = true, 0 }, true},
+		{"enabled negative cache_ttl", func(e *ExternalService) { e.Enabled, e.CacheTTL = true, -time.Second }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Default()
+			tc.mutate(&c.SecretStore.ExternalService)
+			err := c.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}

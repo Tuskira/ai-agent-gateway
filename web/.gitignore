@@ -24,3 +24,4 @@ coverage
 *.sln
 *.sw?
 dist-lib
+*.tgz

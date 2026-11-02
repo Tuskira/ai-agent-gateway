@@ -65,42 +65,51 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Publishes the console as the npm library @tuskira/gateway-web. Needs an
-  # NPM_TOKEN repository secret; without it the build still runs and the
-  # publish step is skipped so tagged releases do not fail.
-  npm-publish:
-    name: publish console to npm
+  # Packs the console as the library @tuskira/gateway-web and attaches the
+  # tarball to the GitHub Release that the release job creates. The package
+  # is not published to the npm registry. This job is not a dependency of
+  # the release job, so a failure here cannot fail the Go release.
+  console-tarball:
+    name: attach console library tarball
+    needs: release
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write # npm provenance
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      contents: write # upload the asset to the GitHub Release
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
-          registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: build library
+      - name: install
         working-directory: web
-        run: |
-          npm ci
-          npm run build:lib
+        run: npm ci
 
+      # The tarball version always equals the release tag. npm version
+      # exits non-zero when the version is already current, so skip it then.
       - name: set version from tag
         working-directory: web
         env:
           TAG: ${{ github.ref_name }}
-        run: npm version --no-git-tag-version "${TAG#v}"
+        run: |
+          version="${TAG#v}"
+          if [ "$(node -p "require('./package.json').version")" != "$version" ]; then
+            npm version --no-git-tag-version "$version"
+          fi
 
-      - name: publish
-        if: env.NPM_TOKEN != ''
+      - name: build library
         working-directory: web
+        run: npm run build:lib
+
+      - name: pack
+        working-directory: web
+        run: npm pack
+
+      - name: upload to release
         env:
-          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" web/tuskira-gateway-web-*.tgz --clobber

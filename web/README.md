@@ -38,13 +38,18 @@ make ui-build   # from the repo root
 
 ## Using the console as a library
 
-The console is also published to npm as `@tuskira/gateway-web`, so you can mount its pages
-inside your own React app. React, React DOM, React Router (`react-router-dom` 7) and
-TanStack Query 5 are peer dependencies; everything else installs with the package.
+The console is also packaged as `@tuskira/gateway-web`, so you can mount its pages
+inside your own React app. The package is not on the npm registry. Each GitHub release
+carries it as a tarball, and its version always matches the gateway release tag. React,
+React DOM, React Router (`react-router-dom` 7) and TanStack Query 5 are peer dependencies;
+everything else installs with the package.
 
 ```sh
-npm install @tuskira/gateway-web react react-dom react-router-dom @tanstack/react-query
+npm install https://github.com/Tuskira/ai-agent-gateway/releases/download/v<version>/tuskira-gateway-web-<version>.tgz \
+  react react-dom react-router-dom @tanstack/react-query
 ```
+
+npm records the tarball's integrity hash in `package-lock.json`.
 
 ```tsx
 import {
@@ -82,7 +87,7 @@ and response headers (`Authorization`, `X-CSRF-Token`, `X-Gateway-Acting-Tenant`
 cookies unchanged, or sign-in and CSRF checks will fail.
 
 Build the package with `npm run build:lib`, which writes `dist-lib/` (`index.js`, `types/`,
-`style.css`, `fonts.css`). The release workflow publishes it to npm on every `v*` tag.
+`style.css`, `fonts.css`). `npm pack` then produces the tarball; the release workflow attaches it to the GitHub release on every `v*` tag.
 
 ## Quality checks
 

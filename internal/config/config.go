@@ -799,6 +799,26 @@ type SecretStore struct {
 	// resolve under; ".." components and symlink escapes are rejected.
 	// Required when AllowFileProvider is true.
 	FileProviderRoot string `yaml:"file_provider_root"`
+
+	// ExternalService configures the "external_service" header provider,
+	// which resolves header values from a tenant's outside credential
+	// service (see CredentialSource in pkg/store). Off by default.
+	ExternalService ExternalService `yaml:"external_service"`
+}
+
+// ExternalService configures the "external_service" header provider. When
+// Enabled, the provider is registered and tenants can create credential
+// sources for it; each source names the service URL and a gateway
+// credential whose "token" field authenticates the gateway to it.
+type ExternalService struct {
+	// Enabled registers the provider. Default false.
+	Enabled bool `yaml:"enabled"`
+	// Timeout bounds one call to a credential service. Default 5s.
+	Timeout time.Duration `yaml:"timeout"`
+	// CacheTTL caps how long a resolved value is cached per tenant. The
+	// service's own ttl_seconds can shorten it, never lengthen it.
+	// Default 5m.
+	CacheTTL time.Duration `yaml:"cache_ttl"`
 }
 
 // Sinks configures the gateway's log sinks (pkg/sink and siblings): where
@@ -974,6 +994,11 @@ func Default() *Config {
 			ActiveKeyID:       "k1",
 			AllowEnvProvider:  false,
 			AllowFileProvider: false,
+			ExternalService: ExternalService{
+				Enabled:  false,
+				Timeout:  5 * time.Second,
+				CacheTTL: 5 * time.Minute,
+			},
 		},
 		Redis: Redis{
 			Enabled: false,
@@ -1303,6 +1328,14 @@ func (c *Config) Validate() error {
 
 	if c.SecretStore.AllowFileProvider && strings.TrimSpace(c.SecretStore.FileProviderRoot) == "" {
 		return fmt.Errorf("secret_store: file_provider_root is required when allow_file_provider is true")
+	}
+	if es := c.SecretStore.ExternalService; es.Enabled {
+		if es.Timeout <= 0 {
+			return fmt.Errorf("secret_store.external_service: timeout must be positive when enabled")
+		}
+		if es.CacheTTL <= 0 {
+			return fmt.Errorf("secret_store.external_service: cache_ttl must be positive when enabled")
+		}
 	}
 
 	if c.ToolCache.Enabled {

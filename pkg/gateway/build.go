@@ -47,7 +47,9 @@ type secretsDeps struct {
 // built-in resolvers plus the secret_store/env/file external providers
 // (env and file are always registered but gated internally by
 // cfg.SecretStore.AllowEnvProvider/AllowFileProvider -- see
-// internal/secrets.EnvProvider/FileProvider). It logs the active key id
+// internal/secrets.EnvProvider/FileProvider), and the external_service
+// provider only when secret_store.external_service.enabled is true. The
+// registry's credential-source lookup reads st.CredentialSources(). It logs the active key id
 // (never the key itself) and which providers are enabled.
 func buildSecretsDeps(cfg *config.Config, st store.Store, logger *slog.Logger) (*secretsDeps, error) {
 	ring, err := secrets.LoadKeyRing(cfg.SecretStore)
@@ -81,10 +83,20 @@ func buildSecretsDeps(cfg *config.Config, st store.Store, logger *slog.Logger) (
 		return nil, fmt.Errorf("register file provider: %w", err)
 	}
 
+	es := cfg.SecretStore.ExternalService
+	if es.Enabled {
+		provider := secrets.NewExternalServiceProvider(svc.Fetcher(), es.Timeout, es.CacheTTL)
+		if err := registry.RegisterExternal(provider); err != nil {
+			return nil, fmt.Errorf("register external_service provider: %w", err)
+		}
+	}
+	registry.SetSourceLookup(dataplaneheaders.StoreSourceLookup(st.CredentialSources()))
+
 	logger.Info("header providers registered",
 		"secret_store", true,
 		"env_enabled", cfg.SecretStore.AllowEnvProvider,
 		"file_enabled", cfg.SecretStore.AllowFileProvider,
+		"external_service_enabled", es.Enabled,
 	)
 
 	return &secretsDeps{Service: svc, Registry: registry}, nil

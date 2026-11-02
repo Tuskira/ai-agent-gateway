@@ -54,3 +54,74 @@ type Invalidator interface {
 // (e.g. gcp_wif's credential_config) reach the secret store, without a
 // direct dependency on its package.
 type CredentialFetcher func(ctx context.Context, tenantID, credentialName, field string) (string, error)
+
+// ---------------------------------------------------------------------------
+// Credential sources
+// ---------------------------------------------------------------------------
+
+// Source is a tenant-scoped credential source: a named, stored set of
+// non-secret settings (for example the base URL of an outside credential
+// service and the name of the gateway credential that authenticates to
+// it) that a provider needs in addition to one header's own config.
+//
+// A header opts into a source with a top-level "source" key next to
+// "provider":
+//
+//	{"type": "external", "provider": "external_service", "source": "vault-a",
+//	 "config": {"credential_id": "splunk-prod", "field": "token"}}
+//
+// The header registry loads the named source for the caller's own tenant,
+// checks it is enabled and belongs to the same provider, and hands it to
+// the provider through the request context (see ResolveInfoFrom). The
+// ExternalProvider.Resolve signature is unchanged, so providers that do
+// not use sources are unaffected.
+type Source struct {
+	ID       string
+	TenantID string
+	Name     string
+	Provider string
+	Enabled  bool
+	// Config is the source's non-secret settings, shaped by the provider's
+	// SourceSchema.
+	Config map[string]any
+}
+
+// SourceSchemaProvider is implemented by an ExternalProvider whose headers
+// need a credential source. SourceSchema describes a source's Config for
+// the admin UI (GET /api/v1/headers/providers returns it as
+// source_schema); ValidateSource checks a source's Config when it is
+// created or updated.
+type SourceSchemaProvider interface {
+	SourceSchema() map[string]any
+	ValidateSource(cfg map[string]any) error
+}
+
+// SourceTester is implemented by a SourceSchemaProvider that can check a
+// source's reachability and authentication without resolving any secret
+// (POST /api/v1/credential-sources/{id}/test).
+type SourceTester interface {
+	TestSource(ctx context.Context, src Source) error
+}
+
+// ResolveInfo is request-scoped context a provider may read while
+// resolving one header: which connector and header it is resolving for,
+// and the credential source the header names (nil when it names none).
+// Every field is optional; a provider must cope with any being empty.
+type ResolveInfo struct {
+	ConnectorSlug string
+	HeaderName    string
+	Source        *Source
+}
+
+type resolveInfoKey struct{}
+
+// WithResolveInfo returns ctx carrying info.
+func WithResolveInfo(ctx context.Context, info ResolveInfo) context.Context {
+	return context.WithValue(ctx, resolveInfoKey{}, info)
+}
+
+// ResolveInfoFrom returns the ResolveInfo carried by ctx, if any.
+func ResolveInfoFrom(ctx context.Context) (ResolveInfo, bool) {
+	info, ok := ctx.Value(resolveInfoKey{}).(ResolveInfo)
+	return info, ok
+}

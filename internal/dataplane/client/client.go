@@ -472,6 +472,9 @@ func (c *Client) applyConnectorHeaders(ctx context.Context, httpReq *http.Reques
 		return nil
 	}
 
+	// Providers may read which connector they resolve for (the registry
+	// adds the header name and any credential source).
+	ctx = pkgheaders.WithResolveInfo(ctx, pkgheaders.ResolveInfo{ConnectorSlug: call.Connector.Slug})
 	for name, cfg := range configs {
 		value, err := c.headers.Resolve(ctx, name, cfg, call.Inbound)
 		if errors.Is(err, dpheaders.ErrBearerForwardingDisabled) {

@@ -510,3 +510,21 @@ func TestInvalidateSlugIsCorrectAfterARename(t *testing.T) {
 		t.Fatal("InvalidateSlug did not drop the cached allow-list keyed by the row's own slug")
 	}
 }
+
+func TestMonitoredGrant(t *testing.T) {
+	f := newFixture(t, profile.Options{})
+	f.createProfile(t, "Watcher", []store.ProfileTool{
+		{ConnectorID: f.connA.ID, ToolName: "search", Permission: store.PermissionMonitor},
+		{ConnectorID: f.connA.ID, ToolName: "read"},
+	})
+	allow, err := f.enforcer.Resolve(context.Background(), tenant, "Watcher")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allow.Allows(f.connA.ID, "search") || !allow.Monitored(f.connA.ID, "search") {
+		t.Error("a monitored grant must allow and be monitored")
+	}
+	if !allow.Allows(f.connA.ID, "read") || allow.Monitored(f.connA.ID, "read") {
+		t.Error("an allow grant must not be monitored")
+	}
+}

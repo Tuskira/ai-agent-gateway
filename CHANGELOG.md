@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`cut`). `/suspend` and `/resume` are shorthands. Keys report
   `containment`, `suspended_at`, `restricted_at` and `containment_note`.
   Migration `000012` adds the columns.
+- **Monitored tool grants.** A profile grant takes `permission: "monitor"`:
+  the call runs and is reported to the detection agent with its arguments.
+- **Detection events.** With `llm_proxy.detection.agent_url` set, every MCP
+  tool call (with its profile outcome) and every request refused for a
+  suspended, revoked or expired key is posted to the agent's `/v1/events`.
 - `GET /api/v1/auth/me` reports the caller's resolved `permissions`.
 
 ## [0.7.0] - 2026-11-02

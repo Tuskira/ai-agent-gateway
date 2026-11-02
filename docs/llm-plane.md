@@ -432,6 +432,30 @@ Fields are only ever added; `v` stays `1`.
 - The agent should accept fast and shed load itself; the gateway never
   waits for it.
 
+### Events
+
+With `agent_url` set the gateway also posts its events, what it did that
+is not a model call, to `POST {agent_url}/v1/events` (`{"events":[...]}`,
+answered `202`), in batches of up to 500, at most every 200 ms, off the
+request path (a full queue of 4096 drops, counted under `/health`
+`detection_events` on the LLM plane):
+
+- `kind: "tool_call"`: every MCP `tools/call` routed to a connector, with
+  `tenant_id`, `session_id`, `key_id`, `principal`, `plane: "mcp"`,
+  `profile`, `connector_id`, `server` (the connector's slug), `tool`
+  (unprefixed) and `outcome`: `allowed`, `monitored` (granted with
+  permission `monitor`; the call runs, and only then `arguments` carries
+  its arguments as JSON, cut at 16 KiB), `denied` (not granted) or
+  `restricted` (the key is restricted; see
+  [api.md](api.md#key-containment)).
+- `kind: "refused"`: a request refused because its key is suspended,
+  revoked or expired: `plane` (`mcp`, `llm` or `api`), `outcome:
+  "refused"`, `reason` (`key suspended`, `key revoked`, `key expired`) and
+  `detail` (`POST /v1/messages`).
+
+Every event has `v: 1` and `at`. The agent redacts `arguments` before
+forwarding them to its engine.
+
 ## Streaming
 
 The plane relays the upstream response to the client via

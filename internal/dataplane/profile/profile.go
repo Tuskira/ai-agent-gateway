@@ -74,11 +74,12 @@ type AllowList struct {
 	// rules as Skills.
 	Commands []ResolvedSkill
 
-	// tools maps connector id to the set of unprefixed tool names
-	// granted on that connector. Keying on the connector id, rather
-	// than on a bare tool name, is what stops a grant of "search" on
-	// one connector from also unlocking "search" on another.
-	tools map[string]map[string]struct{}
+	// tools maps connector id to the unprefixed tool names granted on
+	// that connector, each with its permission (store.PermissionAllow or
+	// store.PermissionMonitor). Keying on the connector id, rather than
+	// on a bare tool name, is what stops a grant of "search" on one
+	// connector from also unlocking "search" on another.
+	tools map[string]map[string]string
 }
 
 // FindSkill returns the attached kind="skill" row named name, if any.
@@ -108,6 +109,13 @@ func (a AllowList) Allows(connectorID, toolName string) bool {
 	}
 	_, ok := a.tools[connectorID][toolName]
 	return ok
+}
+
+// Monitored reports whether the grant of toolName on the connector is
+// "monitor": the call runs, and the MCP plane reports it as a monitored
+// call (to the detection agent, when one is configured).
+func (a AllowList) Monitored(connectorID, toolName string) bool {
+	return a.Found && a.tools[connectorID][toolName] == store.PermissionMonitor
 }
 
 // AllowsConnector reports whether the profile grants at least one tool
@@ -274,7 +282,7 @@ func (e *Enforcer) load(ctx context.Context, tenantID, profileName, slug string)
 
 	allow.Found = true
 	allow.Instructions = prof.Instructions
-	allow.tools = make(map[string]map[string]struct{}, len(tools))
+	allow.tools = make(map[string]map[string]string, len(tools))
 
 	// A profile row may store a tool name either bare ("echo") or
 	// already qualified ("everything__echo"), depending on which
@@ -304,9 +312,13 @@ func (e *Enforcer) load(ctx context.Context, tenantID, profileName, slug string)
 
 		bare := strings.TrimPrefix(pt.ToolName, connName+"__")
 		if allow.tools[pt.ConnectorID] == nil {
-			allow.tools[pt.ConnectorID] = make(map[string]struct{})
+			allow.tools[pt.ConnectorID] = make(map[string]string)
 		}
-		allow.tools[pt.ConnectorID][bare] = struct{}{}
+		perm := pt.Permission
+		if perm == "" {
+			perm = store.PermissionAllow
+		}
+		allow.tools[pt.ConnectorID][bare] = perm
 	}
 
 	if err := e.loadSkills(ctx, tenantID, prof.ID, &allow); err != nil {

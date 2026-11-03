@@ -134,7 +134,7 @@ type ToolCall struct {
 	SessionID   string // the MCP session id, when there is one
 	Profile     string // the profile that applied; "" when none
 	ConnectorID string
-	Server      string // the connector's slug ("" when the call was refused before routing)
+	Server      string // the connector's slug (a restricted call to an unknown connector: its tool-name namespace)
 	Tool        string // unprefixed tool name (the qualified name before routing)
 	Outcome     string // allowed | monitored | denied | restricted
 	// Arguments is the call's arguments as JSON, set for a monitored call
@@ -817,7 +817,9 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 	// A restricted key (containment) may call models but no tool: refuse
 	// before anything is resolved or routed.
 	if in.Principal.ToolsRestricted {
-		o.toolCall(ctx, in, ToolCall{Tool: params.Name, Outcome: ToolCallRestricted})
+		if tc, ok := o.restrictedToolCall(ctx, in, params.Name); ok {
+			o.toolCall(ctx, in, tc)
+		}
 		return o.fail(in, mcp.NewError(mcp.ErrorCodeToolNotAllowed, restrictedMessage, map[string]any{"tool": params.Name}))
 	}
 
@@ -902,6 +904,30 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 		Response:    mcp.NewSuccessResponse(in.JSONRPC.ID, out),
 		ConnectorID: route.Connector.ID,
 	}
+}
+
+// restrictedToolCall names a restricted key's refused tools/call the way
+// a routed call is named -- server is the connector's slug, connector id
+// its id, tool the unprefixed name -- so its event is as complete as an
+// allowed or denied one. The connector is looked up with no health gate
+// (the call is not routed, so it must not spend an unhealthy connector's
+// probe). When no enabled connector answers to the namespace, server is
+// the namespace itself and connector id is empty. A name with no
+// namespace reports nothing (ok false), as an unroutable name does for an
+// unrestricted key: an event with no server is refused by the receiver,
+// along with the rest of its batch.
+func (o *Orchestrator) restrictedToolCall(ctx context.Context, in Request, qualified string) (ToolCall, bool) {
+	namespace, tool, err := router.ParseToolName(qualified)
+	if err != nil {
+		o.log.Info("tools/call refused for a restricted key; no event for a tool name with no connector namespace",
+			"tool", qualified, "key_id", in.Principal.KeyID)
+		return ToolCall{}, false
+	}
+	tc := ToolCall{Server: namespace, Tool: tool, Outcome: ToolCallRestricted}
+	if conn, err := o.deps.Router.Lookup(ctx, in.Principal.TenantID, namespace); err == nil {
+		tc.ConnectorID, tc.Server = conn.ID, conn.Slug
+	}
+	return tc, true
 }
 
 // toolCallFailure turns a failed backend call into the right answer for

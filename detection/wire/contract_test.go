@@ -100,6 +100,51 @@ func TestGatewayContractFixtures(t *testing.T) {
 		},
 	}
 	sameJSON("turn_batch.json", batch)
+
+	// The inline request stage (POST /v1/turns/request): the raw body with
+	// the gateway's reading of it, here a Bedrock converse request.
+	var gotReq TurnRequest
+	if err := json.Unmarshal(read("turn_request.json"), &gotReq); err != nil {
+		t.Fatal(err)
+	}
+	sameJSON("turn_request.json", gotReq)
+	req := TurnRequest{
+		ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "session-1", KeyID: "key-1",
+		Principal: "user-1", Model: "amazon.nova-pro-v1:0", Path: "/model/amazon.nova-pro-v1:0/converse",
+		At:      time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		Request: []byte(`{"system":[{"text":"be brief"}],"messages":[{"role":"user","content":[{"text":"hello"}]}],"inferenceConfig":{"maxTokens":64}}`),
+		Dialect: "bedrock_converse", Op: OpGenerate,
+		Conversation: &Conversation{Version: ConversationVersion, System: text("be brief"),
+			Messages: []Message{{Role: "user", Content: text("hello")}}, History: HistoryFull},
+	}
+	sameJSON("turn_request.json", req)
+	if c := req.Call(); c.Conversation != req.Conversation || string(c.Request) != string(req.Request) {
+		t.Errorf("Call of the fixture: %+v", c)
+	}
+	if m := MetaOf(req); m.Dialect != "bedrock_converse" || m.Op != OpGenerate || m.Model != "amazon.nova-pro-v1:0" || m.RequestID != req.ID {
+		t.Errorf("MetaOf the fixture: %+v", m)
+	}
+}
+
+// TurnRequest.Call follows Turn.Call's rule: the canonical conversation
+// only when the gateway read it without error, in a version this agent
+// knows; else (an older gateway, which sends none) the raw body alone.
+func TestTurnRequestCall(t *testing.T) {
+	c := &Conversation{Version: ConversationVersion, History: HistoryFull,
+		Messages: []Message{{Role: "user", Content: []ContentBlock{{Type: ContentText, Text: "hi"}}}}}
+	base := TurnRequest{Request: []byte(`{"messages":[]}`), Conversation: c}
+	if got := base.Call(); got.Conversation != c || string(got.Request) != string(base.Request) || got.Answer != nil {
+		t.Errorf("read request: %+v", got)
+	}
+	failed := base
+	failed.NormalizeError = "decode request: cut"
+	newer := base
+	newer.Conversation = &Conversation{Version: ConversationVersion + 1}
+	for name, tr := range map[string]TurnRequest{"normalize_error": failed, "newer version": newer, "older gateway": {Request: base.Request}} {
+		if got := tr.Call(); got.Conversation != nil || string(got.Request) != string(base.Request) {
+			t.Errorf("%s: %+v; want the raw body only", name, got)
+		}
+	}
 }
 
 // Call hands package turn the canonical forms only when the gateway read

@@ -111,8 +111,10 @@ type Agent struct {
 	warned map[string]int64
 	// stats are the counts /healthz reports.
 	stats stats
-	// prepareRequest prepares an inline request (a test replaces it).
-	prepareRequest func(context.Context, []byte) turn.PreparedTurn
+	// prepareRequest prepares an inline request stage (a test replaces
+	// it): from its canonical conversation when the gateway sent one, else
+	// from the raw body.
+	prepareRequest func(context.Context, turn.Call) turn.PreparedTurn
 	// side forwards the gateway's events and the tenant's observations.
 	side *sideband
 }
@@ -223,7 +225,7 @@ func New(cfg Config) *Agent {
 		warned:   map[string]int64{},
 		now:      time.Now,
 
-		prepareRequest: turn.PrepareRequestContext,
+		prepareRequest: turn.PrepareCallRequest,
 	}
 	a.startSideband()
 	for range cfg.MaxInFlight {
@@ -430,6 +432,13 @@ func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
 	p := a.policy(r.Context(), t.TenantID)
 	v := wire.Verdict{WantResponse: p.WantResponse}
 	m := wire.MetaOf(t)
+	// The request is read from the canonical conversation when the gateway
+	// sent one (wire.TurnRequest.Call: the same shape, whatever the wire
+	// format, as the tee's turn), else from the raw body as before.
+	call := t.Call()
+	if call.Conversation != nil {
+		m.History = history(call.Conversation.History)
+	}
 	// An inline tenant's request is judged here, MaxInFlight at most at
 	// once; past that it goes to the background queue unjudged inline
 	// (fails open, as an engine failure does).
@@ -437,12 +446,13 @@ func (a *Agent) turnRequest(w http.ResponseWriter, r *http.Request) {
 		defer func() { <-a.inline }()
 		ctx, cancel := context.WithTimeout(r.Context(), a.cfg.EngineTimeout)
 		defer cancel()
-		v.Block = a.judgeInline(ctx, m, t.Request)
+		v.Block = a.judgeInline(ctx, m, call)
 		answerJSON(w, v)
 		return
 	}
-	queued := a.background(len(t.Request), stageOf(m, turn.StageRequest, func(ctx context.Context) (turn.PreparedTurn, bool) {
-		return a.prepareRequest(ctx, t.Request), true
+	size := len(t.Request) + int(conversationBytes(call.Conversation))
+	queued := a.background(size, stageOf(m, turn.StageRequest, func(ctx context.Context) (turn.PreparedTurn, bool) {
+		return a.prepareRequest(ctx, call), true
 	}))
 	answerJSON(w, v)
 	if !queued {
@@ -486,10 +496,10 @@ func (a *Agent) acquireInline() bool {
 
 // judgeInline judges a request before it is forwarded. Any engine failure
 // fails open: the call goes through unjudged rather than being refused.
-func (a *Agent) judgeInline(ctx context.Context, m wire.Meta, body []byte) *wire.Block {
+func (a *Agent) judgeInline(ctx context.Context, m wire.Meta, call turn.Call) *wire.Block {
 	start := time.Now()
 	pt, _ := a.prepare(ctx, m, stageOf(m, turn.StageRequest, func(ctx context.Context) (turn.PreparedTurn, bool) {
-		return a.prepareRequest(ctx, body), true
+		return a.prepareRequest(ctx, call), true
 	}))
 	prepared := time.Since(start)
 	res, err := a.detect(ctx, wire.DetectRequest{Sync: true, Meta: m, Turn: pt})
@@ -501,7 +511,7 @@ func (a *Agent) judgeInline(ctx context.Context, m wire.Meta, body []byte) *wire
 	} else {
 		a.sent(pt)
 	}
-	debugTurn(m, string(turn.StageRequest), returned, 1-returned, len(body), prepared)
+	debugTurn(m, string(turn.StageRequest), returned, 1-returned, len(call.Request), prepared)
 	if res == nil {
 		return nil
 	}

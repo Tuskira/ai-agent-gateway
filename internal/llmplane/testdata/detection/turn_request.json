@@ -1,0 +1,34 @@
+{
+  "id": "req_0123456789abcdef",
+  "tenant_id": "tenant-1",
+  "session_id": "session-1",
+  "key_id": "key-1",
+  "principal": "user-1",
+  "model": "amazon.nova-pro-v1:0",
+  "path": "/model/amazon.nova-pro-v1:0/converse",
+  "at": "2026-01-02T03:04:05Z",
+  "request": "eyJzeXN0ZW0iOlt7InRleHQiOiJiZSBicmllZiJ9XSwibWVzc2FnZXMiOlt7InJvbGUiOiJ1c2VyIiwiY29udGVudCI6W3sidGV4dCI6ImhlbGxvIn1dfV0sImluZmVyZW5jZUNvbmZpZyI6eyJtYXhUb2tlbnMiOjY0fX0=",
+  "dialect": "bedrock_converse",
+  "op": "generate",
+  "conversation": {
+    "cv": 1,
+    "system": [
+      {
+        "type": "text",
+        "text": "be brief"
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "hello"
+          }
+        ]
+      }
+    ],
+    "history": "full"
+  }
+}

@@ -25,6 +25,9 @@ import (
 //
 //	GET  {agent}/v1/policy?tenant_id=   -> teePolicy
 //	POST {agent}/v1/turns/request       teeTurnRequest -> teeVerdict
+//
+// The request stage carries the body read into the canonical conversation
+// (as the tee's turn does), pinned by testdata/detection/turn_request.json.
 
 // ruleBlockStatus is a refused call's status. 400 invalid_request_error,
 // not 403: agent clients read a 403 as their own credential failing
@@ -49,17 +52,39 @@ type teePolicy struct {
 }
 
 // teeTurnRequest is the request stage of one call, handed over before it is
-// forwarded.
+// forwarded: the raw request body and, as in the turn the tee posts after
+// the call (teeTurn), the route's Dialect and Op and the body read through
+// the Dialect's Reader into the canonical Conversation (NormalizeError says
+// why it is missing). The agent judges the request from the Conversation
+// when it is there, so a wire format its own raw-body reader does not know
+// (Bedrock converse, Gemini) is judged the same way inline as in the tee;
+// an agent from before these fields ignores them and reads the raw body.
 type teeTurnRequest struct {
-	ID        string    `json:"id"`
-	TenantID  string    `json:"tenant_id"`
-	SessionID string    `json:"session_id,omitempty"`
-	KeyID     string    `json:"key_id,omitempty"`
-	Principal string    `json:"principal,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Path      string    `json:"path"`
-	At        time.Time `json:"at"`
-	Request   []byte    `json:"request"`
+	ID             string           `json:"id"`
+	TenantID       string           `json:"tenant_id"`
+	SessionID      string           `json:"session_id,omitempty"`
+	KeyID          string           `json:"key_id,omitempty"`
+	Principal      string           `json:"principal,omitempty"`
+	Model          string           `json:"model,omitempty"`
+	Path           string           `json:"path"`
+	At             time.Time        `json:"at"`
+	Request        []byte           `json:"request"`
+	Dialect        string           `json:"dialect,omitempty"`
+	Op             string           `json:"op,omitempty"`
+	Conversation   *teeConversation `json:"conversation,omitempty"`
+	NormalizeError string           `json:"normalize_error,omitempty"`
+}
+
+// normalize reads Request through the Dialect's Reader into Conversation,
+// exactly as teeTurn.normalize reads the request half of a turn. It runs
+// on the request path, only for a tenant judged inline.
+func (tr *teeTurnRequest) normalize() {
+	rd, noReader := generateReader(tr.Op, tr.Dialect)
+	if rd == nil {
+		tr.NormalizeError = noReader
+		return
+	}
+	tr.Conversation, tr.NormalizeError = readConversation(rd, tr.Dialect, tr.Request)
 }
 
 // teeVerdict is the agent's answer to a teeTurnRequest.
@@ -121,6 +146,7 @@ func (d *DetectionTee) judgeRequest(ctx context.Context, tr teeTurnRequest) (jud
 	if !d.tenantInline(ctx, tr.TenantID) {
 		return false, nil
 	}
+	tr.normalize()
 	b, err := json.Marshal(tr)
 	if err != nil {
 		d.inlineFail(tr.ID, err)
@@ -202,5 +228,6 @@ func (rt *router) inlineCheck(r *http.Request, route RouteInfo, info callInfo, s
 	return rt.tee.judgeRequest(ctx, teeTurnRequest{
 		ID: requestIDOf(ctx), TenantID: tenantOf(ctx), SessionID: sessionOf(ctx), KeyID: keyIDOf(ctx),
 		Principal: principalOf(ctx), Model: info.requestedModel, Path: r.URL.Path, At: start, Request: body,
+		Dialect: route.Reader, Op: route.Op,
 	})
 }

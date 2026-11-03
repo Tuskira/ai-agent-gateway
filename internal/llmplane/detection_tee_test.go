@@ -500,7 +500,7 @@ func TestDetectionTee_ContractFixtures(t *testing.T) {
 		tt.normalize()
 		return tt
 	}
-	sameJSON := func(name string, got teeTurn) {
+	sameJSON := func(name string, got any) {
 		t.Helper()
 		want, err := os.ReadFile(filepath.Join("testdata", "detection", name))
 		if err != nil {
@@ -525,6 +525,19 @@ func TestDetectionTee_ContractFixtures(t *testing.T) {
 		`{"type":"tool_use","id":"toolu_1","name":"get_time","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":1}}`))
 	sameJSON("turn_no_response.json", turn(http.StatusTooManyRequests, ""))
 	sameJSON("turn_batch.json", contractBatchTurn())
+
+	// The inline request stage (POST /v1/turns/request), read as
+	// judgeRequest reads it: a Bedrock converse body, whose content blocks
+	// the agent's raw-body reader does not know.
+	tr := teeTurnRequest{
+		ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "session-1", KeyID: "key-1",
+		Principal: "user-1", Model: "amazon.nova-pro-v1:0", Path: "/model/amazon.nova-pro-v1:0/converse",
+		At:      time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		Request: []byte(`{"system":[{"text":"be brief"}],"messages":[{"role":"user","content":[{"text":"hello"}]}],"inferenceConfig":{"maxTokens":64}}`),
+		Dialect: readerBedrockConverse, Op: routeGenerate,
+	}
+	tr.normalize()
+	sameJSON("turn_request.json", tr)
 }
 
 // contractBatchTurn is the turn of testdata/detection/turn_batch.json: a

@@ -357,7 +357,8 @@ asynchronously. The gateway ignores the response body. Byte fields are
 standard base64 of the raw bytes, so a body that is not valid UTF-8
 survives. Canonical examples (shared with the agent's tests) live in
 `internal/llmplane/testdata/detection/`: `turn.json`,
-`turn_no_response.json` and `turn_batch.json`; the canonical conversation each reader makes of a
+`turn_no_response.json` and `turn_batch.json` (and `turn_request.json`, the
+inline request stage of "Inline prevention" below); the canonical conversation each reader makes of a
 request, response and stream is in `internal/llmplane/testdata/conversation/`
 (the agent's tests read copies of both).
 
@@ -444,9 +445,14 @@ seconds per tenant; 5 seconds after a failed lookup). When the policy says
 `inline` (the engine has a rule that can refuse a request in that tenant's
 mode), the gateway posts the request stage, `POST {agent_url}/v1/turns/request`
 (`id`, `tenant_id`, `session_id`, `key_id`, `principal`, `model`, `path`,
-`at`, `request`), and waits for the verdict, at most
+`at`, `request`, and `dialect`, `op`, `conversation` and `normalize_error`
+with the same meaning as in the turn above: the raw body read through the
+route's reader, in the canonical shape, so the agent judges a Bedrock
+converse or Gemini request from the same text the tee sends after the
+call), and waits for the verdict, at most
 `llm_proxy.detection.inline_timeout` (default `10s`) for the lookup and the
-verdict together.
+verdict together. The request stage is pinned by
+`internal/llmplane/testdata/detection/turn_request.json`.
 
 - A verdict with `block` refuses the call with `400 invalid_request_error`
   and nothing is forwarded: `Blocked by gateway rule <rule_id> (OWASP

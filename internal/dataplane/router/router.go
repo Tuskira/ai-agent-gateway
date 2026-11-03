@@ -178,6 +178,14 @@ func (r *Router) ResolveConnector(ctx context.Context, tenantID, name string) (c
 	return conn, probe, nil
 }
 
+// Lookup finds the connector a qualifier names within tenantID with no
+// health gate: it never refuses an unhealthy connector and never spends
+// its half-open probe. It is for naming a connector a call will not be
+// routed to (a refused call's audit event), not for routing.
+func (r *Router) Lookup(ctx context.Context, tenantID, name string) (*store.Connector, error) {
+	return r.findConnector(ctx, tenantID, name)
+}
+
 // findConnector looks a connector up by slug first (the indexed unique
 // key) and falls back to a name match within the tenant, because the
 // tool prefix is the connector's NAME and a deployment may have named

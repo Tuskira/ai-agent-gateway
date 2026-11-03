@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A restricted key's tool-call events were lost.** A `tools/call` refused
+  because the caller's key is restricted (containment level `restrict`) was
+  reported as a `tool_call` event with no `server` and no `connector_id`,
+  and with the prefixed tool name, so the detection engine's
+  `POST /v1/events` refused it ("a tool_call needs a server and a tool") and
+  every restricted-call audit event, with the rest of its batch, was dropped.
+  The event now carries the connector's slug as `server`, its id as
+  `connector_id` and the unprefixed `tool`, as an allowed or denied call's
+  does. The connector is looked up without its health gate, so a refused
+  call never spends an unhealthy connector's probe; when the namespace names
+  no enabled connector, `server` is the namespace and `connector_id` is
+  empty; a tool name with no namespace reports no event. The other
+  refusals were not affected: a suspended, revoked or expired key reports a
+  `refused` event, which needs no server, and a denied call is reported
+  after routing.
+
 ## [0.8.1] - 2026-11-03
 
 ### Fixed

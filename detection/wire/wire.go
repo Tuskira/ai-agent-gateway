@@ -8,10 +8,12 @@
 //
 // The gateway does not import this package; it mirrors Turn field for field
 // (docs/llm-plane.md, "Detection agent"), pinned by the fixtures in
-// testdata/gateway. TurnRequest and Verdict are the older inline contract
-// (/v1/turns/request and /v1/turns/response), which the gateway's current
-// tee does not use. Every id is the gateway's request id, which also keys
-// the gateway's own logs.
+// testdata/gateway. TurnRequest and Verdict are the inline contract
+// (/v1/turns/request and /v1/turns/response): the gateway's inline
+// prevention uses the request route, pinned by turn_request.json; the
+// response route is kept for a gateway that holds a call for its response.
+// Every id is the gateway's request id, which also keys the gateway's own
+// logs.
 package wire
 
 import (
@@ -172,17 +174,37 @@ func MetaOfTurn(t Turn) Meta {
 // TurnRequest is one call's stage (inline contract) as the gateway hands it to the agent: the
 // client's raw request body and, for the response stage, the first 1 MiB of
 // what the client received.
+//
+// Dialect, Op, Conversation and NormalizeError are the request stage's, as
+// Turn carries them: the request read through the dialect's reader into
+// the canonical shape, when the gateway could read it. A gateway from
+// before them sends none, and the raw body is read instead.
 type TurnRequest struct {
-	ID        string    `json:"id"`
-	TenantID  string    `json:"tenant_id"`
-	SessionID string    `json:"session_id,omitempty"`
-	KeyID     string    `json:"key_id,omitempty"`
-	Principal string    `json:"principal,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Path      string    `json:"path"`
-	At        time.Time `json:"at"`
-	Request   []byte    `json:"request"`
-	Response  []byte    `json:"response,omitempty"`
+	ID             string        `json:"id"`
+	TenantID       string        `json:"tenant_id"`
+	SessionID      string        `json:"session_id,omitempty"`
+	KeyID          string        `json:"key_id,omitempty"`
+	Principal      string        `json:"principal,omitempty"`
+	Model          string        `json:"model,omitempty"`
+	Path           string        `json:"path"`
+	At             time.Time     `json:"at"`
+	Request        []byte        `json:"request"`
+	Response       []byte        `json:"response,omitempty"`
+	Dialect        string        `json:"dialect,omitempty"`
+	Op             string        `json:"op,omitempty"`
+	Conversation   *Conversation `json:"conversation,omitempty"`
+	NormalizeError string        `json:"normalize_error,omitempty"`
+}
+
+// Call is the stage as package turn prepares it, by Turn.Call's rule: the
+// raw bodies, with the canonical conversation only when the gateway read
+// it without error in a version this agent knows.
+func (t TurnRequest) Call() turn.Call {
+	c := turn.Call{Request: t.Request, Response: t.Response}
+	if t.NormalizeError == "" && t.Conversation != nil && t.Conversation.Version <= ConversationVersion {
+		c.Conversation = t.Conversation
+	}
+	return c
 }
 
 // Verdict is the agent's answer to a request-stage TurnRequest. Block is set
@@ -228,10 +250,11 @@ type Meta struct {
 	History string `json:"history,omitempty"`
 }
 
-// MetaOf is the Meta of a gateway turn.
+// MetaOf is the Meta of an inline stage, without History (MetaOfTurn's
+// rule).
 func MetaOf(t TurnRequest) Meta {
 	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID,
-		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path}
+		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
 }
 
 // Version is the agent→engine contract's version, sent as DetectRequest.V.

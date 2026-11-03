@@ -238,24 +238,16 @@ func (t *teeTurn) normalize() {
 		t.normalizeBatch()
 		return
 	}
-	var rd llm.Reader
-	if t.Op == routeGenerate && t.Dialect != "" {
-		rd, _ = llm.ReaderByName(t.Dialect)
-	}
+	rd, noReader := generateReader(t.Op, t.Dialect)
 	if rd == nil {
-		name := t.Dialect
-		if name == "" {
-			name = "this route"
-		}
-		t.NormalizeError = "no reader for " + name
+		t.NormalizeError = noReader
 		return
 	}
 	var errs []string
-	if req, err := rd.DecodeRequest(t.Request); err != nil {
-		errs = append(errs, "decode request: "+err.Error())
+	if c, err := readConversation(rd, t.Dialect, t.Request); err != "" {
+		errs = append(errs, err)
 	} else {
-		c := toConversation(req, t.Dialect)
-		t.Conversation = &c
+		t.Conversation = c
 	}
 	if len(t.Response) > 0 {
 		a, err := t.readAnswer(rd)
@@ -265,6 +257,36 @@ func (t *teeTurn) normalize() {
 		t.Answer = a
 	}
 	t.NormalizeError = strings.Join(errs, "; ")
+}
+
+// generateReader is the llm.Reader of a generate route's dialect, or nil
+// and the NormalizeError to say so: the route has no dialect, is not a
+// generation, or names a Reader that is not registered.
+func generateReader(op, dialect string) (llm.Reader, string) {
+	var rd llm.Reader
+	if op == routeGenerate && dialect != "" {
+		rd, _ = llm.ReaderByName(dialect)
+	}
+	if rd != nil {
+		return rd, ""
+	}
+	name := dialect
+	if name == "" {
+		name = "this route"
+	}
+	return nil, "no reader for " + name
+}
+
+// readConversation reads a request body through rd into the canonical
+// conversation; a body it cannot read comes back nil with the
+// NormalizeError that says why.
+func readConversation(rd llm.Reader, dialect string, body []byte) (*teeConversation, string) {
+	req, err := rd.DecodeRequest(body)
+	if err != nil {
+		return nil, "decode request: " + err.Error()
+	}
+	c := toConversation(req, dialect)
+	return &c, ""
 }
 
 // normalizeBatch reads a batch's requests through its Dialect's

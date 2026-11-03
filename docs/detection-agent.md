@@ -443,10 +443,17 @@ and the response stage when there is a response, each redacted. The
 These take a single stage (`wire.TurnRequest`: the same fields without `v`
 and `status_code`; `response` only on `/v1/turns/response`) and are the
 contract of a gateway that holds the call for a verdict and may refuse it.
+On `/v1/turns/request` the stage carries `dialect`, `op`, `conversation`
+and `normalize_error` as a turn does: the request is read from the
+canonical conversation when the gateway sent one (so a Bedrock converse or
+Gemini body, whose shape the raw-body reader does not know, is judged on
+its text), else from the raw body. A gateway from before these fields
+sends none and is read as before.
 The gateway in this repository uses `/v1/turns/request` only with
 `llm_proxy.detection.inline` on (then the whole turn still goes to
 `/v1/turns`, marked `request_judged`); `/v1/turns/response` is not used by
-it. Neither is covered by the gateway fixtures. On `/v1/turns/request` an `inline` tenant's call waits
+it. The request stage is pinned by the `turn_request.json` fixture; the
+response stage is not covered by the fixtures. On `/v1/turns/request` an `inline` tenant's call waits
 for the engine (up to `AGENT_ENGINE_TIMEOUT`, and the engine failing lets
 the call through), and a `blocking` rule in the answer is returned as
 `block`. At most `AGENT_MAX_IN_FLIGHT` inline judgments run at once; past

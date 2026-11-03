@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Inline prevention failed open for Bedrock converse requests.** The
+  request stage the gateway posts to the detection agent's
+  `POST /v1/turns/request` carried the raw body only, which the agent read in
+  the Anthropic Messages shape: a `/model/{id}/converse` or
+  `/converse-stream` body (content blocks with no `type`) came through with
+  no text, so a prompt a rule blocks on `/model/{id}/invoke` passed on
+  `/converse`. The request stage now also carries `dialect`, `op` and the
+  body read through the route's reader (`conversation`, `normalize_error`),
+  as the tee's turn does, and the agent judges from the conversation when it
+  is there; pinned by the new fixture `turn_request.json`. An older agent
+  ignores the new fields (it behaves as before); a newer agent reads an older
+  gateway's raw body as before. The agent side ships with the next
+  `detection/vX.Y.Z` tag.
+
 ## [0.8.0] - 2026-11-03
 
 ### Added

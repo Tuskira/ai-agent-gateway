@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-03
+
 ### Fixed
 
 - **Inline prevention failed open for Bedrock converse requests.** The
@@ -20,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the tee's turn does, and the agent judges from the conversation when it
   is there; pinned by the new fixture `turn_request.json`. An older agent
   ignores the new fields (it behaves as before); a newer agent reads an older
-  gateway's raw body as before. The agent side ships with the next
-  `detection/vX.Y.Z` tag.
+  gateway's raw body as before. The agent side ships in the
+  `detection/v0.2.0` sidecar image, tagged on this release's commit.
 
 ## [0.8.0] - 2026-11-03
 
@@ -1933,7 +1935,8 @@ First release: phase 1 of the open-source AI gateway.
   `bootstrap-key` transcript.
 - CI badge in `README.md`.
 
-[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.6.0...v0.6.1

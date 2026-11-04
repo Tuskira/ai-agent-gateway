@@ -815,12 +815,20 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 	info.SetTool(params.Name)
 
 	// A restricted key (containment) may call models but no tool: refuse
-	// before anything is resolved or routed.
+	// before anything is resolved or routed -- unless the tool's connector
+	// is restrict_exempt, which keeps it callable (tools an agent must
+	// always reach, such as asking a person for help). An exempt call then
+	// takes the normal path: route, profile gate, forward.
 	if in.Principal.ToolsRestricted {
-		if tc, ok := o.restrictedToolCall(ctx, in, params.Name); ok {
-			o.toolCall(ctx, in, tc)
+		tc, ok, exempt := o.restrictedToolCall(ctx, in, params.Name)
+		if !exempt {
+			if ok {
+				o.toolCall(ctx, in, tc)
+			}
+			return o.fail(in, mcp.NewError(mcp.ErrorCodeToolNotAllowed, restrictedMessage, map[string]any{"tool": params.Name}))
 		}
-		return o.fail(in, mcp.NewError(mcp.ErrorCodeToolNotAllowed, restrictedMessage, map[string]any{"tool": params.Name}))
+		o.log.Info("tools/call by a restricted key allowed: connector is restrict_exempt",
+			"tool", params.Name, "connector_id", tc.ConnectorID, "key_id", in.Principal.KeyID)
 	}
 
 	allow, mcpErr := o.resolveProfile(ctx, in)
@@ -916,18 +924,23 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 // namespace reports nothing (ok false), as an unroutable name does for an
 // unrestricted key: an event with no server is refused by the receiver,
 // along with the rest of its batch.
-func (o *Orchestrator) restrictedToolCall(ctx context.Context, in Request, qualified string) (ToolCall, bool) {
+//
+// exempt is true when the namespace names an enabled connector whose
+// metadata.restrict_exempt is set (store.Connector.RestrictExempt): the call
+// is then not refused, and tc is not reported.
+func (o *Orchestrator) restrictedToolCall(ctx context.Context, in Request, qualified string) (tc ToolCall, ok, exempt bool) {
 	namespace, tool, err := router.ParseToolName(qualified)
 	if err != nil {
 		o.log.Info("tools/call refused for a restricted key; no event for a tool name with no connector namespace",
 			"tool", qualified, "key_id", in.Principal.KeyID)
-		return ToolCall{}, false
+		return ToolCall{}, false, false
 	}
-	tc := ToolCall{Server: namespace, Tool: tool, Outcome: ToolCallRestricted}
+	tc = ToolCall{Server: namespace, Tool: tool, Outcome: ToolCallRestricted}
 	if conn, err := o.deps.Router.Lookup(ctx, in.Principal.TenantID, namespace); err == nil {
 		tc.ConnectorID, tc.Server = conn.ID, conn.Slug
+		exempt = conn.Enabled() && conn.RestrictExempt()
 	}
-	return tc, true
+	return tc, true, exempt
 }
 
 // toolCallFailure turns a failed backend call into the right answer for

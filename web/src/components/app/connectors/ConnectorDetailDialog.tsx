@@ -196,6 +196,17 @@ export function ConnectorDetailDialog({
                         {formatDate(connector?.updated_at)}
                       </div>
                     </div>
+                    {connector?.metadata?.restrict_exempt === true ? (
+                      <div>
+                        <div className="text-[11.5px] text-text-subtle">Containment</div>
+                        <Badge
+                          variant="outline"
+                          className="mt-1.5 border-status-resolved bg-status-resolved-bg text-status-resolved"
+                        >
+                          Callable while restricted
+                        </Badge>
+                      </div>
+                    ) : null}
                   </div>
                   {healthQuery.data ? (
                     <div className="mt-3 flex flex-col gap-1 rounded-r-4 border border-border bg-bg-subtle p-3 text-xs">
@@ -271,15 +282,17 @@ export function ConnectorDetailDialog({
                     Server-initiated requests
                   </div>
                   <div className="mb-2.5 text-[12.5px] text-text-subtle">
-                    Whether this MCP may ask the gateway to relay these requests
-                    back to the agent. Off by default.
+                    Whether this MCP may ask the gateway to relay these requests back to
+                    the agent. Off by default.
                   </div>
                   <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                     <div className="rounded-r-4 border border-border px-3 py-2.5">
                       <div className="text-[11.5px] text-text-subtle">Sampling</div>
                       <div className="mt-1.5">
                         <ServerRequestBadge
-                          enabled={connector?.metadata?.server_requests?.sampling ?? false}
+                          enabled={
+                            connector?.metadata?.server_requests?.sampling ?? false
+                          }
                         />
                       </div>
                     </div>

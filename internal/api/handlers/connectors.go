@@ -14,6 +14,7 @@ import (
 	dataplaneheaders "github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/headers"
 	applog "github.com/Tuskira/tusk-ai-secured-gateway/internal/log"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/netguard"
+	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
@@ -290,7 +291,31 @@ func (h Connectors) validateAndBuild(ctx context.Context, req connectorRequest) 
 		err = verr
 		return
 	}
+	if v, present := meta["restrict_exempt"]; present {
+		if _, ok := v.(bool); !ok {
+			err = fmt.Errorf("metadata.restrict_exempt must be a boolean")
+			return
+		}
+	}
 	return req.Name, req.Endpoint, timeoutMS, meta, nil
+}
+
+// restrictExemptMessage is the 403 for a caller that may write connectors
+// but may not change metadata.restrict_exempt.
+const restrictExemptMessage = "admin.manage is required to change metadata.restrict_exempt"
+
+// allowRestrictExemptChange reports whether the caller may set or clear
+// metadata.restrict_exempt, answering 403 when not. The flag lets a
+// restricted key (key containment) keep calling the connector's tools, so it
+// weakens containment and takes containment's permission, admin.manage, on
+// top of connector.create/update. A nil Authorizer denies.
+func (h Connectors) allowRestrictExemptChange(w http.ResponseWriter, r *http.Request) bool {
+	p, _ := pkgauth.PrincipalFrom(r.Context())
+	if h.Authorizer != nil && p != nil && h.Authorizer.Allow(r.Context(), p, "admin.manage") {
+		return true
+	}
+	httpx.WriteError(w, http.StatusForbidden, httpx.TypePermission, restrictExemptMessage)
+	return false
 }
 
 // writeConnectorValidationErr maps a validateAndBuild error to its status:
@@ -333,6 +358,9 @@ func (h Connectors) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Description != nil {
 		meta["description"] = *req.Description
+	}
+	if exempt, _ := meta["restrict_exempt"].(bool); exempt && !h.allowRestrictExemptChange(w, r) {
+		return
 	}
 
 	slug := slugify(name, maxConnectorSlugLen)
@@ -422,6 +450,7 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	wasExempt := existing.RestrictExempt()
 	existing.Name = name
 	existing.Endpoint = endpoint
 	existing.TimeoutMS = timeoutMS
@@ -450,6 +479,11 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Slug != "" {
 		existing.Slug = req.Slug
+	}
+	// metadata is replaced as a whole, so a body that leaves out a stored
+	// restrict_exempt true clears it: that is a change too.
+	if existing.RestrictExempt() != wasExempt && !h.allowRestrictExemptChange(w, r) {
+		return
 	}
 
 	if err := h.Store.Connectors().Update(r.Context(), existing); err != nil {

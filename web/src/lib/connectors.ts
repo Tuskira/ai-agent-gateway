@@ -46,6 +46,10 @@ export interface ConnectorMetadata {
   /** `false` turns the connector off: the gateway neither lists nor calls it.
    * Absent means enabled. */
   enabled?: boolean
+  /** `true` keeps this connector's tools callable by an agent whose key is
+   * restricted (key containment), e.g. a tool for asking a person for help.
+   * Absent means `false`. Only an admin (`admin.manage`) may change it. */
+  restrict_exempt?: boolean
   headers?: Record<string, HeaderConfig>
   retry?: Record<string, unknown>
   tool_arg_overrides?: ToolArgOverrides

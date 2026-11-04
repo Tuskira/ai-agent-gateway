@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A connector can stay callable for a restricted key.** Connector
+  `metadata.restrict_exempt: true` lets a key restricted by containment
+  (`level: restrict`) still call that connector's tools, for tools an agent
+  must always reach, such as asking a person for help. The call takes the
+  normal path (profile check, forward, access log, `tool_call` event with its
+  usual outcome); a connector that is not exempt, or exempt but disabled, is
+  refused as before with `-32003`. A non-boolean value is a `400`; creating a
+  connector with `true`, or changing the value, needs `admin.manage` on top of
+  `connector.create`/`connector.update` (`403` otherwise). The console's MCP
+  form has a **Callable while an agent is restricted** switch for admins, and
+  the MCP details show a badge. No migration: the flag lives in `metadata`,
+  like `metadata.enabled`. A killed key is unaffected.
+
 ## [0.8.2] - 2026-11-03
 
 ### Fixed

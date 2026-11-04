@@ -490,6 +490,9 @@ request path (a full queue of 4096 drops, counted under `/health`
   `server` is the namespace itself and `connector_id` is empty. A tool
   name with no `<connector>__` namespace reports no event, as it does for
   an unrestricted key, since an event with no `server` would be refused.
+  A restricted key's call to an enabled connector with
+  `metadata.restrict_exempt: true` is not refused, and is reported with its
+  usual profile outcome (`allowed`, `monitored` or `denied`).
 - `kind: "refused"`: a request refused because its key is suspended,
   revoked or expired: `plane` (`mcp`, `llm` or `api`), `outcome:
   "refused"`, `reason` (`key suspended`, `key revoked`, `key expired`) and

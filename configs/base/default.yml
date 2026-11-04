@@ -108,6 +108,12 @@ llm_proxy:
   #   # gateway's events (tool-call outcomes, refused keys) at /v1/events.
   #   inline: false
   #   inline_timeout: 10s      # policy lookup + verdict
+  #   # Inline tool-call check (off by default; needs agent_url): before a
+  #   # granted MCP tools/call is forwarded, ask the agent (per the tenant's
+  #   # engine policy, cached 15s) to check it; a blocking rule refuses it
+  #   # with JSON-RPC -32003. Fails open on any agent error.
+  #   inline_tool_calls: false
+  #   inline_tool_calls_timeout: 2s   # policy lookup + verdict
 
   # Optional path to a JSON file, in the same shape as
   # pkg/pricing/prices.json, that overrides the embedded per-model cost

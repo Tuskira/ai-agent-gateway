@@ -35,6 +35,7 @@ const (
 	OutcomeDenied     = "denied"     // the profile does not grant the tool
 	OutcomeRestricted = "restricted" // the key is restricted: every tool call is refused
 	OutcomeRefused    = "refused"    // the key is suspended, revoked or expired
+	OutcomeBlocked    = "blocked"    // refused by the inline tool-call check: not forwarded
 )
 
 // version is an event's "v".
@@ -68,6 +69,9 @@ type Event struct {
 	Tool        string `json:"tool,omitempty"`
 	Outcome     string `json:"outcome,omitempty"`
 	Arguments   string `json:"arguments,omitempty"`
+	// Checked: the call was checked inline (llm_proxy.detection.
+	// inline_tool_calls) and a verdict came back.
+	Checked bool `json:"checked,omitempty"`
 
 	Reason string `json:"reason,omitempty"`
 	Detail string `json:"detail,omitempty"`

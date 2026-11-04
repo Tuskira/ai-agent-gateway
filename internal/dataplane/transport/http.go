@@ -54,6 +54,8 @@ type Deps struct {
 	// clientip.Resolver). Nil falls back to the TCP peer address; the
 	// X-Forwarded-For header is never trusted on its own.
 	ClientIP func(*http.Request) string
+	// DetectionStatus, when set, is served as "detection" on GET /health.
+	DetectionStatus func() map[string]any
 }
 
 // Handler serves the MCP plane.
@@ -90,12 +92,16 @@ func NewHandler(deps Deps) http.Handler {
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	health := map[string]any{
 		"status":  "ok",
 		"plane":   "mcp",
 		"service": h.deps.ServiceName,
 		"version": h.deps.Version,
-	})
+	}
+	if h.deps.DetectionStatus != nil {
+		health["detection"] = h.deps.DetectionStatus()
+	}
+	_ = json.NewEncoder(w).Encode(health)
 }
 
 // rpc serves POST /mcp.

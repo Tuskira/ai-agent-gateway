@@ -390,7 +390,9 @@ A connector can stay callable for a restricted key: set
 `metadata.restrict_exempt: true` on it (see
 [connectors-and-credentials.md](connectors-and-credentials.md#callable-while-an-agent-is-restricted)).
 A restricted key's `tools/call` to an enabled exempt connector then takes the
-normal path (profile check, forward) instead of the `-32003` refusal. Use it
+normal path (profile check, the [inline tool-call
+check](llm-plane.md#inline-tool-call-check) when it is on, forward) instead
+of the `-32003` refusal. Use it
 for tools an agent must always reach, such as asking a person for help.
 Setting or clearing the flag needs `admin.manage`, like containment itself.
 A kill is not affected (the key is refused at authentication), and the open

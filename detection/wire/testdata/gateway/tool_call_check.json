@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "id": "req_0123456789abcdef",
+  "tenant_id": "tenant-1",
+  "session_id": "mcp-session-1",
+  "key_id": "key-1",
+  "principal": "user-1",
+  "client_ip": "192.0.2.10",
+  "at": "2026-01-02T03:04:05Z",
+  "profile": "reader",
+  "connector_id": "connector-1",
+  "server": "alpha",
+  "tool": "lookup",
+  "outcome": "monitored",
+  "arguments": "{\"host\":\"db-1\",\"limit\":5}",
+  "arguments_truncated": true
+}

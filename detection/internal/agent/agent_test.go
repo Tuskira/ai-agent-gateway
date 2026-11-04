@@ -48,6 +48,12 @@ type fakeEngine struct {
 	events       []wire.Event
 	observations []wire.Observation
 	releaseOnce  sync.Once
+	// toolChecks are the tool-call checks that reached the engine, answered
+	// with toolVerdict, or with toolStatus when it is set, after toolDelay.
+	toolChecks  []wire.ToolCallCheck
+	toolVerdict wire.ToolCallVerdict
+	toolStatus  int
+	toolDelay   time.Duration
 }
 
 func newFakeEngine(t *testing.T) *fakeEngine {
@@ -82,6 +88,23 @@ func (f *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		f.events = append(f.events, b.Events...)
 		w.WriteHeader(http.StatusAccepted)
+	case wire.PathToolCallCheck:
+		var c wire.ToolCallCheck
+		_ = json.NewDecoder(r.Body).Decode(&c)
+		f.toolChecks = append(f.toolChecks, c)
+		if d := f.toolDelay; d > 0 {
+			f.mu.Unlock()
+			select {
+			case <-time.After(d):
+			case <-r.Context().Done():
+			}
+			f.mu.Lock()
+		}
+		if f.toolStatus != 0 {
+			http.Error(w, "engine says no", f.toolStatus)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(f.toolVerdict)
 	case wire.PathObserve:
 		var o wire.Observation
 		_ = json.NewDecoder(r.Body).Decode(&o)

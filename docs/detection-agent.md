@@ -87,6 +87,12 @@ For each judgment the agent sends the engine two things, nothing else:
 The raw request and response bodies, earlier history and everything the agent
 could not recognise as part of the new turn stay on the host.
 
+For an MCP tool call the gateway has the agent
+[check](#post-v1tool-callscheck-from-the-gateway) inline (only for a tenant
+whose engine policy asks), the engine gets the call's ids, its connector and
+tool names, and its arguments (at most 64 KiB) with every secret found
+replaced by `[REDACTED:<kind>]`, as for a monitored call's event.
+
 ### Redaction
 
 Before anything is clipped or sent, every string of the body is scanned for
@@ -357,7 +363,8 @@ is not positive, fails startup.
 | `AGENT_QUEUE_BYTES` | `268435456` (256 MiB) | Bytes held by queued turns: the decoded request and response plus the canonical conversation and answer they are read from. |
 | `AGENT_SCAN_CACHE_BYTES` | `67108864` (64 MiB) | Memory the secret-scan cache may use for the values it keeps (see [What leaves the host](#what-leaves-the-host)). |
 | `AGENT_ENGINE_TIMEOUT` | `8s` | Budget for one inline judgment (a Go duration such as `8s`). With the 1 second policy lookup it fits a gateway's 10 second wait for a verdict with a second to spare. Inline contract only. |
-| `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract only. |
+| `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract and tool-call check. |
+| `DETECTION_TOOL_CHECK_TIMEOUT` | `1500ms` | Budget for one [tool-call check](#post-v1tool-callscheck-from-the-gateway) with the engine (redaction and verdict), a Go duration. It stays below the gateway's 2 second `inline_tool_calls_timeout`. |
 | `AGENT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (any case). At `debug` the agent logs one line per judged turn: `tenant`, `request_id`, `stages` (e.g. `request,response`), `returned` (judgments the engine answered), `dropped` (judgments that failed), `bytes` (the turn's raw request plus response) and `prepare_ms`. The line carries no text of the turn. |
 
 The agent logs to stderr through `log/slog`, as text. `GET /healthz` answers `200`
@@ -372,7 +379,13 @@ with the agent's counts since it started, as JSON, and checks nothing else
 turns it accepted (a deadline, a panic, the queue-full marker, a batch past
 its cap); `dropped_engine_down` is stages (and markers) dropped because the
 engine could not be reached or answered other than `200`;
-`dropped_queue_full` is turns shed because the queue was full.
+`dropped_queue_full` is turns shed because the queue was full. The
+[tool-call check](#post-v1tool-callscheck-from-the-gateway) adds
+`tool_checks_sent` (verdicts the engine returned), `tool_checks_blocked`,
+`tool_checks_failed_open` (engine errors; the call went through),
+`tool_checks_busy` (answered unchecked because every inline slot was taken)
+and `tool_checks_arguments_dropped` (checked without the arguments because
+their redaction did not finish).
 
 ## The gateway to agent side
 
@@ -441,6 +454,35 @@ and the response stage when there is a response, each redacted. The
 - A turn with `request_judged` was judged inline by the gateway: only its
   response stage is judged.
 
+### POST /v1/tool-calls/check (from the gateway)
+
+The inline tool-call check of a gateway with
+`llm_proxy.detection.inline_tool_calls` on (see the gateway's
+[llm-plane.md](llm-plane.md#inline-tool-call-check)): one granted MCP
+`tools/call`, before the gateway forwards it (`wire.ToolCallCheck`: `v`,
+`id`, `tenant_id`, `session_id`, `key_id`, `principal`, `client_ip`, `at`,
+`profile`, `connector_id`, `server`, `tool`, `outcome`, `arguments`,
+`arguments_truncated`; pinned by the `tool_call_check.json` fixture). Same
+inbound token as the other routes.
+
+| Answer | When |
+|---|---|
+| `200` `{"block": {...}}` | The engine's rule refuses the call; the gateway answers its caller with JSON-RPC `-32003` and does not forward it. |
+| `200` `{}` | Anything else: the tenant's policy does not set `inline_tool_calls` (the engine is not asked), no inline slot is free, or the engine failed (fail open). |
+| `400` | Not JSON, a body over 1 MiB, `tenant_id`, `server` or `tool` missing, or `v` above `1`. |
+| `401` | `DETECTION_INBOUND_TOKEN` is set and the request does not carry it. |
+
+When the tenant's policy sets `inline_tool_calls`, the agent takes one of
+the inline slots (`AGENT_MAX_IN_FLIGHT`, shared with the inline request
+stage), redacts `arguments` with the same scan as event arguments (a scan
+that does not finish drops them, and the call is checked without them),
+blanks `client_ip` when `DETECTION_FORWARD_CLIENT_IP=false`, and posts the
+check to the engine's `POST /v1/tool-calls/check` within
+`DETECTION_TOOL_CHECK_TIMEOUT`. An engine error, a non-`200` (`503` when
+the engine is full, `404` from an engine without the route) or a timeout is
+answered `200 {}`, counted (`tool_checks_failed_open`) and logged at most
+once a minute.
+
 ### Inline contract (legacy routes)
 
 | Route | Answer |
@@ -475,7 +517,7 @@ its copy and `make detection-contract` fails if the copies differ.
 
 ## The agent to engine contract
 
-Two engine endpoints. Both use `Authorization: Bearer <DETECTION_AGENT_TOKEN>`
+Every engine endpoint uses `Authorization: Bearer <DETECTION_AGENT_TOKEN>`
 and JSON bodies (`Content-Type: application/json`). The agent treats any
 status other than `200` as a failure. The Go types are in `detection/wire`
 (`wire.DetectRequest`, `wire.DetectResponse`, `wire.PolicyResponse`) and
@@ -504,16 +546,35 @@ absent means `1`). The rule:
 - `inline`: judge request-stage turns before the call is forwarded (the
   tenant's configuration says a request can be refused).
 - `want_response`: send response-stage turns too (some response rule is on).
+- `inline_tool_calls` (optional, default `false`): check the tenant's
+  granted MCP tool calls before the gateway forwards them
+  (`POST /v1/tool-calls/check`). The agent passes it through to the
+  gateway's policy lookup.
 
 Only the [inline contract](#inline-contract-legacy-routes)
 asks for it; `POST /v1/turns` never does. The agent caches the answer per
 tenant for `AGENT_POLICY_TTL`. On that contract it is on the request path of
 a call on a cache miss and has a 1 second budget, so answer it from memory.
 
+### POST /v1/tool-calls/check
+
+One granted MCP tool call, `wire.ToolCallCheck` as the gateway sent it,
+with `arguments` redacted, `v: 1`, and `client_ip` blanked when
+`DETECTION_FORWARD_CLIENT_IP=false`. Asked only for a tenant whose policy
+sets `inline_tool_calls`. The answer is `200` with `wire.ToolCallVerdict`:
+`{"block": {"rule_id", "owasp", "title", "probability?", "threshold",
+"detail?"}}` to refuse the call, `{}` to let it through. Any other status
+lets the call through (the agent fails open), so an engine that is full may
+answer `503`. The call's `tool_call` event later reaches `POST /v1/events`
+under the same `id`, with `checked: true` when a verdict came back and
+`outcome: "blocked"` when it refused the call.
+
 ### POST /v1/events, POST /v1/observe
 
 - `POST /v1/events`: the gateway's events (`wire.EventBatch`), forwarded as
-  above; the engine answers `200` or `202`.
+  above; the engine answers `200` or `202`. A `tool_call` event carries
+  `id` (the gateway's request id) and, when the call was checked inline,
+  `checked: true`; `outcome: "blocked"` is a call the check refused.
 - `POST /v1/observe`: when the tenant's policy sets `observe`, one
   `wire.Observation` per generation turn (`meta`, `headers`, `request`,
   `response`, `response_type`), each body with every secret found replaced

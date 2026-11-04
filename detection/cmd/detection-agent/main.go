@@ -116,6 +116,9 @@ func config() (cfg agent.Config, listen string, level slog.Level, err error) {
 	for name, d := range map[string]*time.Duration{
 		"AGENT_ENGINE_TIMEOUT": &cfg.EngineTimeout,
 		"AGENT_POLICY_TTL":     &cfg.PolicyTTL,
+		// DETECTION_TOOL_CHECK_TIMEOUT: one inline tool-call check with
+		// the engine (default 1500ms, inside the gateway's 2s).
+		"DETECTION_TOOL_CHECK_TIMEOUT": &cfg.ToolCheckTimeout,
 	} {
 		if v := os.Getenv(name); v != "" {
 			if *d, err = time.ParseDuration(v); err != nil || *d <= 0 {

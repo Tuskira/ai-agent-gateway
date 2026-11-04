@@ -63,6 +63,12 @@ type Deps struct {
 	// OnToolCall is told about every tools/call routed to a connector and
 	// its outcome (see orchestrator.Deps.OnToolCall). Nil observes nothing.
 	OnToolCall func(ctx context.Context, c orchestrator.ToolCall)
+	// CheckToolCall is the inline tool-call check (see
+	// orchestrator.Deps.CheckToolCall). Nil checks nothing.
+	CheckToolCall func(ctx context.Context, c orchestrator.ToolCall) (*orchestrator.ToolCallBlock, bool)
+	// DetectionStatus, when set, is served as "detection" on the plane's
+	// GET /health (the inline tool-call check's counts).
+	DetectionStatus func() map[string]any
 }
 
 // Plane is a built MCP plane.
@@ -214,6 +220,7 @@ func New(deps Deps) (*Plane, error) {
 		Skills:         skills,
 		RequireProfile: cfg.MCP.RequireProfile,
 		OnToolCall:     deps.OnToolCall,
+		CheckToolCall:  deps.CheckToolCall,
 
 		MaxUpstreamStreamsPerSession:       cfg.MCP.MaxUpstreamStreamsPerSession,
 		MaxSubscriptionsPerSession:         cfg.MCP.MaxSubscriptionsPerSession,
@@ -245,6 +252,8 @@ func New(deps Deps) (*Plane, error) {
 		ClientIP:      deps.ClientIP,
 		ServiceName:   cfg.Service.Name,
 		Version:       cfg.Service.Version,
+
+		DetectionStatus: deps.DetectionStatus,
 	})
 
 	var routines []supervisor.Routine

@@ -17,6 +17,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
 	dataplaneheaders "github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/headers"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/orchestrator"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectioncheck"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectionevents"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/llmplane"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/metrics"
@@ -534,8 +535,35 @@ func toolCallEvents(e *detectionevents.Emitter) func(context.Context, orchestrat
 		return nil
 	}
 	return func(_ context.Context, c orchestrator.ToolCall) {
-		e.Emit(detectionevents.Event{Kind: detectionevents.KindToolCall, TenantID: c.TenantID, SessionID: c.SessionID,
+		e.Emit(detectionevents.Event{Kind: detectionevents.KindToolCall, ID: c.ID, TenantID: c.TenantID, SessionID: c.SessionID,
 			KeyID: c.KeyID, Principal: c.Principal, ClientIP: c.ClientIP, Plane: "mcp", Profile: c.Profile, ConnectorID: c.ConnectorID,
-			Server: c.Server, Tool: c.Tool, Outcome: c.Outcome, Arguments: c.Arguments})
+			Server: c.Server, Tool: c.Tool, Outcome: c.Outcome, Arguments: c.Arguments, Checked: c.Checked})
 	}
+}
+
+// toolCallCheck is the MCP plane's inline tool-call check through the
+// detection agent (llm_proxy.detection.inline_tool_calls); nil when off.
+func toolCallCheck(ch *detectioncheck.Checker) func(context.Context, orchestrator.ToolCall) (*orchestrator.ToolCallBlock, bool) {
+	if ch == nil {
+		return nil
+	}
+	return func(ctx context.Context, c orchestrator.ToolCall) (*orchestrator.ToolCallBlock, bool) {
+		args, cut := detectioncheck.CutArguments(c.Arguments)
+		b, checked := ch.Check(ctx, detectioncheck.ToolCallCheck{ID: c.ID, TenantID: c.TenantID, SessionID: c.SessionID,
+			KeyID: c.KeyID, Principal: c.Principal, ClientIP: c.ClientIP, Profile: c.Profile, ConnectorID: c.ConnectorID,
+			Server: c.Server, Tool: c.Tool, Outcome: c.Outcome, Arguments: args, ArgumentsTruncated: cut})
+		if b == nil {
+			return nil, checked
+		}
+		return &orchestrator.ToolCallBlock{RuleID: b.RuleID, Title: b.Title, Detail: b.Detail}, checked
+	}
+}
+
+// detectionStatus is the MCP plane's /health "detection" entry: the inline
+// tool-call check's counts; nil when the check is off.
+func detectionStatus(ch *detectioncheck.Checker) func() map[string]any {
+	if ch == nil {
+		return nil
+	}
+	return func() map[string]any { return map[string]any{"tool_checks": ch.Status()} }
 }

@@ -130,6 +130,34 @@ func TestGatewayContractFixtures(t *testing.T) {
 	}
 }
 
+// The inline tool-call check (POST /v1/tool-calls/check) is pinned by
+// tool_call_check.json, a byte-identical copy of the gateway's
+// internal/detectioncheck/testdata/tool_call_check.json.
+func TestToolCallCheckFixture(t *testing.T) {
+	want, err := os.ReadFile(filepath.Join("testdata", "gateway", "tool_call_check.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got ToolCallCheck
+	if err := json.Unmarshal(want, &got); err != nil {
+		t.Fatal(err)
+	}
+	built := ToolCallCheck{V: 1, ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "mcp-session-1",
+		KeyID: "key-1", Principal: "user-1", ClientIP: "192.0.2.10", At: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		Profile: "reader", ConnectorID: "connector-1", Server: "alpha", Tool: "lookup", Outcome: OutcomeMonitored,
+		Arguments: `{"host":"db-1","limit":5}`, ArgumentsTruncated: true}
+	if !reflect.DeepEqual(got, built) {
+		t.Fatalf("fixture decodes to %+v\nwant %+v", got, built)
+	}
+	gb, _ := json.Marshal(built)
+	var g, w map[string]any
+	_ = json.Unmarshal(gb, &g)
+	_ = json.Unmarshal(want, &w)
+	if !reflect.DeepEqual(g, w) {
+		t.Errorf("marshaled = %s\nwant %s", gb, want)
+	}
+}
+
 // TurnRequest.Call follows Turn.Call's rule: the canonical conversation
 // only when the gateway read it without error, in a version this agent
 // knows; else (an older gateway, which sends none) the raw body alone.

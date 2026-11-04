@@ -98,6 +98,16 @@ type Deps struct {
 	// path and must not block.
 	OnToolCall func(ctx context.Context, c ToolCall)
 
+	// CheckToolCall, when set, is the inline tool-call check: it is asked
+	// about every tools/call routed to a connector and granted (outcome
+	// allowed or monitored, or no profile) before it is forwarded, with
+	// ToolCall.Arguments set to the call's full arguments. checked is true
+	// when a verdict came back; a non-nil block refuses the call with
+	// -32003 and it is not forwarded. It fails open: on any failure it
+	// returns (nil, false). It runs on the request path and must bound its
+	// own wait. Nil (the default) checks nothing.
+	CheckToolCall func(ctx context.Context, c ToolCall) (block *ToolCallBlock, checked bool)
+
 	// MaxUpstreamStreamsPerSession bounds the connector streams one
 	// session may hold (zero: upstream.DefaultMaxPerSession), and
 	// MaxSubscriptionsPerSession its resource subscriptions (zero:
@@ -128,6 +138,9 @@ type Deps struct {
 
 // ToolCall is one tools/call as Deps.OnToolCall sees it.
 type ToolCall struct {
+	// ID is the gateway's request id (the access log's), the same id the
+	// inline check is sent under.
+	ID          string
 	TenantID    string
 	KeyID       string
 	Principal   string
@@ -139,8 +152,27 @@ type ToolCall struct {
 	Tool        string // unprefixed tool name (the qualified name before routing)
 	Outcome     string // allowed | monitored | denied | restricted
 	// Arguments is the call's arguments as JSON, set for a monitored call
-	// only.
+	// only (for Deps.CheckToolCall: always).
 	Arguments string
+	// Checked is set when the call was checked inline (Deps.CheckToolCall)
+	// and a verdict came back.
+	Checked bool
+}
+
+// ToolCallBlock is the rule that refuses a tool call (Deps.CheckToolCall).
+type ToolCallBlock struct {
+	RuleID string
+	Title  string
+	Detail string
+}
+
+// message is the refusal the caller gets.
+func (b *ToolCallBlock) message() string {
+	msg := fmt.Sprintf("Blocked by detection rule %s (%s)", b.RuleID, b.Title)
+	if b.Detail != "" {
+		msg += ": " + b.Detail
+	}
+	return msg + ". The tool call was not sent to the connector."
 }
 
 // Tool-call outcomes (ToolCall.Outcome).
@@ -149,6 +181,7 @@ const (
 	ToolCallMonitored  = "monitored"
 	ToolCallDenied     = "denied"
 	ToolCallRestricted = "restricted"
+	ToolCallBlocked    = "blocked" // refused by the inline check (Deps.CheckToolCall)
 )
 
 // restrictedMessage is the refusal of a restricted key's tool call.
@@ -158,14 +191,39 @@ func (o *Orchestrator) toolCall(ctx context.Context, in Request, c ToolCall) {
 	if o.deps.OnToolCall == nil {
 		return
 	}
+	o.deps.OnToolCall(ctx, stampToolCall(ctx, in, c))
+}
+
+// stampToolCall fills in who made the call: request id, tenant, key,
+// principal, session and client address.
+func stampToolCall(ctx context.Context, in Request, c ToolCall) ToolCall {
 	c.TenantID, c.KeyID, c.Principal = in.Principal.TenantID, in.Principal.KeyID, in.Principal.Subject
 	if in.Session != nil {
 		c.SessionID = in.Session.ID
 	}
 	if info := reqctx.From(ctx); info != nil {
-		c.ClientIP = info.ClientIP
+		c.ID, c.ClientIP = info.RequestID, info.ClientIP
 	}
-	o.deps.OnToolCall(ctx, c)
+	return c
+}
+
+// checkToolCall runs the inline check (Deps.CheckToolCall) on a granted
+// call, with its full arguments; tc.Checked records whether a verdict came
+// back.
+func (o *Orchestrator) checkToolCall(ctx context.Context, in Request, tc *ToolCall, args map[string]any) *ToolCallBlock {
+	if o.deps.CheckToolCall == nil {
+		return nil
+	}
+	c := stampToolCall(ctx, in, *tc)
+	c.Arguments = ""
+	if args != nil {
+		if b, err := json.Marshal(args); err == nil {
+			c.Arguments = string(b)
+		}
+	}
+	block, checked := o.deps.CheckToolCall(ctx, c)
+	tc.Checked = checked
+	return block
 }
 
 // Orchestrator serves MCP methods.
@@ -868,6 +926,19 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 			if b, err := json.Marshal(params.Arguments); err == nil {
 				tc.Arguments = string(b)
 			}
+		}
+	}
+	// The inline check, for a granted call only: after the profile gate,
+	// before anything is forwarded.
+	if tc.Outcome != ToolCallDenied {
+		if block := o.checkToolCall(ctx, in, &tc, params.Arguments); block != nil {
+			tc.Outcome = ToolCallBlocked
+			o.toolCall(ctx, in, tc)
+			o.log.Info("tools/call blocked by the inline check",
+				"rule_id", block.RuleID, "tool", params.Name, "connector_id", route.Connector.ID)
+			return o.fail(in, mcp.NewError(mcp.ErrorCodeToolNotAllowed, block.message(), map[string]any{
+				"tool": params.Name, "profile": tc.Profile, "rule_id": block.RuleID,
+			}))
 		}
 	}
 	o.toolCall(ctx, in, tc)

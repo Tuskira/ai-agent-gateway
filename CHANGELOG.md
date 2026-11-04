@@ -29,6 +29,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `client_ip` in the access and capture logs), left out when unknown. The
   field is only added (`v` stays `1`; an older agent ignores it); the
   fixtures `turn.json` and `turn_request.json` carry it.
+- **Inline tool-call check on the MCP plane.** With
+  `llm_proxy.detection.inline_tool_calls: true` (off by default; needs
+  `agent_url`), a granted `tools/call` is checked by the detection agent
+  before it is forwarded: the gateway reads the tenant's policy
+  (`GET /v1/policy`, `inline_tool_calls`, cached 15s; a failed lookup 5s as
+  off) and posts the call to `POST {agent_url}/v1/tool-calls/check` with its
+  arguments (cut at 64 KiB, `arguments_truncated`), all within
+  `inline_tool_calls_timeout` (default `2s`). A verdict with `block` refuses
+  the call with JSON-RPC `-32003` (`Blocked by detection rule <rule_id>
+  (<title>): <detail>. The tool call was not sent to the connector.`, data
+  `{tool, profile, rule_id}`) and nothing is forwarded. Every failure fails
+  open. Denied calls, a restricted key's refused calls and `gateway__skill`
+  are not checked. The `tool_call` event now always carries `id` (the
+  gateway request id, the same as the check's), `checked: true` when a
+  verdict came back, and the new outcome `blocked`. Counts are on `/health`
+  under `detection.tool_checks` (`checked`, `blocked`, `failed`). The
+  request is pinned by the new fixture `tool_call_check.json`, shared with
+  the agent (`make detection-contract`).
+- **Detection agent: `POST /v1/tool-calls/check`.** The agent serves the
+  check behind its inbound token: for a tenant whose engine policy sets
+  `inline_tool_calls` it redacts the arguments and asks the engine's
+  `POST /v1/tool-calls/check` within `DETECTION_TOOL_CHECK_TIMEOUT` (default
+  `1500ms`), sharing the inline slots; any engine failure answers `200 {}`
+  (fail open). `wire` gains `PathToolCallCheck`, `ToolCallCheck`,
+  `ToolCallVerdict`, `PolicyResponse.InlineToolCalls`, `Event.Checked` and
+  `OutcomeBlocked` (fields only added; `v` stays `1`). `/healthz` adds
+  `tool_checks_sent`, `tool_checks_blocked`, `tool_checks_failed_open`,
+  `tool_checks_busy` and `tool_checks_arguments_dropped`.
 - **Detection agent: `client_ip` on to the engine, with a switch.** The
   agent copies `client_ip` into the `meta` of every detect request and
   observation and keeps it on events. `DETECTION_FORWARD_CLIENT_IP=false`

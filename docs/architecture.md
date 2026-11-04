@@ -410,7 +410,7 @@ renumbered; a client is expected to branch on them.
 | `-32000` | SessionNotFound | unknown/expired `Mcp-Session-Id` — re-initialize |
 | `-32001` | Unauthorized | no usable gateway credential (HTTP 401) |
 | `-32002` | ToolExecution | backend transport/JSON-RPC failure calling the tool (or fetching a prompt / reading a resource) |
-| `-32003` | ToolNotAllowed | agent profile doesn't grant this tool, or no tool of the prompt's/resource's connector (incl. unknown profile name); also a `gateway__skill` call, native command `prompts/get`, or Skills Extension `skills/get`/`resources/read` on `skill://` naming a skill/command not attached to the profile |
+| `-32003` | ToolNotAllowed | a restricted key's tool call; a call blocked by the inline tool-call check (`llm_proxy.detection.inline_tool_calls`, data `{tool, profile, rule_id}`); agent profile doesn't grant this tool, or no tool of the prompt's/resource's connector (incl. unknown profile name); also a `gateway__skill` call, native command `prompts/get`, or Skills Extension `skills/get`/`resources/read` on `skill://` naming a skill/command not attached to the profile |
 | `-32004` | ConnectorNotFound | `<connector>__<tool>`/`<connector>__<prompt>` prefix or `gw://<connector>/` names no connector in the tenant, or a disabled one |
 | `-32005` | ConnectorUnhealthy | connector is in its half-open recovery cool-down |
 | `-32006` | Forbidden | caller authenticated but lacks `mcp.access` (HTTP 403) |

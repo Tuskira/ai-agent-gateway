@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-04
+
 ### Added
 
 - **A connector can stay callable for a restricted key.** Connector
@@ -2016,7 +2018,8 @@ First release: phase 1 of the open-source AI gateway.
   `bootstrap-key` transcript.
 - CI badge in `README.md`.
 
-[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.7.0...v0.8.0

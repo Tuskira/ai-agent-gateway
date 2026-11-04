@@ -3,6 +3,7 @@ package secrets
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -339,6 +340,73 @@ func TestExternalService_TestSource(t *testing.T) {
 	rs.mu.Unlock()
 	if err := p.TestSource(context.Background(), src); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("TestSource with a rejected token = %v, want HTTP 401", err)
+	}
+}
+
+func TestExternalService_ListOptions(t *testing.T) {
+	p, rs, _ := newExternalServiceFixture(t)
+	src := *sourceFor(rs, "tenant-a")
+
+	// The fixture answers {"options":[{"id":"splunk-prod"}]}: "id" stands
+	// in for "value", and the label falls back to the value.
+	opts, err := p.ListOptions(context.Background(), src, "credential_id")
+	if err != nil {
+		t.Fatalf("ListOptions: %v", err)
+	}
+	if len(opts) != 1 || opts[0].Value != "splunk-prod" || opts[0].Label != "splunk-prod" {
+		t.Errorf("options = %+v", opts)
+	}
+	if rs.lastQS != "field=credential_id&tenant_id=tenant-a" {
+		t.Errorf("options query = %q", rs.lastQS)
+	}
+	if rs.resolves.Load() != 0 {
+		t.Error("ListOptions resolved a secret")
+	}
+
+	if got := p.OptionFields(); len(got) != 1 || got[0] != "credential_id" {
+		t.Errorf("OptionFields = %v", got)
+	}
+	if _, err := p.ListOptions(context.Background(), src, "prefix"); err == nil {
+		t.Error("ListOptions accepted a field the service lists nothing for")
+	}
+
+	rs.mu.Lock()
+	rs.token = "other-token"
+	rs.mu.Unlock()
+	if _, err := p.ListOptions(context.Background(), src, "credential_id"); err == nil || !strings.Contains(err.Error(), "401") {
+		t.Errorf("ListOptions with a rejected token = %v, want HTTP 401", err)
+	}
+}
+
+func TestExternalService_ListOptionsIsCapped(t *testing.T) {
+	var body strings.Builder
+	body.WriteString(`{"options":[`)
+	for i := 0; i < maxExternalServiceOptions+50; i++ {
+		if i > 0 {
+			body.WriteString(",")
+		}
+		fmt.Fprintf(&body, `{"value":"cred-%d"}`, i)
+	}
+	body.WriteString(`]}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body.String()))
+	}))
+	t.Cleanup(srv.Close)
+
+	svc, _ := newTestService(t)
+	if _, err := svc.Create(context.Background(), "tenant-a", "vault-auth", "generic", map[string]string{"token": "t"}, "u"); err != nil {
+		t.Fatal(err)
+	}
+	p := NewExternalServiceProvider(svc.Fetcher(), 2*time.Second, time.Minute)
+	opts, err := p.ListOptions(context.Background(), headers.Source{
+		TenantID: "tenant-a", Name: "s", Provider: ExternalServiceProviderID, Enabled: true,
+		Config: map[string]any{"url": srv.URL, "auth_credential": "vault-auth"},
+	}, "credential_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts) != maxExternalServiceOptions {
+		t.Errorf("got %d options, want the cap %d", len(opts), maxExternalServiceOptions)
 	}
 }
 

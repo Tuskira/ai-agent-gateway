@@ -57,6 +57,19 @@ type credentialSourceTestResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// credentialSourceOptions is the answer of the options route: the values
+// the source's service offers, or a failure reason (with no options) when
+// it could not be asked, like credentialSourceTestResult.
+type credentialSourceOptions struct {
+	Options []credentialSourceOption `json:"options"`
+	Error   string                   `json:"error,omitempty"`
+}
+
+type credentialSourceOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
 func newCredentialSourceView(s *store.CredentialSource, usedBy []connectorRef) credentialSourceView {
 	cfg := s.Config
 	if cfg == nil {
@@ -357,6 +370,72 @@ func (h CredentialSources) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, credentialSourceTestResult{OK: true})
+}
+
+// Options handles GET /api/v1/credential-sources/{id}/options?field=<name>:
+// it asks the source's provider which values its service offers for one
+// header config field (for external_service, the credential ids it holds
+// for the tenant), so a console can offer a picker. field must be one the
+// provider lists options for (see "option_fields" on GET
+// /headers/providers), else 400. Like Test, a source that cannot be asked
+// (disabled, a provider that lists nothing, the service failing) answers
+// 200 with {"options":[],"error":"..."}; only an unknown source is 404.
+// Values are credential ids, never secrets.
+//
+// The route needs connector.update, not admin.manage: it serves the
+// connector editor, whose users can already name any credential id in a
+// header they save.
+func (h CredentialSources) Options(w http.ResponseWriter, r *http.Request) {
+	tid, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+	field := strings.TrimSpace(r.URL.Query().Get("field"))
+	if field == "" {
+		httpx.ValidationError(w, errRequired("field").Error())
+		return
+	}
+	src, err := h.Store.CredentialSources().Get(r.Context(), tid, chi.URLParam(r, "id"))
+	if err != nil {
+		writeStoreErr(w, r, "list credential source options", err)
+		return
+	}
+	fail := func(msg string) {
+		httpx.WriteJSON(w, http.StatusOK, credentialSourceOptions{Options: []credentialSourceOption{}, Error: msg})
+	}
+	p, _, err := h.sourceProvider(src.Provider)
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	lister, ok := p.(pkgheaders.SourceOptionLister)
+	if !ok {
+		fail(fmt.Sprintf("provider %q cannot list options", src.Provider))
+		return
+	}
+	known := false
+	for _, f := range lister.OptionFields() {
+		known = known || f == field
+	}
+	if !known {
+		httpx.ValidationError(w, fmt.Sprintf("provider %q lists no options for field %q", src.Provider, field))
+		return
+	}
+	if !src.Enabled {
+		fail(fmt.Sprintf("credential source %q is disabled", src.Name))
+		return
+	}
+	opts, err := lister.ListOptions(r.Context(), *dataplaneheaders.SourceFromStore(src), field)
+	if err != nil {
+		applog.From(r.Context()).Warn("credential source options failed", "source", src.Name, "field", field, "error", err)
+		fail(err.Error())
+		return
+	}
+	out := credentialSourceOptions{Options: make([]credentialSourceOption, 0, len(opts))}
+	for _, o := range opts {
+		out.Options = append(out.Options, credentialSourceOption{Value: o.Value, Label: o.Label})
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func refNames(refs []connectorRef) string {

@@ -440,6 +440,7 @@ func buildRoutes(deps Deps) []routeSpec {
 		{Method: http.MethodPut, Pattern: "/credential-sources/{id}", Tag: "credential-sources", Summary: "Update a credential source's name, config or enabled flag", Permission: "admin.manage", Handler: credentialSources.Update},
 		{Method: http.MethodDelete, Pattern: "/credential-sources/{id}", Tag: "credential-sources", Summary: "Delete a credential source (409 while a connector header names it)", Permission: "admin.manage", Handler: credentialSources.Delete},
 		{Method: http.MethodPost, Pattern: "/credential-sources/{id}/test", Tag: "credential-sources", Summary: "Check a credential source is reachable and accepts the gateway's token (no secret is returned)", Permission: "admin.manage", Handler: credentialSources.Test},
+		{Method: http.MethodGet, Pattern: "/credential-sources/{id}/options", Tag: "credential-sources", Summary: "List the values a credential source's service offers for a header config field, e.g. credential ids (no secret is returned)", Permission: "connector.update", Handler: credentialSources.Options},
 
 		{Method: http.MethodPost, Pattern: "/connectors", Tag: "connectors", Summary: "Create a connector", Permission: "connector.create", Handler: connectors.Create},
 		{Method: http.MethodGet, Pattern: "/connectors", Tag: "connectors", Summary: "List connectors", Permission: "connector.read", Handler: connectors.List},

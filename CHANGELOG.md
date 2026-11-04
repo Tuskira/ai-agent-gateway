@@ -42,8 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{tool, profile, rule_id}`) and nothing is forwarded. Every failure fails
   open. Denied calls, a restricted key's refused calls and `gateway__skill`
   are not checked. The `tool_call` event now always carries `id` (the
-  gateway request id, the same as the check's), `checked: true` when a
-  verdict came back, and the new outcome `blocked`. Counts are on `/health`
+  gateway request id, the same as the check's), `checked: true` when the
+  engine judged the call (a verdict came back), and the new outcome `blocked`. Counts are on `/health`
   under `detection.tool_checks` (`checked`, `blocked`, `failed`). The
   request is pinned by the new fixture `tool_call_check.json`, shared with
   the agent (`make detection-contract`).
@@ -51,8 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check behind its inbound token: for a tenant whose engine policy sets
   `inline_tool_calls` it redacts the arguments and asks the engine's
   `POST /v1/tool-calls/check` within `DETECTION_TOOL_CHECK_TIMEOUT` (default
-  `1500ms`), sharing the inline slots; any engine failure answers `200 {}`
-  (fail open). `wire` gains `PathToolCallCheck`, `ToolCallCheck`,
+  `1500ms`), sharing the inline slots. It answers `200` only when the engine
+  returned a verdict; when it did not judge the call (no inline slot free,
+  the engine failed, the policy is off, or the arguments were dropped because
+  their redaction did not finish) it answers `503`, so the gateway forwards
+  the call and its event carries no `checked`. `wire` gains `PathToolCallCheck`, `ToolCallCheck`,
   `ToolCallVerdict`, `PolicyResponse.InlineToolCalls`, `Event.Checked` and
   `OutcomeBlocked` (fields only added; `v` stays `1`). `/healthz` adds
   `tool_checks_sent`, `tool_checks_blocked`, `tool_checks_failed_open`,

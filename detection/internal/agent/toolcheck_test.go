@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -86,15 +87,15 @@ func TestToolCheckOmitsClientIP(t *testing.T) {
 	}
 }
 
-// A tenant whose policy does not ask is answered at once, with no block
-// and no engine call.
+// A tenant whose policy does not ask is answered at once, not judged (503,
+// so the gateway records the call as not checked), with no engine call.
 func TestToolCheckPolicyOff(t *testing.T) {
 	f := newFakeEngine(t)
 	f.policies["t1"] = wire.PolicyResponse{Inline: true}
 	_, url := startAgent(t, f, Config{})
 	code, v, raw := postToolCheck(t, url, checkBody(toolCall()))
-	if code != http.StatusOK || v.Block != nil || strings.TrimSpace(raw) != "{}" {
-		t.Fatalf("status %d verdict %s", code, raw)
+	if code != http.StatusServiceUnavailable || v.Block != nil {
+		t.Fatalf("status %d verdict %s; want 503", code, raw)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -104,7 +105,8 @@ func TestToolCheckPolicyOff(t *testing.T) {
 }
 
 // An engine that fails (5xx, 503 when full, past the deadline, or a
-// route an older engine does not have) fails open: 200 with no block, counted.
+// route an older engine does not have) fails open: 503, so the gateway
+// forwards the call and marks it not checked. The failure is counted.
 func TestToolCheckFailsOpen(t *testing.T) {
 	for name, set := range map[string]func(*fakeEngine){
 		"500":     func(f *fakeEngine) { f.toolStatus = http.StatusInternalServerError },
@@ -118,8 +120,8 @@ func TestToolCheckFailsOpen(t *testing.T) {
 		set(f)
 		a, url := startAgent(t, f, Config{ToolCheckTimeout: 100 * time.Millisecond})
 		code, v, raw := postToolCheck(t, url, checkBody(toolCall()))
-		if code != http.StatusOK || v.Block != nil {
-			t.Errorf("%s: status %d verdict %s; want 200 with no block", name, code, raw)
+		if code != http.StatusServiceUnavailable || v.Block != nil {
+			t.Errorf("%s: status %d verdict %s; want 503 (not judged)", name, code, raw)
 		}
 		if h := a.Health(); h.ToolChecksFailedOpen != 1 || h.ToolChecksSent != 0 {
 			t.Errorf("%s: health %+v", name, h)
@@ -150,7 +152,7 @@ func TestToolCheckMalformed(t *testing.T) {
 	}
 }
 
-// With no inline slot free, the check is answered at once unchecked.
+// With no inline slot free, the check is answered at once, not judged (503).
 func TestToolCheckBusy(t *testing.T) {
 	f := newFakeEngine(t)
 	f.policies["t1"] = wire.PolicyResponse{InlineToolCalls: true}
@@ -158,10 +160,37 @@ func TestToolCheckBusy(t *testing.T) {
 	a.inline <- struct{}{} // the only slot is taken
 	defer func() { <-a.inline }()
 	code, v, _ := postToolCheck(t, url, checkBody(toolCall()))
-	if code != http.StatusOK || v.Block != nil {
-		t.Fatalf("status %d block %+v", code, v.Block)
+	if code != http.StatusServiceUnavailable || v.Block != nil {
+		t.Fatalf("status %d block %+v; want 503", code, v.Block)
 	}
 	if h := a.Health(); h.ToolChecksBusy != 1 {
+		t.Errorf("health %+v", h)
+	}
+	if len(f.toolChecks) != 0 {
+		t.Errorf("engine was asked: %+v", f.toolChecks)
+	}
+}
+
+// Arguments whose redaction did not finish are dropped, and a call that
+// cannot be judged without them is not ok (the handler answers 503), with
+// no engine call.
+func TestToolCheckArgumentsDropped(t *testing.T) {
+	f := newFakeEngine(t)
+	f.policies["t1"] = wire.PolicyResponse{InlineToolCalls: true}
+	a, _ := startAgent(t, f, Config{})
+	c := toolCall()
+	c.Arguments = `{"blob":"` + strings.Repeat("x", 1<<20) + `"}`
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the scan sees a finished context and stops
+	if _, ok := a.checkToolCall(ctx, c); ok {
+		t.Fatal("judged a call whose arguments were dropped")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.toolChecks) != 0 {
+		t.Fatalf("engine was asked: %+v", f.toolChecks)
+	}
+	if h := a.Health(); h.ToolChecksArgumentsDropped != 1 {
 		t.Errorf("health %+v", h)
 	}
 }

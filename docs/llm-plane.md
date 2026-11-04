@@ -507,10 +507,14 @@ anything leaves the host.
   "<name>", "rule_id": "<id>"}`. Nothing is forwarded. The `tool_call`
   event goes out with `outcome: "blocked"` and `checked: true`.
 - A verdict with no `block` forwards the call; the event has
-  `checked: true`.
+  `checked: true`. `checked` means the engine judged the call.
 - Every failure fails open: agent down, timeout, a non-`200`, an answer
   that is not a verdict, or one over 1 MiB lets the call through. The
-  event then has no `checked`. Failures are counted and logged at most
+  event then has no `checked`, so whatever reads the event knows the call
+  was not judged inline. The agent itself answers `503` when it could not
+  get a verdict (no inline slot free, the engine failed, the tenant's policy
+  is off, or the arguments were dropped), so those calls are not marked
+  checked either. Failures are counted and logged at most
   once a minute. There is no fail-closed option.
 - Counts are on the MCP plane's `GET /health` under
   `detection.tool_checks` (`checked`, `blocked`, `failed`), and on the

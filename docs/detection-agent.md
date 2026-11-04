@@ -383,9 +383,9 @@ engine could not be reached or answered other than `200`;
 [tool-call check](#post-v1tool-callscheck-from-the-gateway) adds
 `tool_checks_sent` (verdicts the engine returned), `tool_checks_blocked`,
 `tool_checks_failed_open` (engine errors; the call went through),
-`tool_checks_busy` (answered unchecked because every inline slot was taken)
-and `tool_checks_arguments_dropped` (checked without the arguments because
-their redaction did not finish).
+`tool_checks_busy` (answered not judged because every inline slot was taken)
+and `tool_checks_arguments_dropped` (answered not judged because the
+arguments' redaction did not finish).
 
 ## The gateway to agent side
 
@@ -468,20 +468,23 @@ inbound token as the other routes.
 | Answer | When |
 |---|---|
 | `200` `{"block": {...}}` | The engine's rule refuses the call; the gateway answers its caller with JSON-RPC `-32003` and does not forward it. |
-| `200` `{}` | Anything else: the tenant's policy does not set `inline_tool_calls` (the engine is not asked), no inline slot is free, or the engine failed (fail open). |
+| `200` `{}` | The engine judged the call and has no block. |
+| `503` | The call was not judged, so the gateway forwards it and records it as not checked: the tenant's policy does not set `inline_tool_calls` (the engine is not asked), no inline slot is free, the engine failed (error, timeout, `503` when full, `404` without the route), or the arguments were dropped because their redaction did not finish. |
 | `400` | Not JSON, a body over 1 MiB, `tenant_id`, `server` or `tool` missing, or `v` above `1`. |
 | `401` | `DETECTION_INBOUND_TOKEN` is set and the request does not carry it. |
 
 When the tenant's policy sets `inline_tool_calls`, the agent takes one of
 the inline slots (`AGENT_MAX_IN_FLIGHT`, shared with the inline request
 stage), redacts `arguments` with the same scan as event arguments (a scan
-that does not finish drops them, and the call is checked without them),
-blanks `client_ip` when `DETECTION_FORWARD_CLIENT_IP=false`, and posts the
+that does not finish drops them, and the call is answered `503`, not
+judged, rather than judged without them), blanks `client_ip` when `DETECTION_FORWARD_CLIENT_IP=false`, and posts the
 check to the engine's `POST /v1/tool-calls/check` within
 `DETECTION_TOOL_CHECK_TIMEOUT`. An engine error, a non-`200` (`503` when
 the engine is full, `404` from an engine without the route) or a timeout is
-answered `200 {}`, counted (`tool_checks_failed_open`) and logged at most
-once a minute.
+answered `503`, counted (`tool_checks_failed_open`) and logged at most once
+a minute. "Checked" always means the engine judged the call: only a `200`
+sets `checked: true` on the call's event, so the engine still looks at the
+event of a call that was not judged inline.
 
 ### Inline contract (legacy routes)
 
@@ -563,18 +566,20 @@ with `arguments` redacted, `v: 1`, and `client_ip` blanked when
 `DETECTION_FORWARD_CLIENT_IP=false`. Asked only for a tenant whose policy
 sets `inline_tool_calls`. The answer is `200` with `wire.ToolCallVerdict`:
 `{"block": {"rule_id", "owasp", "title", "probability?", "threshold",
-"detail?"}}` to refuse the call, `{}` to let it through. Any other status
-lets the call through (the agent fails open), so an engine that is full may
-answer `503`. The call's `tool_call` event later reaches `POST /v1/events`
-under the same `id`, with `checked: true` when a verdict came back and
-`outcome: "blocked"` when it refused the call.
+"detail?"}}` to refuse the call, `{}` to let it through. `200` means the
+engine judged the call. Any other status lets the call through (the agent
+fails open) and the call is recorded as not checked, so an engine that is
+full may answer `503`. The call's `tool_call` event later reaches
+`POST /v1/events` under the same `id`, with `checked: true` only when a
+verdict came back and `outcome: "blocked"` when it refused the call.
 
 ### POST /v1/events, POST /v1/observe
 
 - `POST /v1/events`: the gateway's events (`wire.EventBatch`), forwarded as
   above; the engine answers `200` or `202`. A `tool_call` event carries
   `id` (the gateway's request id) and, when the call was checked inline,
-  `checked: true`; `outcome: "blocked"` is a call the check refused.
+  `checked: true` (the engine judged it); `outcome: "blocked"` is a call
+  the check refused.
 - `POST /v1/observe`: when the tenant's policy sets `observe`, one
   `wire.Observation` per generation turn (`meta`, `headers`, `request`,
   `response`, `response_type`), each body with every secret found replaced

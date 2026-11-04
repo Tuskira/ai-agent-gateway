@@ -210,10 +210,16 @@ func TestMCPToolCallCheck_Allow(t *testing.T) {
 }
 
 // Every agent failure fails open: the call is forwarded, the event is not
-// checked, and the failure is counted.
+// checked (so the engine still judges it from the event), and the failure
+// is counted. A 503 is how the agent says the engine did not judge the call.
 func TestMCPToolCallCheck_FailsOpen(t *testing.T) {
 	for name, check := range map[string]func(w http.ResponseWriter){
-		"500":      func(w http.ResponseWriter) { http.Error(w, "boom", http.StatusInternalServerError) },
+		"500": func(w http.ResponseWriter) { http.Error(w, "boom", http.StatusInternalServerError) },
+		// What the agent answers when the engine did not judge the call
+		// (busy, engine failure, policy off, arguments dropped).
+		"503 not judged": func(w http.ResponseWriter) {
+			http.Error(w, "agent: tool-call check not judged", http.StatusServiceUnavailable)
+		},
 		"bad json": func(w http.ResponseWriter) { _, _ = w.Write([]byte(`not json`)) },
 		"timeout": func(w http.ResponseWriter) {
 			time.Sleep(time.Second)

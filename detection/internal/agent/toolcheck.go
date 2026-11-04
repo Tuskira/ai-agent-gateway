@@ -16,7 +16,12 @@ import (
 // call to the agent, which redacts its arguments and asks the engine for a
 // verdict. Only a tenant whose engine policy sets inline_tool_calls is
 // checked. Like the inline request stage, every failure fails open: the
-// agent answers 200 with no block, and the gateway forwards the call.
+// gateway forwards the call. The agent answers 200 only when the engine
+// returned a verdict ("checked" means the engine judged the call). When it
+// did not judge (no slot free, the engine failed, the tenant's policy is
+// off, or the arguments were dropped) the agent answers 503, so the gateway
+// records the call as not checked and the engine still looks at the event
+// afterwards.
 
 // maxToolCheckBytes bounds a ToolCallCheck body: the arguments are cut at
 // wire.MaxToolCallArguments by the gateway, the rest is a few ids.
@@ -51,47 +56,58 @@ func (a *Agent) toolCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.policy(r.Context(), c.TenantID).InlineToolCalls {
-		answerJSON(w, wire.ToolCallVerdict{})
+		notJudged(w)
 		return
 	}
 	// The same slots as the inline request stage: each check holds a
 	// handler goroutine and an engine connection until it is answered.
 	if !a.acquireInline() {
 		a.toolChecks.busy.Add(1)
-		answerJSON(w, wire.ToolCallVerdict{})
+		notJudged(w)
 		return
 	}
 	defer func() { <-a.inline }()
 	ctx, cancel := context.WithTimeout(r.Context(), a.cfg.ToolCheckTimeout)
 	defer cancel()
-	answerJSON(w, a.checkToolCall(ctx, c))
+	v, ok := a.checkToolCall(ctx, c)
+	if !ok {
+		notJudged(w)
+		return
+	}
+	answerJSON(w, v)
 }
 
-// checkToolCall redacts c and asks the engine; any engine failure is no
-// block (fail open).
-func (a *Agent) checkToolCall(ctx context.Context, c wire.ToolCallCheck) wire.ToolCallVerdict {
+// notJudged answers a check the engine did not judge. It is not a 200, so
+// the gateway forwards the call and marks its event as not checked.
+func notJudged(w http.ResponseWriter) {
+	http.Error(w, "agent: tool-call check not judged", http.StatusServiceUnavailable)
+}
+
+// checkToolCall redacts c and asks the engine. ok is true only when the
+// engine returned a verdict; any engine failure, or arguments dropped
+// because their redaction did not finish, is not ok (fail open, not judged).
+func (a *Agent) checkToolCall(ctx context.Context, c wire.ToolCallCheck) (v wire.ToolCallVerdict, ok bool) {
 	if c.Arguments != "" {
 		out, err := turn.RedactRaw(ctx, []byte(c.Arguments))
 		if err != nil {
 			// A scan that did not finish may have missed a secret: the
-			// call is checked without its arguments.
+			// arguments are not sent, and without them the call cannot be
+			// judged, so it is answered not judged.
 			a.toolChecks.argumentsDropped.Add(1)
-			c.Arguments, c.ArgumentsTruncated = "", false
-		} else {
-			c.Arguments = string(out)
+			return wire.ToolCallVerdict{}, false
 		}
+		c.Arguments = string(out)
 	}
 	c.V = wire.TurnVersion
 	c.ClientIP = a.clientIP(c.ClientIP)
-	var v wire.ToolCallVerdict
 	if err := a.call(ctx, http.MethodPost, wire.PathToolCallCheck, c, &v); err != nil {
 		a.toolChecks.failedOpen.Add(1)
 		a.warn("agent: tool-call check failed; failing open", err, "request_id", c.ID, "tenant", c.TenantID)
-		return wire.ToolCallVerdict{}
+		return wire.ToolCallVerdict{}, false
 	}
 	a.toolChecks.sent.Add(1)
 	if v.Block != nil {
 		a.toolChecks.blocked.Add(1)
 	}
-	return v
+	return v, true
 }

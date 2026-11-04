@@ -302,7 +302,7 @@ func (h Connectors) validateAndBuild(ctx context.Context, req connectorRequest) 
 
 // restrictExemptMessage is the 403 for a caller that may write connectors
 // but may not change metadata.restrict_exempt.
-const restrictExemptMessage = "admin.manage is required to change metadata.restrict_exempt"
+const restrictExemptMessage = "admin.manage is required to change metadata.restrict_exempt or to repoint a connector that has it"
 
 // allowRestrictExemptChange reports whether the caller may set or clear
 // metadata.restrict_exempt, answering 403 when not. The flag lets a
@@ -451,17 +451,22 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wasExempt := existing.RestrictExempt()
+	oldEndpoint, oldSlug := existing.Endpoint, existing.Slug
+	storedHeaders, _ := existing.Metadata["headers"].(map[string]any)
+	headersChanged := false
 	existing.Name = name
 	existing.Endpoint = endpoint
 	existing.TimeoutMS = timeoutMS
 	if req.Metadata != nil {
-		storedHeaders, _ := existing.Metadata["headers"].(map[string]any)
 		existing.Metadata = unmaskHeaderConfigs(meta, existing.Metadata)
 		// Checked after unmasking (a read's "***" sent back passes), and only
 		// the headers this request adds or changes: one saved before save-time
 		// validation existed must not block an edit or Enable/Disable, which
 		// send every header back.
 		changed := changedHeaders(existing.Metadata, storedHeaders)
+		if h, _ := changed["headers"].(map[string]any); len(h) > 0 {
+			headersChanged = true
+		}
 		if err := h.Headers.CheckConnectorHeaders(changed); err != nil {
 			writeConnectorValidationErr(w, err)
 			return
@@ -481,8 +486,13 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 		existing.Slug = req.Slug
 	}
 	// metadata is replaced as a whole, so a body that leaves out a stored
-	// restrict_exempt true clears it: that is a change too.
-	if existing.RestrictExempt() != wasExempt && !h.allowRestrictExemptChange(w, r) {
+	// restrict_exempt true clears it: that is a change too. An exempt
+	// connector is one a contained key may still reach, so repointing it
+	// (a new endpoint or slug) or changing the headers it sends (its stored
+	// token goes with it) takes the same permission as setting the flag.
+	isExempt := existing.RestrictExempt()
+	rerouted := existing.Endpoint != oldEndpoint || existing.Slug != oldSlug || headersChanged
+	if (isExempt != wasExempt || ((wasExempt || isExempt) && rerouted)) && !h.allowRestrictExemptChange(w, r) {
 		return
 	}
 

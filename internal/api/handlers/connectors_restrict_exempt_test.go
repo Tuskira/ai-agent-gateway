@@ -119,3 +119,67 @@ func TestConnectors_RestrictExempt_UpdateNeedsAdminToChange(t *testing.T) {
 		t.Errorf("admin non-bool: status %d; want 400", w.Code)
 	}
 }
+
+// A caller without admin.manage cannot repoint an exempt connector: a new
+// endpoint, a new slug or a changed header (its stored token would go to
+// the new place) is a 403. Edits that leave the route alone, and edits of a
+// connector that is not exempt, still work.
+func TestConnectors_RestrictExempt_RepointNeedsAdmin(t *testing.T) {
+	h := Connectors{Deps: restrictExemptDeps()}
+	const (
+		endpoint = "https://help.example.com/mcp"
+		headers  = `"headers":{"Authorization":{"type":"static","value":"Bearer s3cret"}}`
+	)
+	create := func(name, meta string) connectorView {
+		body := `{"name":"` + name + `","endpoint":"` + endpoint + `","metadata":` + meta + `}`
+		w := serve(http.MethodPost, "/connectors", h.Create, connectorReq(http.MethodPost, "/connectors", body, "admin"))
+		var c connectorView
+		if err := json.Unmarshal(w.Body.Bytes(), &c); err != nil || w.Code != http.StatusCreated {
+			t.Fatalf("create %s: %d %s", name, w.Code, w.Body.String())
+		}
+		return c
+	}
+	put := func(c connectorView, ep, slug, meta, role string) *httptest.ResponseRecorder {
+		body := `{"name":"` + c.Name + `","endpoint":"` + ep + `"`
+		if slug != "" {
+			body += `,"slug":"` + slug + `"`
+		}
+		if meta != "" {
+			body += `,"metadata":` + meta
+		}
+		return serve(http.MethodPut, "/connectors/{id}", h.Update, connectorReq(http.MethodPut, "/connectors/"+c.ID, body+"}", role))
+	}
+
+	exempt := create("help", `{"restrict_exempt":true,`+headers+`}`)
+	const masked = `"headers":{"Authorization":{"type":"static","value":"***"}}`
+	for name, tc := range map[string]struct{ ep, slug, meta string }{
+		"new endpoint":                    {"https://evil.example.com/mcp", "", `{"restrict_exempt":true,` + masked + `}`},
+		"new endpoint, metadata left out": {"https://evil.example.com/mcp", "", ""},
+		"new slug":                        {endpoint, "other", `{"restrict_exempt":true,` + masked + `}`},
+		"new header":                      {endpoint, "", `{"restrict_exempt":true,"headers":{"Authorization":{"type":"static","value":"Bearer other"}}}`},
+	} {
+		w := put(exempt, tc.ep, tc.slug, tc.meta, "editor")
+		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), restrictExemptMessage) {
+			t.Errorf("editor, %s: status %d body %s; want 403", name, w.Code, w.Body.String())
+		}
+	}
+	got, err := h.Store.Connectors().Get(t.Context(), "tenant-a", exempt.ID)
+	if err != nil || got.Endpoint != endpoint || got.Slug != exempt.Slug {
+		t.Fatalf("after refused writes: %+v, err %v; want the connector untouched", got, err)
+	}
+
+	// The route is unchanged (headers sent back masked): allowed.
+	if w := put(exempt, endpoint, "", `{"restrict_exempt":true,`+masked+`}`, "editor"); w.Code != http.StatusOK {
+		t.Errorf("editor, same route: status %d body %s", w.Code, w.Body.String())
+	}
+	// An admin may repoint it.
+	if w := put(exempt, "https://moved.example.com/mcp", "", `{"restrict_exempt":true,`+masked+`}`, "admin"); w.Code != http.StatusOK {
+		t.Errorf("admin repoint: status %d body %s", w.Code, w.Body.String())
+	}
+
+	// A connector that is not exempt may be repointed by an editor.
+	plain := create("plain", `{`+headers+`}`)
+	if w := put(plain, "https://other.example.com/mcp", "", `{`+masked+`}`, "editor"); w.Code != http.StatusOK {
+		t.Errorf("editor, plain connector: status %d body %s", w.Code, w.Body.String())
+	}
+}

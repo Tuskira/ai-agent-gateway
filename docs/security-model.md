@@ -191,7 +191,10 @@ tool, with one opening: a connector an admin marked
 `metadata.restrict_exempt: true` stays callable, so an agent that has been
 contained can still reach a tool such as asking a person for help. The flag
 weakens containment, so setting or clearing it needs `admin.manage` (the
-permission containment itself needs), not just `connector.update`. The
+permission containment itself needs), not just `connector.update`. So does
+repointing an exempt connector (a new endpoint, slug or header), which would
+otherwise let a `connector.update` holder send contained keys, and the
+connector's stored token, to a server of their choice. The
 exempt call still passes the caller's profile check, and a disabled exempt
 connector is refused like any other. A killed key is refused at
 authentication, before any connector is looked at.

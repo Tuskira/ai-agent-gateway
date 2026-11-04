@@ -82,9 +82,16 @@ reach, such as a tool for asking a person for help.
 - Creating a connector with `true`, or changing the value on
   `PUT /connectors/{id}`, needs `admin.manage` on top of
   `connector.create`/`connector.update` (`403` `admin.manage is required to
-  change metadata.restrict_exempt`): the flag weakens containment, so it takes
-  containment's permission. `PUT` replaces `metadata` as a whole, so leaving
-  out a stored `true` clears it and is a change too; send it back.
+  change metadata.restrict_exempt or to repoint a connector that has it`): the
+  flag weakens containment, so it takes containment's permission. `PUT`
+  replaces `metadata` as a whole, so leaving out a stored `true` clears it and
+  is a change too; send it back.
+- The same permission is needed to repoint a connector that is exempt (or
+  that a `PUT` makes exempt): changing its `endpoint`, its `slug` or any
+  header it sends. Without that, `connector.update` alone could point an
+  approved connector at another server and send its stored token there.
+  Edits that leave the route alone (name, description, timeout, headers sent
+  back masked) need only `connector.update`.
 - It is returned as is in `metadata` (it is not a secret).
 - A killed key is still refused on every plane, and `tools/list` is unchanged.
 

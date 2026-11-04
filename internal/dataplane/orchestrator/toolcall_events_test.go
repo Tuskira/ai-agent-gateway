@@ -4,11 +4,14 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/dptest"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/profile"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/reqctx"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/mcp"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/trace"
 )
 
 // Every routed tools/call is reported with its profile outcome; a
@@ -127,5 +130,22 @@ func TestRestrictedToolCallEvent(t *testing.T) {
 	// The refusal spent no half-open probe of the unhealthy connector.
 	if _, probe, err := h.orch.deps.Router.ResolveConnector(ctx, testTenant, "threat_intel"); err != nil || !probe {
 		t.Errorf("unhealthy connector's probe after a restricted call: probe %v, err %v", probe, err)
+	}
+}
+
+// A tool call is reported with the caller's address the plane resolved
+// (reqctx.Info.ClientIP), so the detection agent's events carry it.
+func TestToolCallCarriesClientIP(t *testing.T) {
+	h := newHarness(t)
+	var got []ToolCall
+	h.orch.deps.OnToolCall = func(_ context.Context, c ToolCall) { got = append(got, c) }
+	sess := h.initialize(t)
+	ctx := reqctx.With(h.ctx(), reqctx.New("req-1", "", trace.Context{}, "198.51.100.7", "", time.Now()))
+	in := Request{JSONRPC: slowCall(7, `{"name":"alpha__slow","arguments":{"steps":0}}`), Principal: h.principal, Session: sess, Backends: sess}
+	if r := h.orch.Handle(ctx, in).Response; r.Error != nil {
+		t.Fatalf("call: %+v", r.Error)
+	}
+	if len(got) != 1 || got[0].ClientIP != "198.51.100.7" {
+		t.Fatalf("events = %+v; want client ip 198.51.100.7", got)
 	}
 }

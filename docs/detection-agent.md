@@ -44,9 +44,14 @@ client ──> gateway ──> provider
 For each judgment the agent sends the engine two things, nothing else:
 
 1. **Metadata:** time, tenant id, request id, session id, gateway key id,
-   principal, model and request path, as the gateway recorded them. The
-   principal is whatever identity string the gateway authenticated, which may
-   be an email address.
+   principal, the caller's IP address (`client_ip`), model and request path,
+   as the gateway recorded them. The principal is whatever identity string
+   the gateway authenticated, which may be an email address. `client_ip` is
+   the address the gateway resolved for the caller (its `api.trusted_proxies`
+   honoured, the same `client_ip` as its access and capture logs); it also
+   goes on events and observations. Set `DETECTION_FORWARD_CLIENT_IP=false`
+   to keep it on the host: the agent then blanks it in everything it sends
+   to the engine.
 2. **The redacted new turn.** Not the whole conversation. An agent client
    resends its full history on every call, so the agent extracts only what is
    new in this call:
@@ -345,6 +350,7 @@ is not positive, fails startup.
 | `DETECTION_ENGINE_URL` | required | Base URL of the engine (`/v1/policy` and `/v1/detect` are appended; a trailing `/` is ignored). Use `https`. |
 | `DETECTION_AGENT_TOKEN` | required | Bearer token sent to the engine on every call. |
 | `DETECTION_INBOUND_TOKEN` | unset (no authentication) | Optional bearer token the agent requires on every request to it except `GET /healthz`: `Authorization: Bearer <token>`, compared in constant time; any other request is refused with `401` before it reaches a handler. Set the gateway's `llm_proxy.detection.agent_token` to the same value. |
+| `DETECTION_FORWARD_CLIENT_IP` | `true` | Whether the caller's IP address the gateway sends (`client_ip` on turns, stages and events) goes on to the engine. `false` blanks it in every detect request, observation and event (see [What leaves the host](#what-leaves-the-host)). |
 | `AGENT_LISTEN` | `127.0.0.1:8090` | Address the agent serves the gateway on. |
 | `AGENT_MAX_IN_FLIGHT` | `256` | Background judgments running at once (also the engine connection pool size). |
 | `AGENT_QUEUE_SIZE` | `1024` | Background turns waiting for a worker. |
@@ -377,7 +383,8 @@ completed. The shape and the canonical fixtures
 (`internal/llmplane/testdata/detection/turn.json` and
 `turn_no_response.json`) are in [llm-plane.md](llm-plane.md#contract).
 Fields (`wire.Turn`): `v`, `id`, `tenant_id`, `session_id`, `key_id`,
-`principal`, `model`, `path`, `at`, `status_code`, `request` (base64, the raw
+`principal`, `client_ip` (the caller's IP address, plain text, no port;
+absent when unknown), `model`, `path`, `at`, `status_code`, `request` (base64, the raw
 request body, in full) and `response` (base64, the first 1 MiB, present only
 when the upstream answered `2xx` and the relay completed).
 
@@ -428,7 +435,8 @@ and the response stage when there is a response, each redacted. The
   gateway's llm-plane.md "Events"), answers `202` at once and forwards them
   to the engine's `POST /v1/events` in batches, each monitored call's
   `arguments` redacted (`turn.RedactRaw`; a scan that does not finish in 2s
-  drops the arguments). A full queue (4096) or an engine failure drops
+  drops the arguments) and `client_ip` blanked with
+  `DETECTION_FORWARD_CLIENT_IP=false`. A full queue (4096) or an engine failure drops
   events, counted on `/healthz` (`events_sent`, `events_dropped`).
 - A turn with `request_judged` was judged inline by the gateway: only its
   response stage is judged.
@@ -548,7 +556,7 @@ Asks the engine to judge one redacted stage. Example (a request-stage turn):
 |---|---|
 | `v` | Contract version, see above. |
 | `sync` | `true` when the agent is waiting for the answer to enforce it (inline contract only; always `false` for turns from the gateway's tee). Informational: record the turn either way. |
-| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `model`, `path`. For one request of a batch, `item` is its id within the batch (its `custom_id`, at most 128 bytes, any secret in it redacted): every item of a batch shares the batch call's `request_id`, so a record is keyed by `request_id` and `item`. For a turn from the gateway's tee, also `dialect` (the wire format the call was made in, e.g. `anthropic`, `gemini_batch`) and `op` (`generate` or `batch`), and `history` (`full`, `server_side` or `prompt`: how much of the conversation the judged request carries) when the stage was read from the gateway's canonical conversation; absent `history` means `full` or unknown (a stage read from the raw body). The agent reads `history` case-insensitively and sends it in lower case; a value it does not know is sent as it is (lower-cased) and is read as not `full` (the goal is the new turn's own text). All four are optional strings, omitted when empty; an engine that does not know them ignores them, and `v` stays `1`. |
+| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `client_ip` (the caller's IP address as the gateway resolved it; blanked with `DETECTION_FORWARD_CLIENT_IP=false`), `model`, `path`. For one request of a batch, `item` is its id within the batch (its `custom_id`, at most 128 bytes, any secret in it redacted): every item of a batch shares the batch call's `request_id`, so a record is keyed by `request_id` and `item`. For a turn from the gateway's tee, also `dialect` (the wire format the call was made in, e.g. `anthropic`, `gemini_batch`) and `op` (`generate` or `batch`), and `history` (`full`, `server_side` or `prompt`: how much of the conversation the judged request carries) when the stage was read from the gateway's canonical conversation; absent `history` means `full` or unknown (a stage read from the raw body). The agent reads `history` case-insensitively and sends it in lower case; a value it does not know is sent as it is (lower-cased) and is read as not `full` (the goal is the new turn's own text). All four are optional strings, omitted when empty; an engine that does not know them ignores them, and `v` stays `1`. |
 | `turn.stage` | `request` or `response`. |
 | `turn.state` | The redacted new turn: `user_text`, `user_goal`, `harness_text`, `tool_results` (`[{tool, content}]`), `prior_tool_calls` (`[{name, input}]`), `response_text`, `response_tool_calls` (`[{name, input}]`). Omitted when empty. A request-stage turn has no `response_*` fields; a response-stage turn carries the request's `user_goal` and `tool_results` for context. |
 | `turn.refs` | Per-event ids that are not part of what a judge model reads, so a decision can point at an event: `tool_results` (`[{call_id, call_input}]`), `prior_tool_calls` and `response_tool_calls` (lists of call ids), matched to `state` by index. |

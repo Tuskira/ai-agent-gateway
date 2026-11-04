@@ -370,6 +370,7 @@ request, response and stream is in `internal/llmplane/testdata/conversation/`
 | `session_id` | string | Omitted when the client sent none. |
 | `key_id` | string | Gateway API key id; omitted when unknown. |
 | `principal` | string | Authenticated principal; omitted when unknown. |
+| `client_ip` | string | The caller's IP address as the gateway resolved it (`api.trusted_proxies` honoured; the `client_ip` of the capture log), plain text with no port; omitted when unknown. |
 | `model` | string | Model the client asked for; omitted when the call names none. |
 | `path` | string | Request path, e.g. `/v1/messages`. |
 | `at` | string | RFC 3339 time the gateway received the call. |
@@ -444,7 +445,7 @@ for the tenant's policy, `GET {agent_url}/v1/policy?tenant_id=` (cached 15
 seconds per tenant; 5 seconds after a failed lookup). When the policy says
 `inline` (the engine has a rule that can refuse a request in that tenant's
 mode), the gateway posts the request stage, `POST {agent_url}/v1/turns/request`
-(`id`, `tenant_id`, `session_id`, `key_id`, `principal`, `model`, `path`,
+(`id`, `tenant_id`, `session_id`, `key_id`, `principal`, `client_ip`, `model`, `path`,
 `at`, `request`, and `dialect`, `op`, `conversation` and `normalize_error`
 with the same meaning as in the turn above: the raw body read through the
 route's reader, in the canonical shape, so the agent judges a Bedrock
@@ -477,7 +478,7 @@ request path (a full queue of 4096 drops, counted under `/health`
 `detection_events` on the LLM plane):
 
 - `kind: "tool_call"`: every MCP `tools/call` routed to a connector, with
-  `tenant_id`, `session_id`, `key_id`, `principal`, `plane: "mcp"`,
+  `tenant_id`, `session_id`, `key_id`, `principal`, `client_ip`, `plane: "mcp"`,
   `profile`, `connector_id`, `server` (the connector's slug), `tool`
   (unprefixed) and `outcome`: `allowed`, `monitored` (granted with
   permission `monitor`; the call runs, and only then `arguments` carries
@@ -494,12 +495,15 @@ request path (a full queue of 4096 drops, counted under `/health`
   `metadata.restrict_exempt: true` is not refused, and is reported with its
   usual profile outcome (`allowed`, `monitored` or `denied`).
 - `kind: "refused"`: a request refused because its key is suspended,
-  revoked or expired: `plane` (`mcp`, `llm` or `api`), `outcome:
+  revoked or expired (with the caller's `client_ip`): `plane` (`mcp`, `llm` or `api`), `outcome:
   "refused"`, `reason` (`key suspended`, `key revoked`, `key expired`) and
   `detail` (`POST /v1/messages`).
 
-Every event has `v: 1` and `at`. The agent redacts `arguments` before
-forwarding them to its engine.
+Every event has `v: 1` and `at`, and `client_ip`: the caller's IP address
+as the gateway resolved it (`api.trusted_proxies` honoured; the same value as
+`client_ip` in the access and capture logs), plain text with no port, left
+out when unknown. The agent redacts `arguments` before forwarding them to its
+engine.
 
 ## Streaming
 

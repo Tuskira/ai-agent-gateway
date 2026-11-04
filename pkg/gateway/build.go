@@ -511,13 +511,18 @@ func planeOf(r *http.Request) string {
 // refusedEvents reports each request refused for its key's state
 // (suspended, revoked, expired) to the detection agent; nil when there is
 // no agent.
-func refusedEvents(e *detectionevents.Emitter) func(*http.Request, *store.APIKey, string) {
+// clientIP resolves the caller's address (api.trusted_proxies honoured).
+func refusedEvents(e *detectionevents.Emitter, clientIP func(*http.Request) string) func(*http.Request, *store.APIKey, string) {
 	if e == nil {
 		return nil
 	}
 	return func(r *http.Request, k *store.APIKey, reason string) {
+		var ip string
+		if clientIP != nil {
+			ip = clientIP(r)
+		}
 		e.Emit(detectionevents.Event{Kind: detectionevents.KindRefused, TenantID: k.TenantID, KeyID: k.ID,
-			Principal: k.ID, Plane: planeOf(r), Outcome: detectionevents.OutcomeRefused, Reason: reason,
+			Principal: k.ID, ClientIP: ip, Plane: planeOf(r), Outcome: detectionevents.OutcomeRefused, Reason: reason,
 			Detail: r.Method + " " + r.URL.Path})
 	}
 }
@@ -530,7 +535,7 @@ func toolCallEvents(e *detectionevents.Emitter) func(context.Context, orchestrat
 	}
 	return func(_ context.Context, c orchestrator.ToolCall) {
 		e.Emit(detectionevents.Event{Kind: detectionevents.KindToolCall, TenantID: c.TenantID, SessionID: c.SessionID,
-			KeyID: c.KeyID, Principal: c.Principal, Plane: "mcp", Profile: c.Profile, ConnectorID: c.ConnectorID,
+			KeyID: c.KeyID, Principal: c.Principal, ClientIP: c.ClientIP, Plane: "mcp", Profile: c.Profile, ConnectorID: c.ConnectorID,
 			Server: c.Server, Tool: c.Tool, Outcome: c.Outcome, Arguments: c.Arguments})
 	}
 }

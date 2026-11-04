@@ -351,7 +351,7 @@ func Run(ctx context.Context, opts Options) error {
 	// calls on this process at once.
 	openCalls := inflight.New()
 
-	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, opts.Authenticators, refusedEvents(events), logger)
+	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, opts.Authenticators, refusedEvents(events, clientIPs.IP), logger)
 	// The MCP and LLM planes refuse an IP locked out for failed auth with a
 	// 429 in their own error format, before any credential lookup.
 	mcpAuthenticator := internalauth.PlaneRateLimitedAuthenticator(openCalls.Authenticator(authenticator), mcpRateLimiter)

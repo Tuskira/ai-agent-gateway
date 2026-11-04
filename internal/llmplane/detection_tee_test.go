@@ -496,6 +496,7 @@ func TestDetectionTee_ContractFixtures(t *testing.T) {
 		if resp != "" {
 			tt.Response, tt.respType = []byte(resp), "application/json"
 			tt.ResponseType, tt.RequestJudged = tt.respType, true
+			tt.ClientIP = "192.0.2.10"
 		}
 		tt.normalize()
 		return tt
@@ -531,7 +532,7 @@ func TestDetectionTee_ContractFixtures(t *testing.T) {
 	// the agent's raw-body reader does not know.
 	tr := teeTurnRequest{
 		ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "session-1", KeyID: "key-1",
-		Principal: "user-1", Model: "amazon.nova-pro-v1:0", Path: "/model/amazon.nova-pro-v1:0/converse",
+		Principal: "user-1", ClientIP: "192.0.2.10", Model: "amazon.nova-pro-v1:0", Path: "/model/amazon.nova-pro-v1:0/converse",
 		At:      time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 		Request: []byte(`{"system":[{"text":"be brief"}],"messages":[{"role":"user","content":[{"text":"hello"}]}],"inferenceConfig":{"maxTokens":64}}`),
 		Dialect: readerBedrockConverse, Op: routeGenerate,

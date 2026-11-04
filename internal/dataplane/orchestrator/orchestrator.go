@@ -132,6 +132,7 @@ type ToolCall struct {
 	KeyID       string
 	Principal   string
 	SessionID   string // the MCP session id, when there is one
+	ClientIP    string // the caller's address (reqctx.Info.ClientIP); "" when unknown
 	Profile     string // the profile that applied; "" when none
 	ConnectorID string
 	Server      string // the connector's slug (a restricted call to an unknown connector: its tool-name namespace)
@@ -160,6 +161,9 @@ func (o *Orchestrator) toolCall(ctx context.Context, in Request, c ToolCall) {
 	c.TenantID, c.KeyID, c.Principal = in.Principal.TenantID, in.Principal.KeyID, in.Principal.Subject
 	if in.Session != nil {
 		c.SessionID = in.Session.ID
+	}
+	if info := reqctx.From(ctx); info != nil {
+		c.ClientIP = info.ClientIP
 	}
 	o.deps.OnToolCall(ctx, c)
 }

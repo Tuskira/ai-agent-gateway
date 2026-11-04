@@ -55,3 +55,20 @@ func TestInboundToken(t *testing.T) {
 		t.Errorf("set: inbound %q engine %q, %v", cfg.InboundToken, cfg.Token, err)
 	}
 }
+
+// DETECTION_FORWARD_CLIENT_IP defaults to true (forward); false sets
+// OmitClientIP; a value that is not a boolean fails startup.
+func TestForwardClientIP(t *testing.T) {
+	t.Setenv("DETECTION_ENGINE_URL", "https://engine.example.com")
+	t.Setenv("DETECTION_AGENT_TOKEN", "x")
+	for v, omit := range map[string]bool{"": false, "true": false, "false": true, "0": true} {
+		t.Setenv("DETECTION_FORWARD_CLIENT_IP", v)
+		if cfg, _, _, err := config(); err != nil || cfg.OmitClientIP != omit {
+			t.Errorf("%q: omit %v, %v; want %v", v, cfg.OmitClientIP, err, omit)
+		}
+	}
+	t.Setenv("DETECTION_FORWARD_CLIENT_IP", "maybe")
+	if _, _, _, err := config(); err == nil {
+		t.Error("maybe: no error")
+	}
+}

@@ -78,7 +78,11 @@ func TestGatewayContractFixtures(t *testing.T) {
 		{Type: ContentToolUse, ID: "toolu_1", Name: "get_time", Input: json.RawMessage(`{}`)},
 	}, StopReason: "tool_use"}
 	turn.ResponseType, turn.RequestJudged = "application/json", true
+	turn.ClientIP = "192.0.2.10"
 	sameJSON("turn.json", turn)
+	if m := MetaOfTurn(turn); m.ClientIP != "192.0.2.10" {
+		t.Errorf("MetaOfTurn: client_ip %q", m.ClientIP)
+	}
 
 	text := func(s string) []ContentBlock { return []ContentBlock{{Type: ContentText, Text: s}} }
 	batch := Turn{
@@ -110,7 +114,7 @@ func TestGatewayContractFixtures(t *testing.T) {
 	sameJSON("turn_request.json", gotReq)
 	req := TurnRequest{
 		ID: "req_0123456789abcdef", TenantID: "tenant-1", SessionID: "session-1", KeyID: "key-1",
-		Principal: "user-1", Model: "amazon.nova-pro-v1:0", Path: "/model/amazon.nova-pro-v1:0/converse",
+		Principal: "user-1", ClientIP: "192.0.2.10", Model: "amazon.nova-pro-v1:0", Path: "/model/amazon.nova-pro-v1:0/converse",
 		At:      time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 		Request: []byte(`{"system":[{"text":"be brief"}],"messages":[{"role":"user","content":[{"text":"hello"}]}],"inferenceConfig":{"maxTokens":64}}`),
 		Dialect: "bedrock_converse", Op: OpGenerate,
@@ -121,7 +125,7 @@ func TestGatewayContractFixtures(t *testing.T) {
 	if c := req.Call(); c.Conversation != req.Conversation || string(c.Request) != string(req.Request) {
 		t.Errorf("Call of the fixture: %+v", c)
 	}
-	if m := MetaOf(req); m.Dialect != "bedrock_converse" || m.Op != OpGenerate || m.Model != "amazon.nova-pro-v1:0" || m.RequestID != req.ID {
+	if m := MetaOf(req); m.Dialect != "bedrock_converse" || m.Op != OpGenerate || m.Model != "amazon.nova-pro-v1:0" || m.RequestID != req.ID || m.ClientIP != "192.0.2.10" {
 		t.Errorf("MetaOf the fixture: %+v", m)
 	}
 }

@@ -48,15 +48,19 @@ const MaxArguments = 16 << 10
 
 // Event is one thing the gateway did.
 type Event struct {
-	V         int       `json:"v,omitempty"`
-	Kind      string    `json:"kind"`
-	ID        string    `json:"id,omitempty"`
-	TenantID  string    `json:"tenant_id"`
-	SessionID string    `json:"session_id,omitempty"`
-	KeyID     string    `json:"key_id,omitempty"`
-	Principal string    `json:"principal,omitempty"`
-	At        time.Time `json:"at"`
-	Plane     string    `json:"plane"`
+	V         int    `json:"v,omitempty"`
+	Kind      string `json:"kind"`
+	ID        string `json:"id,omitempty"`
+	TenantID  string `json:"tenant_id"`
+	SessionID string `json:"session_id,omitempty"`
+	KeyID     string `json:"key_id,omitempty"`
+	Principal string `json:"principal,omitempty"`
+	// ClientIP is the caller's address as the gateway resolved it
+	// (api.trusted_proxies honoured; the client_ip of the access and
+	// capture logs): plain IP text, no port; empty when unknown.
+	ClientIP string    `json:"client_ip,omitempty"`
+	At       time.Time `json:"at"`
+	Plane    string    `json:"plane"`
 
 	Profile     string `json:"profile,omitempty"`
 	ConnectorID string `json:"connector_id,omitempty"`

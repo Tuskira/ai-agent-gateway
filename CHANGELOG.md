@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   form has a **Callable while an agent is restricted** switch for admins, and
   the MCP details show a badge. No migration: the flag lives in `metadata`,
   like `metadata.enabled`. A killed key is unaffected.
+- **The caller's IP address goes to the detection agent.** The turns and
+  inline request stages the gateway posts to the detection agent
+  (`POST /v1/turns`, `POST /v1/turns/request`) and its `tool_call` and
+  `refused` events now carry `client_ip`: the address the gateway resolved
+  for the caller (`api.trusted_proxies` honoured; the same value as
+  `client_ip` in the access and capture logs), left out when unknown. The
+  field is only added (`v` stays `1`; an older agent ignores it); the
+  fixtures `turn.json` and `turn_request.json` carry it.
+- **Detection agent: `client_ip` on to the engine, with a switch.** The
+  agent copies `client_ip` into the `meta` of every detect request and
+  observation and keeps it on events. `DETECTION_FORWARD_CLIENT_IP=false`
+  (default `true`) blanks it in everything sent to the engine.
 
 ## [0.8.2] - 2026-11-03
 

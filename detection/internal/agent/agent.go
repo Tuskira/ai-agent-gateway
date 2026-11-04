@@ -81,6 +81,11 @@ type Config struct {
 	// <token>", compared in constant time. Empty: the agent serves its
 	// listener without authentication, as it always has.
 	InboundToken string
+	// OmitClientIP blanks the caller's address (client_ip, which the
+	// gateway sends on turns, stages and events) in everything the agent
+	// sends to the engine. Zero value: it is forwarded.
+	// DETECTION_FORWARD_CLIENT_IP=false sets it.
+	OmitClientIP bool
 }
 
 // Agent serves the gateway's turns and talks to the engine.
@@ -727,6 +732,7 @@ func (e *engineStatusError) Error() string { return e.msg }
 
 func (a *Agent) detect(ctx context.Context, req wire.DetectRequest) (*wire.Judgment, error) {
 	req.V = wire.Version
+	req.Meta.ClientIP = a.clientIP(req.Meta.ClientIP)
 	for attempt := 1; ; attempt++ {
 		var out wire.DetectResponse
 		err := a.call(ctx, http.MethodPost, wire.PathDetect, req, &out)
@@ -745,6 +751,14 @@ func (a *Agent) detect(ctx context.Context, req wire.DetectRequest) (*wire.Judgm
 		case <-time.After(pause + time.Duration(rand.Int64N(int64(pause)))):
 		}
 	}
+}
+
+// clientIP is ip as the engine gets it: blank with OmitClientIP set.
+func (a *Agent) clientIP(ip string) string {
+	if a.cfg.OmitClientIP {
+		return ""
+	}
+	return ip
 }
 
 // detectAttempts and detectRetryPause bound the retries of a throttled

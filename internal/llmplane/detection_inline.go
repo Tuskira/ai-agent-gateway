@@ -65,6 +65,7 @@ type teeTurnRequest struct {
 	SessionID      string           `json:"session_id,omitempty"`
 	KeyID          string           `json:"key_id,omitempty"`
 	Principal      string           `json:"principal,omitempty"`
+	ClientIP       string           `json:"client_ip,omitempty"`
 	Model          string           `json:"model,omitempty"`
 	Path           string           `json:"path"`
 	At             time.Time        `json:"at"`
@@ -227,7 +228,7 @@ func (rt *router) inlineCheck(r *http.Request, route RouteInfo, info callInfo, s
 	ctx := r.Context()
 	return rt.tee.judgeRequest(ctx, teeTurnRequest{
 		ID: requestIDOf(ctx), TenantID: tenantOf(ctx), SessionID: sessionOf(ctx), KeyID: keyIDOf(ctx),
-		Principal: principalOf(ctx), Model: info.requestedModel, Path: r.URL.Path, At: start, Request: body,
+		Principal: principalOf(ctx), ClientIP: rt.callerIP(r), Model: info.requestedModel, Path: r.URL.Path, At: start, Request: body,
 		Dialect: route.Reader, Op: route.Op,
 	})
 }

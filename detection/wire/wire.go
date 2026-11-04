@@ -64,6 +64,7 @@ type Turn struct {
 	SessionID      string        `json:"session_id,omitempty"`
 	KeyID          string        `json:"key_id,omitempty"`
 	Principal      string        `json:"principal,omitempty"`
+	ClientIP       string        `json:"client_ip,omitempty"` // see Meta.ClientIP
 	Model          string        `json:"model,omitempty"`
 	Path           string        `json:"path,omitempty"`
 	At             time.Time     `json:"at"`
@@ -167,8 +168,8 @@ func (t Turn) Call() turn.Call {
 // what each stage is read from). Meta has no field for StatusCode, so the
 // engine does not see it.
 func MetaOfTurn(t Turn) Meta {
-	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID,
-		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
+	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID, KeyID: t.KeyID,
+		Principal: t.Principal, ClientIP: t.ClientIP, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
 }
 
 // TurnRequest is one call's stage (inline contract) as the gateway hands it to the agent: the
@@ -185,6 +186,7 @@ type TurnRequest struct {
 	SessionID      string        `json:"session_id,omitempty"`
 	KeyID          string        `json:"key_id,omitempty"`
 	Principal      string        `json:"principal,omitempty"`
+	ClientIP       string        `json:"client_ip,omitempty"` // see Meta.ClientIP
 	Model          string        `json:"model,omitempty"`
 	Path           string        `json:"path"`
 	At             time.Time     `json:"at"`
@@ -234,8 +236,13 @@ type Meta struct {
 	SessionID string    `json:"session_id,omitempty"`
 	KeyID     string    `json:"key_id,omitempty"`
 	Principal string    `json:"principal,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Path      string    `json:"path,omitempty"`
+	// ClientIP is the caller's address as the gateway resolved it (its
+	// api.trusted_proxies honoured; the client_ip of its access and
+	// capture logs): plain IP text, no port; empty when unknown, or when
+	// the agent is set not to forward it (DETECTION_FORWARD_CLIENT_IP).
+	ClientIP string `json:"client_ip,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Path     string `json:"path,omitempty"`
 	// Dialect and Op are the gateway turn's (Turn.Dialect, Turn.Op): the
 	// wire format the call was made in and what the route does.
 	Dialect string `json:"dialect,omitempty"`
@@ -253,8 +260,8 @@ type Meta struct {
 // MetaOf is the Meta of an inline stage, without History (MetaOfTurn's
 // rule).
 func MetaOf(t TurnRequest) Meta {
-	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID,
-		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
+	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID, KeyID: t.KeyID,
+		Principal: t.Principal, ClientIP: t.ClientIP, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
 }
 
 // Version is the agent→engine contract's version, sent as DetectRequest.V.
@@ -315,6 +322,7 @@ type Event struct {
 	SessionID string    `json:"session_id,omitempty"`
 	KeyID     string    `json:"key_id,omitempty"`
 	Principal string    `json:"principal,omitempty"`
+	ClientIP  string    `json:"client_ip,omitempty"` // see Meta.ClientIP
 	At        time.Time `json:"at"`
 	Plane     string    `json:"plane"` // "mcp", "llm" or "api"
 

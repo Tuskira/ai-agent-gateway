@@ -84,6 +84,15 @@ func config() (cfg agent.Config, listen string, level slog.Level, err error) {
 	// agent except GET /healthz must carry it as a bearer token. It is the
 	// gateway's llm_proxy.detection.agent_token.
 	cfg.InboundToken = os.Getenv("DETECTION_INBOUND_TOKEN")
+	// DETECTION_FORWARD_CLIENT_IP (default true): false blanks the caller's
+	// address (client_ip) in everything sent to the engine.
+	if v := os.Getenv("DETECTION_FORWARD_CLIENT_IP"); v != "" {
+		fwd, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return cfg, "", level, fmt.Errorf("DETECTION_FORWARD_CLIENT_IP: want true or false, got %q", v)
+		}
+		cfg.OmitClientIP = !fwd
+	}
 	// AGENT_LOG_LEVEL: debug, info (the default), warn or error. debug adds
 	// one line per judged turn (ids, stages, counts, bytes, prepare time;
 	// never its text).
@@ -107,6 +116,9 @@ func config() (cfg agent.Config, listen string, level slog.Level, err error) {
 	for name, d := range map[string]*time.Duration{
 		"AGENT_ENGINE_TIMEOUT": &cfg.EngineTimeout,
 		"AGENT_POLICY_TTL":     &cfg.PolicyTTL,
+		// DETECTION_TOOL_CHECK_TIMEOUT: one inline tool-call check with
+		// the engine (default 1500ms, inside the gateway's 2s).
+		"DETECTION_TOOL_CHECK_TIMEOUT": &cfg.ToolCheckTimeout,
 	} {
 		if v := os.Getenv(name); v != "" {
 			if *d, err = time.ParseDuration(v); err != nil || *d <= 0 {

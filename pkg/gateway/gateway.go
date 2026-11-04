@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectioncheck"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectionevents"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/inflight"
 	"log/slog"
@@ -346,12 +347,21 @@ func Run(ctx context.Context, opts Options) error {
 			events.Close(ctx)
 		}()
 	}
+	// The MCP plane's inline tool-call check
+	// (llm_proxy.detection.inline_tool_calls; config validation ensures an
+	// agent_url): granted tools/calls are checked by the agent before
+	// they are forwarded.
+	var toolChecks *detectioncheck.Checker
+	if d := cfg.LLMProxy.Detection; d.InlineToolCalls && d.AgentURL != "" {
+		toolChecks = detectioncheck.New(detectioncheck.Config{AgentURL: d.AgentURL, AgentToken: d.AgentToken, Timeout: d.InlineToolCallsTimeout})
+		logger.Info("mcp inline tool-call check enabled", "agent_url", d.AgentURL, "timeout", d.InlineToolCallsTimeout)
+	}
 	// openCalls holds every data-plane request per API key, so key
 	// containment (POST /api-keys/{id}/containment) cuts an agent's open
 	// calls on this process at once.
 	openCalls := inflight.New()
 
-	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, opts.Authenticators, refusedEvents(events), logger)
+	authenticator, apiAuthenticator, apiKeyAuthenticator := buildAuthenticator(cfg, st, opts.Authenticators, refusedEvents(events, clientIPs.IP), logger)
 	// The MCP and LLM planes refuse an IP locked out for failed auth with a
 	// 429 in their own error format, before any credential lookup.
 	mcpAuthenticator := internalauth.PlaneRateLimitedAuthenticator(openCalls.Authenticator(authenticator), mcpRateLimiter)
@@ -499,6 +509,8 @@ func Run(ctx context.Context, opts Options) error {
 			ClientIP:          clientIPs.IP,
 			OnToolCacheLookup: toolCacheLookup,
 			OnToolCall:        toolCallEvents(events),
+			CheckToolCall:     toolCallCheck(toolChecks),
+			DetectionStatus:   detectionStatus(toolChecks),
 		})
 		if err != nil {
 			return fmt.Errorf("build mcp plane: %w", err)
@@ -678,7 +690,11 @@ func Run(ctx context.Context, opts Options) error {
 				"status": "ok", "plane": "llm", "version": cfg.Service.Version, "limits": limiter.Status(),
 			}
 			if llmCfg.DetectionTee != nil {
-				health["detection"] = llmCfg.DetectionTee.Status()
+				det := llmCfg.DetectionTee.Status()
+				if toolChecks != nil {
+					det["tool_checks"] = toolChecks.Status()
+				}
+				health["detection"] = det
 				health["detection_events"] = events.Status()
 			}
 			_ = json.NewEncoder(w).Encode(health)

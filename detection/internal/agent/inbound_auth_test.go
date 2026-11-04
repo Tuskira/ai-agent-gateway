@@ -37,6 +37,7 @@ func TestInboundToken(t *testing.T) {
 		{http.MethodPost, "/v1/turns/response", `{}`},
 		{http.MethodPost, "/v1/events", `{"events":[]}`},
 		{http.MethodGet, "/v1/policy?tenant_id=t1", ``},
+		{http.MethodPost, "/v1/tool-calls/check", `{}`},
 	}
 	for _, rt := range routes {
 		for name, authz := range map[string]string{

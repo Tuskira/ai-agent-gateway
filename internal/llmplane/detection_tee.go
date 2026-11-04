@@ -106,6 +106,7 @@ type teeTurn struct {
 	SessionID      string           `json:"session_id,omitempty"`
 	KeyID          string           `json:"key_id,omitempty"`
 	Principal      string           `json:"principal,omitempty"`
+	ClientIP       string           `json:"client_ip,omitempty"`
 	Model          string           `json:"model,omitempty"`
 	Path           string           `json:"path"`
 	At             time.Time        `json:"at"`
@@ -218,12 +219,13 @@ func observedHeaders(h http.Header) map[string]string {
 	return out
 }
 
-// teeTurnOf is the turn for a call, without its response.
-func teeTurnOf(r *http.Request, info callInfo, route RouteInfo, start time.Time, status int, reqBody []byte) *teeTurn {
+// teeTurnOf is the turn for a call, without its response. clientIP is the
+// caller's address (router.callerIP).
+func teeTurnOf(r *http.Request, clientIP string, info callInfo, route RouteInfo, start time.Time, status int, reqBody []byte) *teeTurn {
 	ctx := r.Context()
 	return &teeTurn{
 		V: teeVersion, ID: requestIDOf(ctx), TenantID: tenantOf(ctx), SessionID: sessionOf(ctx), KeyID: keyIDOf(ctx),
-		Principal: principalOf(ctx), Model: info.requestedModel, Path: r.URL.Path, At: start, StatusCode: status,
+		Principal: principalOf(ctx), ClientIP: clientIP, Model: info.requestedModel, Path: r.URL.Path, At: start, StatusCode: status,
 		Request: reqBody, Dialect: route.Reader, Op: route.Op, Headers: observedHeaders(r.Header),
 	}
 }

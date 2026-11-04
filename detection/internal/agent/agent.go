@@ -81,6 +81,14 @@ type Config struct {
 	// <token>", compared in constant time. Empty: the agent serves its
 	// listener without authentication, as it always has.
 	InboundToken string
+	// OmitClientIP blanks the caller's address (client_ip, which the
+	// gateway sends on turns, stages and events) in everything the agent
+	// sends to the engine. Zero value: it is forwarded.
+	// DETECTION_FORWARD_CLIENT_IP=false sets it.
+	OmitClientIP bool
+	// ToolCheckTimeout bounds one tool-call check with the engine
+	// (redaction and verdict); default 1500ms, inside the gateway's 2s.
+	ToolCheckTimeout time.Duration
 }
 
 // Agent serves the gateway's turns and talks to the engine.
@@ -117,6 +125,8 @@ type Agent struct {
 	prepareRequest func(context.Context, turn.Call) turn.PreparedTurn
 	// side forwards the gateway's events and the tenant's observations.
 	side *sideband
+	// toolChecks are the inline tool-call check's counts (toolcheck.go).
+	toolChecks toolCheckStats
 }
 
 // stats are the agent's counts since it started, served on /healthz:
@@ -145,6 +155,15 @@ type Health struct {
 	EventsDropped  int64 `json:"events_dropped"`
 	ObserveSent    int64 `json:"observe_sent"`
 	ObserveDropped int64 `json:"observe_dropped"`
+	// Inline tool-call checks: verdicts the engine returned, how many
+	// blocked, checks that failed open (engine error), checks answered
+	// unchecked for want of an inline slot, and checks sent without their
+	// arguments because the redaction did not finish.
+	ToolChecksSent             int64 `json:"tool_checks_sent"`
+	ToolChecksBlocked          int64 `json:"tool_checks_blocked"`
+	ToolChecksFailedOpen       int64 `json:"tool_checks_failed_open"`
+	ToolChecksBusy             int64 `json:"tool_checks_busy"`
+	ToolChecksArgumentsDropped int64 `json:"tool_checks_arguments_dropped"`
 }
 
 // Health is the agent's counts as /healthz serves them.
@@ -152,7 +171,10 @@ func (a *Agent) Health() Health {
 	return Health{Status: "ok", Judged: a.stats.judged.Load(), DroppedEngineDown: a.stats.droppedEngineDown.Load(),
 		DroppedQueueFull: a.stats.droppedQueueFull.Load(), NotJudgedSent: a.stats.notJudgedSent.Load(),
 		EventsSent: a.side.eventsSent.Load(), EventsDropped: a.side.eventsDropped.Load(),
-		ObserveSent: a.side.observeSent.Load(), ObserveDropped: a.side.observeDropped.Load()}
+		ObserveSent: a.side.observeSent.Load(), ObserveDropped: a.side.observeDropped.Load(),
+		ToolChecksSent: a.toolChecks.sent.Load(), ToolChecksBlocked: a.toolChecks.blocked.Load(),
+		ToolChecksFailedOpen: a.toolChecks.failedOpen.Load(), ToolChecksBusy: a.toolChecks.busy.Load(),
+		ToolChecksArgumentsDropped: a.toolChecks.argumentsDropped.Load()}
 }
 
 // sent counts a turn the engine accepted.
@@ -210,6 +232,9 @@ func New(cfg Config) *Agent {
 	if cfg.PrepareTimeout <= 0 {
 		cfg.PrepareTimeout = 4 * time.Second
 	}
+	if cfg.ToolCheckTimeout <= 0 {
+		cfg.ToolCheckTimeout = 1500 * time.Millisecond
+	}
 	cfg.EngineURL = strings.TrimRight(cfg.EngineURL, "/")
 	// Go's default transport keeps 2 idle connections per host, so under load
 	// nearly every judgment would pay a new TCP+TLS handshake to the engine.
@@ -247,6 +272,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("POST "+wire.PathTurnResponse, a.turnResponse)
 	mux.HandleFunc("POST "+wire.PathEvents, a.eventsHandler)
 	mux.HandleFunc("GET "+wire.PathPolicy, a.policyHandler)
+	mux.HandleFunc("POST "+wire.PathToolCallCheck, a.toolCheck)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		answerJSON(w, a.Health())
 	})
@@ -727,6 +753,7 @@ func (e *engineStatusError) Error() string { return e.msg }
 
 func (a *Agent) detect(ctx context.Context, req wire.DetectRequest) (*wire.Judgment, error) {
 	req.V = wire.Version
+	req.Meta.ClientIP = a.clientIP(req.Meta.ClientIP)
 	for attempt := 1; ; attempt++ {
 		var out wire.DetectResponse
 		err := a.call(ctx, http.MethodPost, wire.PathDetect, req, &out)
@@ -745,6 +772,14 @@ func (a *Agent) detect(ctx context.Context, req wire.DetectRequest) (*wire.Judgm
 		case <-time.After(pause + time.Duration(rand.Int64N(int64(pause)))):
 		}
 	}
+}
+
+// clientIP is ip as the engine gets it: blank with OmitClientIP set.
+func (a *Agent) clientIP(ip string) string {
+	if a.cfg.OmitClientIP {
+		return ""
+	}
+	return ip
 }
 
 // detectAttempts and detectRetryPause bound the retries of a throttled

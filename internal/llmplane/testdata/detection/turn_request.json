@@ -4,6 +4,7 @@
   "session_id": "session-1",
   "key_id": "key-1",
   "principal": "user-1",
+  "client_ip": "192.0.2.10",
   "model": "amazon.nova-pro-v1:0",
   "path": "/model/amazon.nova-pro-v1:0/converse",
   "at": "2026-01-02T03:04:05Z",

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { Plus, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useAuthOptional } from '@/auth/AuthContext'
 import { useCreateConnector, useUpdateConnector } from '@/lib/queries'
 import type { Connector } from '@/lib/connectors'
 import { cn, slugify } from '@/lib/utils'
@@ -163,6 +164,15 @@ function ConnectorFormBody({
     elicitation: connector?.metadata?.server_requests?.elicitation ?? false,
     roots: connector?.metadata?.server_requests?.roots ?? false,
   }))
+  // Whether a restricted key (key containment) may still call this
+  // connector's tools. Only an admin sees the switch (the API needs
+  // admin.manage to change it); everyone else sends the stored value back
+  // unchanged.
+  const auth = useAuthOptional()
+  const isAdmin = Boolean(auth?.principal?.roles.includes('admin'))
+  const [restrictExempt, setRestrictExempt] = useState(
+    () => connector?.metadata?.restrict_exempt === true,
+  )
   // Once the person edits the slug field directly, stop auto-deriving it
   // from the name. An existing connector's slug is treated as already
   // "touched" — editing its name should never silently change its slug.
@@ -221,6 +231,7 @@ function ConnectorFormBody({
         server_requests: serverRequestsEnabled ? serverRequests : undefined,
         // Not edited here: keep a disabled connector disabled across an edit.
         enabled: connector?.metadata?.enabled === false ? false : undefined,
+        restrict_exempt: restrictExempt ? true : undefined,
       },
     }
 
@@ -503,6 +514,23 @@ function ConnectorFormBody({
               </div>
               <Switch checked={tlsSkipVerify} onCheckedChange={setTlsSkipVerify} />
             </div>
+
+            {isAdmin ? (
+              <div className="flex items-center justify-between gap-3 rounded-r-4 border border-border px-3.5 py-3">
+                <div>
+                  <Label>Callable while an agent is restricted</Label>
+                  <p className="text-xs text-text-subtle">
+                    For tools an agent must always reach, such as asking a person for
+                    help.
+                  </p>
+                </div>
+                <Switch
+                  aria-label="Callable while an agent is restricted"
+                  checked={restrictExempt}
+                  onCheckedChange={setRestrictExempt}
+                />
+              </div>
+            ) : null}
 
             <div className="flex flex-col gap-3">
               <div>

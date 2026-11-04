@@ -185,6 +185,20 @@ hold it; a custom role must grant `llm.access` (or `llm.*`) to call
 providers — including Bedrock Flow C, which spends the gateway's own AWS
 identity.
 
+**Key containment and exempt connectors.** A restricted key (containment
+level `restrict`, [api.md](api.md#key-containment)) may call models but no
+tool, with one opening: a connector an admin marked
+`metadata.restrict_exempt: true` stays callable, so an agent that has been
+contained can still reach a tool such as asking a person for help. The flag
+weakens containment, so setting or clearing it needs `admin.manage` (the
+permission containment itself needs), not just `connector.update`. So does
+repointing an exempt connector (a new endpoint, slug or header), which would
+otherwise let a `connector.update` holder send contained keys, and the
+connector's stored token, to a server of their choice. The
+exempt call still passes the caller's profile check, and a disabled exempt
+connector is refused like any other. A killed key is refused at
+authentication, before any connector is looked at.
+
 ## Tenant isolation
 
 `Principal.TenantID` comes from the server-side credential: the API key's

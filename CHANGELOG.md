@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A connector can stay callable for a restricted key.** Connector
+  `metadata.restrict_exempt: true` lets a key restricted by containment
+  (`level: restrict`) still call that connector's tools, for tools an agent
+  must always reach, such as asking a person for help. The call takes the
+  normal path (profile check, forward, access log, `tool_call` event with its
+  usual outcome); a connector that is not exempt, or exempt but disabled, is
+  refused as before with `-32003`. A non-boolean value is a `400`; creating a
+  connector with `true`, or changing the value, needs `admin.manage` on top of
+  `connector.create`/`connector.update` (`403` otherwise). So does repointing
+  an exempt connector (a new endpoint, slug or header), which would otherwise
+  send contained keys, and the connector's stored token, to a server of the
+  editor's choice. The console's MCP
+  form has a **Callable while an agent is restricted** switch for admins, and
+  the MCP details show a badge. No migration: the flag lives in `metadata`,
+  like `metadata.enabled`. A killed key is unaffected.
+- **The caller's IP address goes to the detection agent.** The turns and
+  inline request stages the gateway posts to the detection agent
+  (`POST /v1/turns`, `POST /v1/turns/request`) and its `tool_call` and
+  `refused` events now carry `client_ip`: the address the gateway resolved
+  for the caller (`api.trusted_proxies` honoured; the same value as
+  `client_ip` in the access and capture logs), left out when unknown. The
+  field is only added (`v` stays `1`; an older agent ignores it); the
+  fixtures `turn.json` and `turn_request.json` carry it.
+- **Inline tool-call check on the MCP plane.** With
+  `llm_proxy.detection.inline_tool_calls: true` (off by default; needs
+  `agent_url`), a granted `tools/call` is checked by the detection agent
+  before it is forwarded: the gateway reads the tenant's policy
+  (`GET /v1/policy`, `inline_tool_calls`, cached 15s; a failed lookup 5s as
+  off) and posts the call to `POST {agent_url}/v1/tool-calls/check` with its
+  arguments (cut at 64 KiB, `arguments_truncated`), all within
+  `inline_tool_calls_timeout` (default `2s`). A verdict with `block` refuses
+  the call with JSON-RPC `-32003` (`Blocked by detection rule <rule_id>
+  (<title>): <detail>. The tool call was not sent to the connector.`, data
+  `{tool, profile, rule_id}`) and nothing is forwarded. Every failure fails
+  open. Denied calls, a restricted key's refused calls and `gateway__skill`
+  are not checked. The `tool_call` event now always carries `id` (the
+  gateway request id, the same as the check's), `checked: true` when the
+  engine judged the call (a verdict came back), and the new outcome `blocked`. Counts are on `/health`
+  under `detection.tool_checks` (`checked`, `blocked`, `failed`). The
+  request is pinned by the new fixture `tool_call_check.json`, shared with
+  the agent (`make detection-contract`).
+- **Detection agent: `POST /v1/tool-calls/check`.** The agent serves the
+  check behind its inbound token: for a tenant whose engine policy sets
+  `inline_tool_calls` it redacts the arguments and asks the engine's
+  `POST /v1/tool-calls/check` within `DETECTION_TOOL_CHECK_TIMEOUT` (default
+  `1500ms`), sharing the inline slots. It answers `200` only when the engine
+  returned a verdict; when it did not judge the call (no inline slot free,
+  the engine failed, the policy is off, or the arguments were dropped because
+  their redaction did not finish) it answers `503`, so the gateway forwards
+  the call and its event carries no `checked`. `wire` gains `PathToolCallCheck`, `ToolCallCheck`,
+  `ToolCallVerdict`, `PolicyResponse.InlineToolCalls`, `Event.Checked` and
+  `OutcomeBlocked` (fields only added; `v` stays `1`). `/healthz` adds
+  `tool_checks_sent`, `tool_checks_blocked`, `tool_checks_failed_open`,
+  `tool_checks_busy` and `tool_checks_arguments_dropped`.
+- **Detection agent: `client_ip` on to the engine, with a switch.** The
+  agent copies `client_ip` into the `meta` of every detect request and
+  observation and keeps it on events. `DETECTION_FORWARD_CLIENT_IP=false`
+  (default `true`) blanks it in everything sent to the engine.
+
 ## [0.8.2] - 2026-11-03
 
 ### Fixed

@@ -113,8 +113,10 @@ func (a *Agent) runEvents() {
 }
 
 // redactEvent removes every secret from a monitored call's Arguments; when
-// the scan cannot finish, the Arguments are not sent.
+// the scan cannot finish, the Arguments are not sent. It also blanks the
+// caller's address when the agent is set not to forward it.
 func (a *Agent) redactEvent(ev wire.Event) wire.Event {
+	ev.ClientIP = a.clientIP(ev.ClientIP)
 	if ev.Arguments == "" {
 		return ev
 	}
@@ -191,6 +193,7 @@ func (a *Agent) sendObservation(o wire.Observation) {
 		return
 	}
 	o.Request, o.Response = req, resp
+	o.Meta.ClientIP = a.clientIP(o.Meta.ClientIP)
 	if err := a.send(ctx, wire.PathObserve, o); err != nil {
 		a.side.observeDropped.Add(1)
 		a.warn("agent: engine did not take an observation; dropped", err, "request_id", o.Meta.RequestID)

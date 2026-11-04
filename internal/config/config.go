@@ -562,6 +562,16 @@ type LLMDetection struct {
 	Inline bool `yaml:"inline"`
 	// InlineTimeout bounds one inline judgment (policy lookup + verdict).
 	InlineTimeout time.Duration `yaml:"inline_timeout"`
+	// InlineToolCalls turns on the inline tool-call check on the MCP
+	// plane: before a granted tools/call is forwarded to its connector, the
+	// agent is asked (per the tenant's engine policy, cached) to check it,
+	// and a blocking rule refuses the call with JSON-RPC -32003. Fails open
+	// on any agent error. Needs AgentURL. Off: nothing on the MCP request
+	// path talks to the agent.
+	InlineToolCalls bool `yaml:"inline_tool_calls"`
+	// InlineToolCallsTimeout bounds one tool-call check (policy lookup +
+	// verdict); past it the call is forwarded.
+	InlineToolCallsTimeout time.Duration `yaml:"inline_tool_calls_timeout"`
 }
 
 // BodyStoreConfig selects where captured LLM request/response bodies live.
@@ -967,6 +977,9 @@ func Default() *Config {
 				MaxInFlight:   8,
 				Inline:        false,
 				InlineTimeout: 10 * time.Second,
+
+				InlineToolCalls:        false,
+				InlineToolCallsTimeout: 2 * time.Second,
 			},
 		},
 		Database: Database{
@@ -1275,6 +1288,14 @@ func (c *Config) Validate() error {
 
 	if err := validateAbsoluteURL(c.LLMProxy.UpstreamBaseURL); err != nil {
 		return fmt.Errorf("llm_proxy: invalid upstream_base_url: %w", err)
+	}
+	if d := c.LLMProxy.Detection; d.InlineToolCalls {
+		if d.AgentURL == "" {
+			return fmt.Errorf("llm_proxy.detection: inline_tool_calls needs agent_url")
+		}
+		if d.InlineToolCallsTimeout <= 0 {
+			return fmt.Errorf("llm_proxy.detection: inline_tool_calls_timeout must be > 0, got %s", d.InlineToolCallsTimeout)
+		}
 	}
 	if d := c.LLMProxy.Detection; d.AgentURL != "" {
 		if err := validateAgentURL(d.AgentURL); err != nil {

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { API_KEY_STORAGE_KEY } from '@/lib/api'
+import { AuthProvider } from '@/auth/AuthContext'
 import ConnectorsPage from '@/routes/ConnectorsPage'
 import { chooseRowAction } from './rowActions'
 
@@ -25,6 +26,126 @@ function renderPage() {
     </QueryClientProvider>,
   )
 }
+
+/** renderPage inside an AuthProvider, so the dialog knows the caller's
+ * roles (from the stubbed `/auth/me`). */
+function renderPageWithAuth() {
+  sessionStorage.setItem(API_KEY_STORAGE_KEY, 'gk_test_session_key')
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/connectors']}>
+          <ConnectorsPage />
+        </MemoryRouter>
+      </AuthProvider>
+    </QueryClientProvider>,
+  )
+}
+
+/** A fetch stub for the connectors page with one existing connector; PUTs
+ * echo the connector back. */
+function connectorsFetch(existing: Record<string, unknown>, roles: string[]) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url.endsWith('/api/v1/auth/me'))
+      return jsonResponse({
+        subject: 'key-1',
+        tenant_id: 't1',
+        email: '',
+        roles,
+        auth_method: 'api_key',
+        key_id: 'key-1',
+      })
+    if (url.endsWith('/api/v1/auth/config')) return jsonResponse({ api_key_login: true })
+    if (url.endsWith('/api/v1/connectors') && (!init || init.method === undefined))
+      return jsonResponse({ items: [existing], total: 1 })
+    if (url.endsWith('/api/v1/headers/providers'))
+      return jsonResponse({ providers: [], resolver_types: [] })
+    if (url.endsWith(`/api/v1/connectors/${existing.id}/tools`))
+      return jsonResponse({ items: [], total: 0 })
+    if (url.endsWith(`/api/v1/connectors/${existing.id}/health`))
+      return jsonResponse({ status: 'healthy' })
+    if (url.endsWith(`/api/v1/connectors/${existing.id}`) && init?.method === 'PUT')
+      return jsonResponse(existing)
+    throw new Error(`Unhandled fetch in test: ${url} ${init?.method}`)
+  })
+}
+
+function putBody(fetchMock: ReturnType<typeof vi.fn>, id: string) {
+  const putCall = fetchMock.mock.calls.find(
+    ([reqInput, init]) =>
+      String(reqInput).endsWith(`/api/v1/connectors/${id}`) &&
+      (init as RequestInit | undefined)?.method === 'PUT',
+  )
+  expect(putCall).toBeTruthy()
+  return JSON.parse((putCall![1] as RequestInit).body as string)
+}
+
+const EXEMPT_CONNECTOR = {
+  id: 'c9',
+  name: 'Help Desk',
+  slug: 'help-desk',
+  endpoint: 'http://help:8001/mcp',
+  timeout_ms: 30000,
+  status: 'healthy',
+  metadata: { restrict_exempt: true },
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+}
+
+describe('ConnectorFormDialog restrict_exempt', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('lets an admin turn "callable while restricted" off', async () => {
+    const fetchMock = connectorsFetch(EXEMPT_CONNECTOR, ['admin'])
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderPageWithAuth()
+
+    await chooseRowAction(user, 'Help Desk', 'Edit')
+    const toggle = await screen.findByRole('switch', {
+      name: 'Callable while an agent is restricted',
+    })
+    expect(toggle).toBeChecked()
+    await user.click(toggle)
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    await waitFor(() => {
+      expect(putBody(fetchMock, 'c9').metadata.restrict_exempt).toBeUndefined()
+    })
+  })
+
+  it('hides the switch from a non-admin and sends the stored value back', async () => {
+    const fetchMock = connectorsFetch(EXEMPT_CONNECTOR, ['editor'])
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderPageWithAuth()
+
+    await chooseRowAction(user, 'Help Desk', 'Edit')
+    await screen.findByRole('button', { name: /save changes/i })
+    expect(
+      screen.queryByRole('switch', { name: 'Callable while an agent is restricted' }),
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    await waitFor(() => {
+      expect(putBody(fetchMock, 'c9').metadata.restrict_exempt).toBe(true)
+    })
+  })
+
+  it('shows a badge on an exempt connector', async () => {
+    vi.stubGlobal('fetch', connectorsFetch(EXEMPT_CONNECTOR, ['admin']))
+    const user = userEvent.setup()
+    renderPageWithAuth()
+
+    await user.click(await screen.findByText('Help Desk'))
+    expect(await screen.findByText('Callable while restricted')).toBeInTheDocument()
+  })
+})
 
 describe('ConnectorFormDialog (v8 two-column create/edit)', () => {
   beforeEach(() => {

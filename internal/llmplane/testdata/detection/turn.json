@@ -5,6 +5,7 @@
   "session_id": "session-1",
   "key_id": "key-1",
   "principal": "user-1",
+  "client_ip": "192.0.2.10",
   "model": "example-model",
   "path": "/v1/messages",
   "at": "2026-01-02T03:04:05Z",

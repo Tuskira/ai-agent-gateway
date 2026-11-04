@@ -96,6 +96,8 @@ Duration values use Go's duration syntax (`30s`, `5m`, `1h`).
 | `llm_proxy.detection.max_in_flight` | int | `8` | `GATEWAY_LLM_PROXY_DETECTION_MAX_IN_FLIGHT` | Turns being posted at once. |
 | `llm_proxy.detection.inline` | bool | `false` | `GATEWAY_LLM_PROXY_DETECTION_INLINE` | [Inline prevention](llm-plane.md#inline-prevention): before a generation call is forwarded, ask the agent (per the tenant's engine policy, cached 15s) to judge its request; a blocking rule refuses the call with `400`. Fails open on any agent error. Off: nothing on the request path talks to the agent. |
 | `llm_proxy.detection.inline_timeout` | duration | `10s` | `GATEWAY_LLM_PROXY_DETECTION_INLINE_TIMEOUT` | Bound on one inline judgment (policy lookup plus verdict); past it the call goes through. |
+| `llm_proxy.detection.inline_tool_calls` | bool | `false` | `GATEWAY_LLM_PROXY_DETECTION_INLINE_TOOL_CALLS` | [Inline tool-call check](llm-plane.md#inline-tool-call-check) on the MCP plane: before a granted `tools/call` is forwarded to its connector, ask the agent (per the tenant's engine policy, cached 15s) to check it; a blocking rule refuses the call with JSON-RPC `-32003`. Fails open on any agent error. Needs `agent_url` (startup fails with `llm_proxy.detection: inline_tool_calls needs agent_url`). Off: nothing on the MCP request path talks to the agent. |
+| `llm_proxy.detection.inline_tool_calls_timeout` | duration | `2s` | `GATEWAY_LLM_PROXY_DETECTION_INLINE_TOOL_CALLS_TIMEOUT` | Bound on one tool-call check (policy lookup plus verdict); past it the call is forwarded. Must be > 0 when `inline_tool_calls` is on. |
 
 ## database (required)
 

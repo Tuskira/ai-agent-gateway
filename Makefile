@@ -152,13 +152,15 @@ detection-vuln:
 	fi
 
 # detection-contract fails when the agent's copy of the gateway's detection
-# wire fixtures drifts from the gateway's (internal/llmplane/testdata/detection),
+# wire fixtures drifts from the gateway's (internal/llmplane/testdata/detection,
+# and the MCP plane's tool-call check, internal/detectioncheck/testdata),
 # or its copy of the canonical conversation goldens from the gateway's
 # (internal/llmplane/testdata/conversation). Both sides' tests pin their
 # types and readings to their own copy, so identical copies keep the two
 # ends in step.
 detection-contract:
-	diff -r internal/llmplane/testdata/detection detection/wire/testdata/gateway
+	diff -r -x tool_call_check.json internal/llmplane/testdata/detection detection/wire/testdata/gateway
+	diff internal/detectioncheck/testdata/tool_call_check.json detection/wire/testdata/gateway/tool_call_check.json
 	diff -r internal/llmplane/testdata/conversation detection/turn/testdata/conversation
 
 ui-install:

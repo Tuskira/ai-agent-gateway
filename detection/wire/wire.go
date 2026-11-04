@@ -12,6 +12,9 @@
 // (/v1/turns/request and /v1/turns/response): the gateway's inline
 // prevention uses the request route, pinned by turn_request.json; the
 // response route is kept for a gateway that holds a call for its response.
+// ToolCallCheck and ToolCallVerdict are the inline tool-call check
+// (/v1/tool-calls/check, gateway to agent and agent to engine), pinned by
+// tool_call_check.json.
 // Every id is the gateway's request id, which also keys the gateway's own
 // logs.
 package wire
@@ -32,6 +35,10 @@ const (
 	PathPolicy       = "/v1/policy"         // engine, ?tenant_id= (the agent serves it to the gateway too, cached)
 	PathEvents       = "/v1/events"         // agent (from the gateway) and engine (from the agent): EventBatch
 	PathObserve      = "/v1/observe"        // engine: Observation
+	// PathToolCallCheck is the inline tool-call check: served by the agent
+	// (from the gateway) and the engine (from the agent), ToolCallCheck in,
+	// ToolCallVerdict out.
+	PathToolCallCheck = "/v1/tool-calls/check"
 )
 
 // TurnVersion is the gateway-to-agent contract's version (Turn.V). The agent
@@ -64,6 +71,7 @@ type Turn struct {
 	SessionID      string        `json:"session_id,omitempty"`
 	KeyID          string        `json:"key_id,omitempty"`
 	Principal      string        `json:"principal,omitempty"`
+	ClientIP       string        `json:"client_ip,omitempty"` // see Meta.ClientIP
 	Model          string        `json:"model,omitempty"`
 	Path           string        `json:"path,omitempty"`
 	At             time.Time     `json:"at"`
@@ -167,8 +175,8 @@ func (t Turn) Call() turn.Call {
 // what each stage is read from). Meta has no field for StatusCode, so the
 // engine does not see it.
 func MetaOfTurn(t Turn) Meta {
-	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID,
-		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
+	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID, KeyID: t.KeyID,
+		Principal: t.Principal, ClientIP: t.ClientIP, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
 }
 
 // TurnRequest is one call's stage (inline contract) as the gateway hands it to the agent: the
@@ -185,6 +193,7 @@ type TurnRequest struct {
 	SessionID      string        `json:"session_id,omitempty"`
 	KeyID          string        `json:"key_id,omitempty"`
 	Principal      string        `json:"principal,omitempty"`
+	ClientIP       string        `json:"client_ip,omitempty"` // see Meta.ClientIP
 	Model          string        `json:"model,omitempty"`
 	Path           string        `json:"path"`
 	At             time.Time     `json:"at"`
@@ -234,8 +243,13 @@ type Meta struct {
 	SessionID string    `json:"session_id,omitempty"`
 	KeyID     string    `json:"key_id,omitempty"`
 	Principal string    `json:"principal,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Path      string    `json:"path,omitempty"`
+	// ClientIP is the caller's address as the gateway resolved it (its
+	// api.trusted_proxies honoured; the client_ip of its access and
+	// capture logs): plain IP text, no port; empty when unknown, or when
+	// the agent is set not to forward it (DETECTION_FORWARD_CLIENT_IP).
+	ClientIP string `json:"client_ip,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Path     string `json:"path,omitempty"`
 	// Dialect and Op are the gateway turn's (Turn.Dialect, Turn.Op): the
 	// wire format the call was made in and what the route does.
 	Dialect string `json:"dialect,omitempty"`
@@ -253,8 +267,8 @@ type Meta struct {
 // MetaOf is the Meta of an inline stage, without History (MetaOfTurn's
 // rule).
 func MetaOf(t TurnRequest) Meta {
-	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID,
-		KeyID: t.KeyID, Principal: t.Principal, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
+	return Meta{At: t.At, TenantID: t.TenantID, RequestID: t.ID, SessionID: t.SessionID, KeyID: t.KeyID,
+		Principal: t.Principal, ClientIP: t.ClientIP, Model: t.Model, Path: t.Path, Dialect: t.Dialect, Op: t.Op}
 }
 
 // Version is the agent→engine contract's version, sent as DetectRequest.V.
@@ -300,6 +314,10 @@ type PolicyResponse struct {
 	// Observe asks the agent for an Observation of each generation call
 	// (POST /v1/observe), for an engine that keeps track of the agents calling.
 	Observe bool `json:"observe,omitempty"`
+	// InlineToolCalls asks the gateway to check the tenant's granted MCP
+	// tool calls before forwarding them (POST /v1/tool-calls/check). A
+	// gateway with llm_proxy.detection.inline_tool_calls off ignores it.
+	InlineToolCalls bool `json:"inline_tool_calls,omitempty"`
 }
 
 // Event is something the gateway did that is not a model call: a tool call
@@ -315,6 +333,7 @@ type Event struct {
 	SessionID string    `json:"session_id,omitempty"`
 	KeyID     string    `json:"key_id,omitempty"`
 	Principal string    `json:"principal,omitempty"`
+	ClientIP  string    `json:"client_ip,omitempty"` // see Meta.ClientIP
 	At        time.Time `json:"at"`
 	Plane     string    `json:"plane"` // "mcp", "llm" or "api"
 
@@ -327,6 +346,11 @@ type Event struct {
 	Tool        string `json:"tool,omitempty"`
 	Outcome     string `json:"outcome,omitempty"`
 	Arguments   string `json:"arguments,omitempty"`
+	// Checked is set when the call was checked inline
+	// (POST /v1/tool-calls/check) and a verdict came back: the engine has
+	// already judged it under the same id. A call blocked by the check has
+	// Outcome OutcomeBlocked.
+	Checked bool `json:"checked,omitempty"`
 
 	// A refused request: why ("key suspended", "key revoked", "key
 	// expired") and what was asked ("POST /v1/messages").
@@ -344,6 +368,7 @@ const (
 	OutcomeDenied     = "denied"     // the profile does not grant the tool
 	OutcomeRestricted = "restricted" // the key is restricted: every tool call is refused
 	OutcomeRefused    = "refused"    // the key is suspended, revoked or expired
+	OutcomeBlocked    = "blocked"    // refused by the inline tool-call check: not sent to the connector
 )
 
 // EventBatch is what POST /v1/events carries, gateway to agent and agent to
@@ -367,4 +392,38 @@ type Observation struct {
 	Request      []byte            `json:"request"`
 	Response     []byte            `json:"response,omitempty"`
 	ResponseType string            `json:"response_type,omitempty"`
+}
+
+// ToolCallCheck is one granted MCP tools/call, before the gateway forwards
+// it to its connector (POST /v1/tool-calls/check). ID is the gateway's
+// request id, the same id as the call's tool_call Event. Arguments is the
+// call's params.arguments as JSON text, cut at MaxToolCallArguments with
+// ArgumentsTruncated set; the agent redacts it before it leaves the host.
+type ToolCallCheck struct {
+	V         int       `json:"v,omitempty"`
+	ID        string    `json:"id"`
+	TenantID  string    `json:"tenant_id"`
+	SessionID string    `json:"session_id,omitempty"` // the MCP session id
+	KeyID     string    `json:"key_id,omitempty"`
+	Principal string    `json:"principal,omitempty"`
+	ClientIP  string    `json:"client_ip,omitempty"` // see Meta.ClientIP
+	At        time.Time `json:"at"`
+	// Profile is the agent profile as the caller named it; "" when none.
+	Profile            string `json:"profile,omitempty"`
+	ConnectorID        string `json:"connector_id"`
+	Server             string `json:"server"`  // the connector's slug
+	Tool               string `json:"tool"`    // unprefixed
+	Outcome            string `json:"outcome"` // OutcomeAllowed or OutcomeMonitored
+	Arguments          string `json:"arguments,omitempty"`
+	ArgumentsTruncated bool   `json:"arguments_truncated,omitempty"`
+}
+
+// MaxToolCallArguments bounds ToolCallCheck.Arguments (64 KiB).
+const MaxToolCallArguments = 64 << 10
+
+// ToolCallVerdict is the answer to a ToolCallCheck: Block is set when a
+// rule refuses the call; the gateway then answers the caller with a
+// JSON-RPC error and never forwards it.
+type ToolCallVerdict struct {
+	Block *Block `json:"block,omitempty"`
 }

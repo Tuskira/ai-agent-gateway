@@ -98,6 +98,16 @@ type Deps struct {
 	// path and must not block.
 	OnToolCall func(ctx context.Context, c ToolCall)
 
+	// CheckToolCall, when set, is the inline tool-call check: it is asked
+	// about every tools/call routed to a connector and granted (outcome
+	// allowed or monitored, or no profile) before it is forwarded, with
+	// ToolCall.Arguments set to the call's full arguments. checked is true
+	// when a verdict came back; a non-nil block refuses the call with
+	// -32003 and it is not forwarded. It fails open: on any failure it
+	// returns (nil, false). It runs on the request path and must bound its
+	// own wait. Nil (the default) checks nothing.
+	CheckToolCall func(ctx context.Context, c ToolCall) (block *ToolCallBlock, checked bool)
+
 	// MaxUpstreamStreamsPerSession bounds the connector streams one
 	// session may hold (zero: upstream.DefaultMaxPerSession), and
 	// MaxSubscriptionsPerSession its resource subscriptions (zero:
@@ -128,18 +138,41 @@ type Deps struct {
 
 // ToolCall is one tools/call as Deps.OnToolCall sees it.
 type ToolCall struct {
+	// ID is the gateway's request id (the access log's), the same id the
+	// inline check is sent under.
+	ID          string
 	TenantID    string
 	KeyID       string
 	Principal   string
 	SessionID   string // the MCP session id, when there is one
+	ClientIP    string // the caller's address (reqctx.Info.ClientIP); "" when unknown
 	Profile     string // the profile that applied; "" when none
 	ConnectorID string
 	Server      string // the connector's slug (a restricted call to an unknown connector: its tool-name namespace)
 	Tool        string // unprefixed tool name (the qualified name before routing)
 	Outcome     string // allowed | monitored | denied | restricted
 	// Arguments is the call's arguments as JSON, set for a monitored call
-	// only.
+	// only (for Deps.CheckToolCall: always).
 	Arguments string
+	// Checked is set when the call was checked inline (Deps.CheckToolCall)
+	// and a verdict came back.
+	Checked bool
+}
+
+// ToolCallBlock is the rule that refuses a tool call (Deps.CheckToolCall).
+type ToolCallBlock struct {
+	RuleID string
+	Title  string
+	Detail string
+}
+
+// message is the refusal the caller gets.
+func (b *ToolCallBlock) message() string {
+	msg := fmt.Sprintf("Blocked by detection rule %s (%s)", b.RuleID, b.Title)
+	if b.Detail != "" {
+		msg += ": " + b.Detail
+	}
+	return msg + ". The tool call was not sent to the connector."
 }
 
 // Tool-call outcomes (ToolCall.Outcome).
@@ -148,6 +181,7 @@ const (
 	ToolCallMonitored  = "monitored"
 	ToolCallDenied     = "denied"
 	ToolCallRestricted = "restricted"
+	ToolCallBlocked    = "blocked" // refused by the inline check (Deps.CheckToolCall)
 )
 
 // restrictedMessage is the refusal of a restricted key's tool call.
@@ -157,11 +191,39 @@ func (o *Orchestrator) toolCall(ctx context.Context, in Request, c ToolCall) {
 	if o.deps.OnToolCall == nil {
 		return
 	}
+	o.deps.OnToolCall(ctx, stampToolCall(ctx, in, c))
+}
+
+// stampToolCall fills in who made the call: request id, tenant, key,
+// principal, session and client address.
+func stampToolCall(ctx context.Context, in Request, c ToolCall) ToolCall {
 	c.TenantID, c.KeyID, c.Principal = in.Principal.TenantID, in.Principal.KeyID, in.Principal.Subject
 	if in.Session != nil {
 		c.SessionID = in.Session.ID
 	}
-	o.deps.OnToolCall(ctx, c)
+	if info := reqctx.From(ctx); info != nil {
+		c.ID, c.ClientIP = info.RequestID, info.ClientIP
+	}
+	return c
+}
+
+// checkToolCall runs the inline check (Deps.CheckToolCall) on a granted
+// call, with its full arguments; tc.Checked records whether a verdict came
+// back.
+func (o *Orchestrator) checkToolCall(ctx context.Context, in Request, tc *ToolCall, args map[string]any) *ToolCallBlock {
+	if o.deps.CheckToolCall == nil {
+		return nil
+	}
+	c := stampToolCall(ctx, in, *tc)
+	c.Arguments = ""
+	if args != nil {
+		if b, err := json.Marshal(args); err == nil {
+			c.Arguments = string(b)
+		}
+	}
+	block, checked := o.deps.CheckToolCall(ctx, c)
+	tc.Checked = checked
+	return block
 }
 
 // Orchestrator serves MCP methods.
@@ -815,12 +877,20 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 	info.SetTool(params.Name)
 
 	// A restricted key (containment) may call models but no tool: refuse
-	// before anything is resolved or routed.
+	// before anything is resolved or routed -- unless the tool's connector
+	// is restrict_exempt, which keeps it callable (tools an agent must
+	// always reach, such as asking a person for help). An exempt call then
+	// takes the normal path: route, profile gate, forward.
 	if in.Principal.ToolsRestricted {
-		if tc, ok := o.restrictedToolCall(ctx, in, params.Name); ok {
-			o.toolCall(ctx, in, tc)
+		tc, ok, exempt := o.restrictedToolCall(ctx, in, params.Name)
+		if !exempt {
+			if ok {
+				o.toolCall(ctx, in, tc)
+			}
+			return o.fail(in, mcp.NewError(mcp.ErrorCodeToolNotAllowed, restrictedMessage, map[string]any{"tool": params.Name}))
 		}
-		return o.fail(in, mcp.NewError(mcp.ErrorCodeToolNotAllowed, restrictedMessage, map[string]any{"tool": params.Name}))
+		o.log.Info("tools/call by a restricted key allowed: connector is restrict_exempt",
+			"tool", params.Name, "connector_id", tc.ConnectorID, "key_id", in.Principal.KeyID)
 	}
 
 	allow, mcpErr := o.resolveProfile(ctx, in)
@@ -856,6 +926,19 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 			if b, err := json.Marshal(params.Arguments); err == nil {
 				tc.Arguments = string(b)
 			}
+		}
+	}
+	// The inline check, for a granted call only: after the profile gate,
+	// before anything is forwarded.
+	if tc.Outcome != ToolCallDenied {
+		if block := o.checkToolCall(ctx, in, &tc, params.Arguments); block != nil {
+			tc.Outcome = ToolCallBlocked
+			o.toolCall(ctx, in, tc)
+			o.log.Info("tools/call blocked by the inline check",
+				"rule_id", block.RuleID, "tool", params.Name, "connector_id", route.Connector.ID)
+			return o.fail(in, mcp.NewError(mcp.ErrorCodeToolNotAllowed, block.message(), map[string]any{
+				"tool": params.Name, "profile": tc.Profile, "rule_id": block.RuleID,
+			}))
 		}
 	}
 	o.toolCall(ctx, in, tc)
@@ -916,18 +999,23 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 // namespace reports nothing (ok false), as an unroutable name does for an
 // unrestricted key: an event with no server is refused by the receiver,
 // along with the rest of its batch.
-func (o *Orchestrator) restrictedToolCall(ctx context.Context, in Request, qualified string) (ToolCall, bool) {
+//
+// exempt is true when the namespace names an enabled connector whose
+// metadata.restrict_exempt is set (store.Connector.RestrictExempt): the call
+// is then not refused, and tc is not reported.
+func (o *Orchestrator) restrictedToolCall(ctx context.Context, in Request, qualified string) (tc ToolCall, ok, exempt bool) {
 	namespace, tool, err := router.ParseToolName(qualified)
 	if err != nil {
 		o.log.Info("tools/call refused for a restricted key; no event for a tool name with no connector namespace",
 			"tool", qualified, "key_id", in.Principal.KeyID)
-		return ToolCall{}, false
+		return ToolCall{}, false, false
 	}
-	tc := ToolCall{Server: namespace, Tool: tool, Outcome: ToolCallRestricted}
+	tc = ToolCall{Server: namespace, Tool: tool, Outcome: ToolCallRestricted}
 	if conn, err := o.deps.Router.Lookup(ctx, in.Principal.TenantID, namespace); err == nil {
 		tc.ConnectorID, tc.Server = conn.ID, conn.Slug
+		exempt = conn.Enabled() && conn.RestrictExempt()
 	}
-	return tc, true
+	return tc, true, exempt
 }
 
 // toolCallFailure turns a failed backend call into the right answer for

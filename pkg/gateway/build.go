@@ -17,6 +17,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
 	dataplaneheaders "github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/headers"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/orchestrator"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectioncheck"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectionevents"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/llmplane"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/metrics"
@@ -511,13 +512,18 @@ func planeOf(r *http.Request) string {
 // refusedEvents reports each request refused for its key's state
 // (suspended, revoked, expired) to the detection agent; nil when there is
 // no agent.
-func refusedEvents(e *detectionevents.Emitter) func(*http.Request, *store.APIKey, string) {
+// clientIP resolves the caller's address (api.trusted_proxies honoured).
+func refusedEvents(e *detectionevents.Emitter, clientIP func(*http.Request) string) func(*http.Request, *store.APIKey, string) {
 	if e == nil {
 		return nil
 	}
 	return func(r *http.Request, k *store.APIKey, reason string) {
+		var ip string
+		if clientIP != nil {
+			ip = clientIP(r)
+		}
 		e.Emit(detectionevents.Event{Kind: detectionevents.KindRefused, TenantID: k.TenantID, KeyID: k.ID,
-			Principal: k.ID, Plane: planeOf(r), Outcome: detectionevents.OutcomeRefused, Reason: reason,
+			Principal: k.ID, ClientIP: ip, Plane: planeOf(r), Outcome: detectionevents.OutcomeRefused, Reason: reason,
 			Detail: r.Method + " " + r.URL.Path})
 	}
 }
@@ -529,8 +535,35 @@ func toolCallEvents(e *detectionevents.Emitter) func(context.Context, orchestrat
 		return nil
 	}
 	return func(_ context.Context, c orchestrator.ToolCall) {
-		e.Emit(detectionevents.Event{Kind: detectionevents.KindToolCall, TenantID: c.TenantID, SessionID: c.SessionID,
-			KeyID: c.KeyID, Principal: c.Principal, Plane: "mcp", Profile: c.Profile, ConnectorID: c.ConnectorID,
-			Server: c.Server, Tool: c.Tool, Outcome: c.Outcome, Arguments: c.Arguments})
+		e.Emit(detectionevents.Event{Kind: detectionevents.KindToolCall, ID: c.ID, TenantID: c.TenantID, SessionID: c.SessionID,
+			KeyID: c.KeyID, Principal: c.Principal, ClientIP: c.ClientIP, Plane: "mcp", Profile: c.Profile, ConnectorID: c.ConnectorID,
+			Server: c.Server, Tool: c.Tool, Outcome: c.Outcome, Arguments: c.Arguments, Checked: c.Checked})
 	}
+}
+
+// toolCallCheck is the MCP plane's inline tool-call check through the
+// detection agent (llm_proxy.detection.inline_tool_calls); nil when off.
+func toolCallCheck(ch *detectioncheck.Checker) func(context.Context, orchestrator.ToolCall) (*orchestrator.ToolCallBlock, bool) {
+	if ch == nil {
+		return nil
+	}
+	return func(ctx context.Context, c orchestrator.ToolCall) (*orchestrator.ToolCallBlock, bool) {
+		args, cut := detectioncheck.CutArguments(c.Arguments)
+		b, checked := ch.Check(ctx, detectioncheck.ToolCallCheck{ID: c.ID, TenantID: c.TenantID, SessionID: c.SessionID,
+			KeyID: c.KeyID, Principal: c.Principal, ClientIP: c.ClientIP, Profile: c.Profile, ConnectorID: c.ConnectorID,
+			Server: c.Server, Tool: c.Tool, Outcome: c.Outcome, Arguments: args, ArgumentsTruncated: cut})
+		if b == nil {
+			return nil, checked
+		}
+		return &orchestrator.ToolCallBlock{RuleID: b.RuleID, Title: b.Title, Detail: b.Detail}, checked
+	}
+}
+
+// detectionStatus is the MCP plane's /health "detection" entry: the inline
+// tool-call check's counts; nil when the check is off.
+func detectionStatus(ch *detectioncheck.Checker) func() map[string]any {
+	if ch == nil {
+		return nil
+	}
+	return func() map[string]any { return map[string]any{"tool_checks": ch.Status()} }
 }

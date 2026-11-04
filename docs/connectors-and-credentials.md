@@ -66,6 +66,39 @@ row action) or with `PUT /connectors/{id}` and `metadata.enabled: false`; note
 the PUT replaces `metadata` wholesale, so send the rest of it back. The console
 shows it as **Disabled** in the State column, which is separate from health.
 
+## Callable while an agent is restricted
+
+`metadata.restrict_exempt` (boolean, absent means `false`) keeps a
+connector's tools callable by an API key that is restricted (containment
+level `restrict`, see [api.md](api.md#key-containment)). A restricted key is
+normally refused every `tools/call`; a call to an **enabled** connector with
+`restrict_exempt: true` goes through the normal path instead: the caller's
+agent profile still decides which of its tools it may call, and the call is
+logged and reported like any other. Use it for tools an agent must always
+reach, such as a tool for asking a person for help.
+
+- A value that is not a boolean is refused with `400` `metadata.restrict_exempt
+  must be a boolean`.
+- Creating a connector with `true`, or changing the value on
+  `PUT /connectors/{id}`, needs `admin.manage` on top of
+  `connector.create`/`connector.update` (`403` `admin.manage is required to
+  change metadata.restrict_exempt or to repoint a connector that has it`): the
+  flag weakens containment, so it takes containment's permission. `PUT`
+  replaces `metadata` as a whole, so leaving out a stored `true` clears it and
+  is a change too; send it back.
+- The same permission is needed to repoint a connector that is exempt (or
+  that a `PUT` makes exempt): changing its `endpoint`, its `slug` or any
+  header it sends. Without that, `connector.update` alone could point an
+  approved connector at another server and send its stored token there.
+  Edits that leave the route alone (name, description, timeout, headers sent
+  back masked) need only `connector.update`.
+- It is returned as is in `metadata` (it is not a secret).
+- A killed key is still refused on every plane, and `tools/list` is unchanged.
+
+In the console, an admin sets it with **Callable while an agent is
+restricted** in the MCP form; the MCP details show **Callable while
+restricted** when it is on.
+
 ## Health and discovery
 
 ```sh

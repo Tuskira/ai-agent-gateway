@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/clientip"
 )
 
 // inlineAgent is a detection agent stub for inline prevention: it serves
@@ -277,5 +279,27 @@ func TestInline_TurnRequestNormalize(t *testing.T) {
 			continue
 		}
 		sameJSONValue(t, c.name, marshalJSON(t, tr.Conversation), []byte(c.want))
+	}
+}
+
+// The request stage and the teed turn carry the caller's address as the
+// plane resolves it (llm_proxy's client IP resolver: through a trusted
+// proxy, the forwarded client), the client_ip of the capture log.
+func TestInline_ClientIPOnStageAndTurn(t *testing.T) {
+	agent := newInlineAgent(t, true, nil)
+	var upCalls atomic.Int32
+	gw := gateway(t, Config{UpstreamBaseURL: countingUpstream(t, &upCalls), ClientIP: clientip.MustNew("127.0.0.0/8").IP,
+		DetectionTee: newTee(t, DetectionTeeConfig{AgentURL: agent.url, Inline: true})}, &lastRec{})
+	resp, body := do(t, http.MethodPost, gw.URL+"/v1/messages",
+		map[string]string{"x-api-key": "sk", "X-Forwarded-For": "198.51.100.7"}, teeReq)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d %s", resp.StatusCode, body)
+	}
+	tt := agent.waitTurn(t)
+	agent.mu.Lock()
+	tr := agent.lastTurnRequest
+	agent.mu.Unlock()
+	if tr.ClientIP != "198.51.100.7" || tt.ClientIP != "198.51.100.7" {
+		t.Fatalf("client_ip: stage %q, turn %q; want 198.51.100.7", tr.ClientIP, tt.ClientIP)
 	}
 }

@@ -504,6 +504,38 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "inline_tool_calls without agent url",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.InlineToolCalls = true
+			},
+			wantErr: true,
+		},
+		{
+			name: "inline_tool_calls with agent url",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "http://127.0.0.1:8090"
+				c.LLMProxy.Detection.InlineToolCalls = true
+			},
+			wantErr: false,
+		},
+		{
+			name: "inline_tool_calls timeout not positive",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "http://127.0.0.1:8090"
+				c.LLMProxy.Detection.InlineToolCalls = true
+				c.LLMProxy.Detection.InlineToolCallsTimeout = 0
+			},
+			wantErr: true,
+		},
+		{
+			name: "inline_tool_calls timeout zero while off",
+			mutate: func(c *Config) {
+				c.LLMProxy.Detection.AgentURL = "http://127.0.0.1:8090"
+				c.LLMProxy.Detection.InlineToolCallsTimeout = 0
+			},
+			wantErr: false,
+		},
+		{
 			name: "empty upstream url",
 			mutate: func(c *Config) {
 				c.LLMProxy.UpstreamBaseURL = ""
@@ -990,5 +1022,27 @@ func TestExternalServiceConfig(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// The inline tool-call check is off by default with a 2s budget, is set
+// from the environment, and refuses to start without an agent.
+func TestInlineToolCallsConfig(t *testing.T) {
+	d := Default().LLMProxy.Detection
+	if d.InlineToolCalls || d.InlineToolCallsTimeout != 2*time.Second {
+		t.Fatalf("defaults: on %v timeout %s", d.InlineToolCalls, d.InlineToolCallsTimeout)
+	}
+	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_INLINE_TOOL_CALLS", "true")
+	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_INLINE_TOOL_CALLS_TIMEOUT", "750ms")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "llm_proxy.detection: inline_tool_calls needs agent_url") {
+		t.Fatalf("without agent_url: %v", err)
+	}
+	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_AGENT_URL", "http://127.0.0.1:8090")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := cfg.LLMProxy.Detection; !d.InlineToolCalls || d.InlineToolCallsTimeout != 750*time.Millisecond {
+		t.Errorf("from env: on %v timeout %s", d.InlineToolCalls, d.InlineToolCallsTimeout)
 	}
 }

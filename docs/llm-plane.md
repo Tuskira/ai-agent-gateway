@@ -370,6 +370,7 @@ request, response and stream is in `internal/llmplane/testdata/conversation/`
 | `session_id` | string | Omitted when the client sent none. |
 | `key_id` | string | Gateway API key id; omitted when unknown. |
 | `principal` | string | Authenticated principal; omitted when unknown. |
+| `client_ip` | string | The caller's IP address as the gateway resolved it (`api.trusted_proxies` honoured; the `client_ip` of the capture log), plain text with no port; omitted when unknown. |
 | `model` | string | Model the client asked for; omitted when the call names none. |
 | `path` | string | Request path, e.g. `/v1/messages`. |
 | `at` | string | RFC 3339 time the gateway received the call. |
@@ -444,7 +445,7 @@ for the tenant's policy, `GET {agent_url}/v1/policy?tenant_id=` (cached 15
 seconds per tenant; 5 seconds after a failed lookup). When the policy says
 `inline` (the engine has a rule that can refuse a request in that tenant's
 mode), the gateway posts the request stage, `POST {agent_url}/v1/turns/request`
-(`id`, `tenant_id`, `session_id`, `key_id`, `principal`, `model`, `path`,
+(`id`, `tenant_id`, `session_id`, `key_id`, `principal`, `client_ip`, `model`, `path`,
 `at`, `request`, and `dialect`, `op`, `conversation` and `normalize_error`
 with the same meaning as in the turn above: the raw body read through the
 route's reader, in the canonical shape, so the agent judges a Bedrock
@@ -468,6 +469,61 @@ verdict together. The request stage is pinned by
   `detection.inline.failed` and logged at most once a minute.
 - With `inline` off, nothing on the request path talks to the agent.
 
+### Inline tool-call check
+
+Off by default. With `llm_proxy.detection.inline_tool_calls: true` (it needs
+`agent_url`), the MCP plane checks each `tools/call` before it forwards it
+to its connector. Only a call that was routed to a connector and is granted
+is checked: outcome `allowed` or `monitored`, or a caller with no profile. A
+call the profile denies, a restricted key's refused call and the native
+`gateway__skill` tool are not checked. A restricted key's call to a
+`restrict_exempt` connector is granted, so it is checked. The order is:
+restrict gate, profile, route, profile gate, **check**, `tool_call` event,
+forward.
+
+1. The gateway asks the agent for the tenant's policy,
+   `GET {agent_url}/v1/policy?tenant_id=`, and reads `inline_tool_calls`
+   (cached 15 seconds per tenant; a failed lookup is cached 5 seconds as
+   off). Without it, nothing more happens.
+2. It posts the call, `POST {agent_url}/v1/tool-calls/check`, and waits for
+   the verdict. Steps 1 and 2 together are bounded by
+   `llm_proxy.detection.inline_tool_calls_timeout` (default `2s`).
+
+The check (pinned by `internal/detectioncheck/testdata/tool_call_check.json`,
+which the agent's tests read a byte-identical copy of) carries `v: 1`, `id`
+(the gateway's request id; the call's `tool_call` event carries the same
+`id`), `tenant_id`, `session_id` (the MCP session), `key_id`, `principal`,
+`client_ip`, `at`, `profile` (as the caller named it; absent for none),
+`connector_id`, `server` (the connector's slug), `tool` (unprefixed),
+`outcome` (`allowed` or `monitored`) and `arguments`: the call's full
+`params.arguments` as JSON text, cut at 64 KiB with `arguments_truncated:
+true`. The arguments go to the local agent only, which redacts them before
+anything leaves the host.
+
+- A verdict with `block` (`{"block": {"rule_id", "title", "detail", ...}}`)
+  refuses the call with JSON-RPC `-32003`: `Blocked by detection rule
+  <rule_id> (<title>): <detail>. The tool call was not sent to the
+  connector.`, with data `{"tool": "<connector>__<tool>", "profile":
+  "<name>", "rule_id": "<id>"}`. Nothing is forwarded. The `tool_call`
+  event goes out with `outcome: "blocked"` and `checked: true`.
+- A verdict with no `block` forwards the call; the event has
+  `checked: true`. `checked` means the engine judged the call.
+- Every failure fails open: agent down, timeout, a non-`200`, an answer
+  that is not a verdict, or one over 1 MiB lets the call through. The
+  event then has no `checked`, so whatever reads the event knows the call
+  was not judged inline. The agent itself answers `503` when it could not
+  get a verdict (no inline slot free, the engine failed, the tenant's policy
+  is off, or the arguments were dropped), so those calls are not marked
+  checked either. Failures are counted and logged at most
+  once a minute. There is no fail-closed option.
+- Counts are on the MCP plane's `GET /health` under
+  `detection.tool_checks` (`checked`, `blocked`, `failed`), and on the
+  LLM plane's `/health` under `detection.tool_checks` when it runs in the
+  same process.
+- Mixed versions: an agent from before the check drops the policy field,
+  so the gateway never checks; one that answers `404` fails open. With the
+  setting off, nothing on the MCP request path talks to the agent.
+
 ### Events
 
 With `agent_url` set the gateway also posts its events, what it did that
@@ -477,11 +533,13 @@ request path (a full queue of 4096 drops, counted under `/health`
 `detection_events` on the LLM plane):
 
 - `kind: "tool_call"`: every MCP `tools/call` routed to a connector, with
-  `tenant_id`, `session_id`, `key_id`, `principal`, `plane: "mcp"`,
+  `tenant_id`, `session_id`, `key_id`, `principal`, `client_ip`, `plane: "mcp"`,
   `profile`, `connector_id`, `server` (the connector's slug), `tool`
   (unprefixed) and `outcome`: `allowed`, `monitored` (granted with
   permission `monitor`; the call runs, and only then `arguments` carries
-  its arguments as JSON, cut at 16 KiB), `denied` (not granted) or
+  its arguments as JSON, cut at 16 KiB), `denied` (not granted),
+  `blocked` (refused by the [inline tool-call
+  check](#inline-tool-call-check); then `checked` is `true`) or
   `restricted` (the key is restricted; see
   [api.md](api.md#key-containment)). A restricted call is refused before
   it is routed but is named the same way: `server` and `connector_id` are
@@ -490,13 +548,22 @@ request path (a full queue of 4096 drops, counted under `/health`
   `server` is the namespace itself and `connector_id` is empty. A tool
   name with no `<connector>__` namespace reports no event, as it does for
   an unrestricted key, since an event with no `server` would be refused.
+  A restricted key's call to an enabled connector with
+  `metadata.restrict_exempt: true` is not refused, and is reported with its
+  usual profile outcome (`allowed`, `monitored` or `denied`).
 - `kind: "refused"`: a request refused because its key is suspended,
-  revoked or expired: `plane` (`mcp`, `llm` or `api`), `outcome:
+  revoked or expired (with the caller's `client_ip`): `plane` (`mcp`, `llm` or `api`), `outcome:
   "refused"`, `reason` (`key suspended`, `key revoked`, `key expired`) and
   `detail` (`POST /v1/messages`).
 
-Every event has `v: 1` and `at`. The agent redacts `arguments` before
-forwarding them to its engine.
+A `tool_call` event carries `id`, the gateway's request id (the id of its
+access log, and of the inline check when there was one), and `checked: true`
+when the call was checked inline and a verdict came back.
+Every event has `v: 1` and `at`, and `client_ip`: the caller's IP address
+as the gateway resolved it (`api.trusted_proxies` honoured; the same value as
+`client_ip` in the access and capture logs), plain text with no port, left
+out when unknown. The agent redacts `arguments` before forwarding them to its
+engine.
 
 ## Streaming
 

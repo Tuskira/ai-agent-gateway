@@ -265,6 +265,16 @@ func (c *Connector) Enabled() bool {
 	return !ok || v
 }
 
+// RestrictExempt reports whether a restricted API key (containment level
+// restrict) may still call this connector's tools: metadata.restrict_exempt
+// is true. Absent or anything but true is false. It is for tools an agent
+// must always reach, such as asking a person for help; like Enabled, the
+// flag lives in metadata so no schema change is needed.
+func (c *Connector) RestrictExempt() bool {
+	v, _ := c.Metadata["restrict_exempt"].(bool)
+	return v
+}
+
 // MCPCatalogField is one value a tenant supplies when adding a catalog
 // entry. Query, when set, routes the value into the connector URL as that
 // query parameter (an optional project scope, say) instead of into the

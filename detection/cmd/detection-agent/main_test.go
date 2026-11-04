@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 	"testing"
+	"time"
 )
 
 // AGENT_LOG_LEVEL sets the log level; unset is info, a bad value fails
@@ -53,5 +54,43 @@ func TestInboundToken(t *testing.T) {
 	t.Setenv("DETECTION_INBOUND_TOKEN", "gw-secret")
 	if cfg, _, _, err := config(); err != nil || cfg.InboundToken != "gw-secret" || cfg.Token != "x" {
 		t.Errorf("set: inbound %q engine %q, %v", cfg.InboundToken, cfg.Token, err)
+	}
+}
+
+// DETECTION_FORWARD_CLIENT_IP defaults to true (forward); false sets
+// OmitClientIP; a value that is not a boolean fails startup.
+func TestForwardClientIP(t *testing.T) {
+	t.Setenv("DETECTION_ENGINE_URL", "https://engine.example.com")
+	t.Setenv("DETECTION_AGENT_TOKEN", "x")
+	for v, omit := range map[string]bool{"": false, "true": false, "false": true, "0": true} {
+		t.Setenv("DETECTION_FORWARD_CLIENT_IP", v)
+		if cfg, _, _, err := config(); err != nil || cfg.OmitClientIP != omit {
+			t.Errorf("%q: omit %v, %v; want %v", v, cfg.OmitClientIP, err, omit)
+		}
+	}
+	t.Setenv("DETECTION_FORWARD_CLIENT_IP", "maybe")
+	if _, _, _, err := config(); err == nil {
+		t.Error("maybe: no error")
+	}
+}
+
+// DETECTION_TOOL_CHECK_TIMEOUT sets the tool-call check's engine budget;
+// unset leaves the default (agent.New's 1500ms); a bad value fails startup.
+func TestToolCheckTimeout(t *testing.T) {
+	t.Setenv("DETECTION_ENGINE_URL", "https://engine.example.com")
+	t.Setenv("DETECTION_AGENT_TOKEN", "x")
+	t.Setenv("DETECTION_TOOL_CHECK_TIMEOUT", "")
+	if cfg, _, _, err := config(); err != nil || cfg.ToolCheckTimeout != 0 {
+		t.Errorf("unset: %s, %v", cfg.ToolCheckTimeout, err)
+	}
+	t.Setenv("DETECTION_TOOL_CHECK_TIMEOUT", "900ms")
+	if cfg, _, _, err := config(); err != nil || cfg.ToolCheckTimeout != 900*time.Millisecond {
+		t.Errorf("900ms: %s, %v", cfg.ToolCheckTimeout, err)
+	}
+	for _, v := range []string{"0s", "soon"} {
+		t.Setenv("DETECTION_TOOL_CHECK_TIMEOUT", v)
+		if _, _, _, err := config(); err == nil {
+			t.Errorf("%q: no error", v)
+		}
 	}
 }

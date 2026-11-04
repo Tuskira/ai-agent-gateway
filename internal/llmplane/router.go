@@ -370,7 +370,7 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// response cut short (client gone, upstream failing, deadline) is not
 	// sent; the request still is.
 	if tee {
-		t := teeTurnOf(r, info, endpoint, start, resp.StatusCode, body)
+		t := teeTurnOf(r, rt.callerIP(r), info, endpoint, start, resp.StatusCode, body)
 		if teeCap != nil && relayErr == "" {
 			t.Response, t.respType, t.respCut = teeCap.Bytes(), resp.Header.Get("Content-Type"), teeCap.Truncated
 			t.ResponseType = t.respType

@@ -44,9 +44,14 @@ client ──> gateway ──> provider
 For each judgment the agent sends the engine two things, nothing else:
 
 1. **Metadata:** time, tenant id, request id, session id, gateway key id,
-   principal, model and request path, as the gateway recorded them. The
-   principal is whatever identity string the gateway authenticated, which may
-   be an email address.
+   principal, the caller's IP address (`client_ip`), model and request path,
+   as the gateway recorded them. The principal is whatever identity string
+   the gateway authenticated, which may be an email address. `client_ip` is
+   the address the gateway resolved for the caller (its `api.trusted_proxies`
+   honoured, the same `client_ip` as its access and capture logs); it also
+   goes on events and observations. Set `DETECTION_FORWARD_CLIENT_IP=false`
+   to keep it on the host: the agent then blanks it in everything it sends
+   to the engine.
 2. **The redacted new turn.** Not the whole conversation. An agent client
    resends its full history on every call, so the agent extracts only what is
    new in this call:
@@ -81,6 +86,12 @@ For each judgment the agent sends the engine two things, nothing else:
 
 The raw request and response bodies, earlier history and everything the agent
 could not recognise as part of the new turn stay on the host.
+
+For an MCP tool call the gateway has the agent
+[check](#post-v1tool-callscheck-from-the-gateway) inline (only for a tenant
+whose engine policy asks), the engine gets the call's ids, its connector and
+tool names, and its arguments (at most 64 KiB) with every secret found
+replaced by `[REDACTED:<kind>]`, as for a monitored call's event.
 
 ### Redaction
 
@@ -345,13 +356,15 @@ is not positive, fails startup.
 | `DETECTION_ENGINE_URL` | required | Base URL of the engine (`/v1/policy` and `/v1/detect` are appended; a trailing `/` is ignored). Use `https`. |
 | `DETECTION_AGENT_TOKEN` | required | Bearer token sent to the engine on every call. |
 | `DETECTION_INBOUND_TOKEN` | unset (no authentication) | Optional bearer token the agent requires on every request to it except `GET /healthz`: `Authorization: Bearer <token>`, compared in constant time; any other request is refused with `401` before it reaches a handler. Set the gateway's `llm_proxy.detection.agent_token` to the same value. |
+| `DETECTION_FORWARD_CLIENT_IP` | `true` | Whether the caller's IP address the gateway sends (`client_ip` on turns, stages and events) goes on to the engine. `false` blanks it in every detect request, observation and event (see [What leaves the host](#what-leaves-the-host)). |
 | `AGENT_LISTEN` | `127.0.0.1:8090` | Address the agent serves the gateway on. |
 | `AGENT_MAX_IN_FLIGHT` | `256` | Background judgments running at once (also the engine connection pool size). |
 | `AGENT_QUEUE_SIZE` | `1024` | Background turns waiting for a worker. |
 | `AGENT_QUEUE_BYTES` | `268435456` (256 MiB) | Bytes held by queued turns: the decoded request and response plus the canonical conversation and answer they are read from. |
 | `AGENT_SCAN_CACHE_BYTES` | `67108864` (64 MiB) | Memory the secret-scan cache may use for the values it keeps (see [What leaves the host](#what-leaves-the-host)). |
 | `AGENT_ENGINE_TIMEOUT` | `8s` | Budget for one inline judgment (a Go duration such as `8s`). With the 1 second policy lookup it fits a gateway's 10 second wait for a verdict with a second to spare. Inline contract only. |
-| `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract only. |
+| `AGENT_POLICY_TTL` | `15s` | How long a tenant's policy is cached. Inline contract and tool-call check. |
+| `DETECTION_TOOL_CHECK_TIMEOUT` | `1500ms` | Budget for one [tool-call check](#post-v1tool-callscheck-from-the-gateway) with the engine (redaction and verdict), a Go duration. It stays below the gateway's 2 second `inline_tool_calls_timeout`. |
 | `AGENT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` (any case). At `debug` the agent logs one line per judged turn: `tenant`, `request_id`, `stages` (e.g. `request,response`), `returned` (judgments the engine answered), `dropped` (judgments that failed), `bytes` (the turn's raw request plus response) and `prepare_ms`. The line carries no text of the turn. |
 
 The agent logs to stderr through `log/slog`, as text. `GET /healthz` answers `200`
@@ -366,7 +379,13 @@ with the agent's counts since it started, as JSON, and checks nothing else
 turns it accepted (a deadline, a panic, the queue-full marker, a batch past
 its cap); `dropped_engine_down` is stages (and markers) dropped because the
 engine could not be reached or answered other than `200`;
-`dropped_queue_full` is turns shed because the queue was full.
+`dropped_queue_full` is turns shed because the queue was full. The
+[tool-call check](#post-v1tool-callscheck-from-the-gateway) adds
+`tool_checks_sent` (verdicts the engine returned), `tool_checks_blocked`,
+`tool_checks_failed_open` (engine errors; the call went through),
+`tool_checks_busy` (answered not judged because every inline slot was taken)
+and `tool_checks_arguments_dropped` (answered not judged because the
+arguments' redaction did not finish).
 
 ## The gateway to agent side
 
@@ -377,7 +396,8 @@ completed. The shape and the canonical fixtures
 (`internal/llmplane/testdata/detection/turn.json` and
 `turn_no_response.json`) are in [llm-plane.md](llm-plane.md#contract).
 Fields (`wire.Turn`): `v`, `id`, `tenant_id`, `session_id`, `key_id`,
-`principal`, `model`, `path`, `at`, `status_code`, `request` (base64, the raw
+`principal`, `client_ip` (the caller's IP address, plain text, no port;
+absent when unknown), `model`, `path`, `at`, `status_code`, `request` (base64, the raw
 request body, in full) and `response` (base64, the first 1 MiB, present only
 when the upstream answered `2xx` and the relay completed).
 
@@ -428,10 +448,43 @@ and the response stage when there is a response, each redacted. The
   gateway's llm-plane.md "Events"), answers `202` at once and forwards them
   to the engine's `POST /v1/events` in batches, each monitored call's
   `arguments` redacted (`turn.RedactRaw`; a scan that does not finish in 2s
-  drops the arguments). A full queue (4096) or an engine failure drops
+  drops the arguments) and `client_ip` blanked with
+  `DETECTION_FORWARD_CLIENT_IP=false`. A full queue (4096) or an engine failure drops
   events, counted on `/healthz` (`events_sent`, `events_dropped`).
 - A turn with `request_judged` was judged inline by the gateway: only its
   response stage is judged.
+
+### POST /v1/tool-calls/check (from the gateway)
+
+The inline tool-call check of a gateway with
+`llm_proxy.detection.inline_tool_calls` on (see the gateway's
+[llm-plane.md](llm-plane.md#inline-tool-call-check)): one granted MCP
+`tools/call`, before the gateway forwards it (`wire.ToolCallCheck`: `v`,
+`id`, `tenant_id`, `session_id`, `key_id`, `principal`, `client_ip`, `at`,
+`profile`, `connector_id`, `server`, `tool`, `outcome`, `arguments`,
+`arguments_truncated`; pinned by the `tool_call_check.json` fixture). Same
+inbound token as the other routes.
+
+| Answer | When |
+|---|---|
+| `200` `{"block": {...}}` | The engine's rule refuses the call; the gateway answers its caller with JSON-RPC `-32003` and does not forward it. |
+| `200` `{}` | The engine judged the call and has no block. |
+| `503` | The call was not judged, so the gateway forwards it and records it as not checked: the tenant's policy does not set `inline_tool_calls` (the engine is not asked), no inline slot is free, the engine failed (error, timeout, `503` when full, `404` without the route), or the arguments were dropped because their redaction did not finish. |
+| `400` | Not JSON, a body over 1 MiB, `tenant_id`, `server` or `tool` missing, or `v` above `1`. |
+| `401` | `DETECTION_INBOUND_TOKEN` is set and the request does not carry it. |
+
+When the tenant's policy sets `inline_tool_calls`, the agent takes one of
+the inline slots (`AGENT_MAX_IN_FLIGHT`, shared with the inline request
+stage), redacts `arguments` with the same scan as event arguments (a scan
+that does not finish drops them, and the call is answered `503`, not
+judged, rather than judged without them), blanks `client_ip` when `DETECTION_FORWARD_CLIENT_IP=false`, and posts the
+check to the engine's `POST /v1/tool-calls/check` within
+`DETECTION_TOOL_CHECK_TIMEOUT`. An engine error, a non-`200` (`503` when
+the engine is full, `404` from an engine without the route) or a timeout is
+answered `503`, counted (`tool_checks_failed_open`) and logged at most once
+a minute. "Checked" always means the engine judged the call: only a `200`
+sets `checked: true` on the call's event, so the engine still looks at the
+event of a call that was not judged inline.
 
 ### Inline contract (legacy routes)
 
@@ -467,7 +520,7 @@ its copy and `make detection-contract` fails if the copies differ.
 
 ## The agent to engine contract
 
-Two engine endpoints. Both use `Authorization: Bearer <DETECTION_AGENT_TOKEN>`
+Every engine endpoint uses `Authorization: Bearer <DETECTION_AGENT_TOKEN>`
 and JSON bodies (`Content-Type: application/json`). The agent treats any
 status other than `200` as a failure. The Go types are in `detection/wire`
 (`wire.DetectRequest`, `wire.DetectResponse`, `wire.PolicyResponse`) and
@@ -496,16 +549,37 @@ absent means `1`). The rule:
 - `inline`: judge request-stage turns before the call is forwarded (the
   tenant's configuration says a request can be refused).
 - `want_response`: send response-stage turns too (some response rule is on).
+- `inline_tool_calls` (optional, default `false`): check the tenant's
+  granted MCP tool calls before the gateway forwards them
+  (`POST /v1/tool-calls/check`). The agent passes it through to the
+  gateway's policy lookup.
 
 Only the [inline contract](#inline-contract-legacy-routes)
 asks for it; `POST /v1/turns` never does. The agent caches the answer per
 tenant for `AGENT_POLICY_TTL`. On that contract it is on the request path of
 a call on a cache miss and has a 1 second budget, so answer it from memory.
 
+### POST /v1/tool-calls/check
+
+One granted MCP tool call, `wire.ToolCallCheck` as the gateway sent it,
+with `arguments` redacted, `v: 1`, and `client_ip` blanked when
+`DETECTION_FORWARD_CLIENT_IP=false`. Asked only for a tenant whose policy
+sets `inline_tool_calls`. The answer is `200` with `wire.ToolCallVerdict`:
+`{"block": {"rule_id", "owasp", "title", "probability?", "threshold",
+"detail?"}}` to refuse the call, `{}` to let it through. `200` means the
+engine judged the call. Any other status lets the call through (the agent
+fails open) and the call is recorded as not checked, so an engine that is
+full may answer `503`. The call's `tool_call` event later reaches
+`POST /v1/events` under the same `id`, with `checked: true` only when a
+verdict came back and `outcome: "blocked"` when it refused the call.
+
 ### POST /v1/events, POST /v1/observe
 
 - `POST /v1/events`: the gateway's events (`wire.EventBatch`), forwarded as
-  above; the engine answers `200` or `202`.
+  above; the engine answers `200` or `202`. A `tool_call` event carries
+  `id` (the gateway's request id) and, when the call was checked inline,
+  `checked: true` (the engine judged it); `outcome: "blocked"` is a call
+  the check refused.
 - `POST /v1/observe`: when the tenant's policy sets `observe`, one
   `wire.Observation` per generation turn (`meta`, `headers`, `request`,
   `response`, `response_type`), each body with every secret found replaced
@@ -548,7 +622,7 @@ Asks the engine to judge one redacted stage. Example (a request-stage turn):
 |---|---|
 | `v` | Contract version, see above. |
 | `sync` | `true` when the agent is waiting for the answer to enforce it (inline contract only; always `false` for turns from the gateway's tee). Informational: record the turn either way. |
-| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `model`, `path`. For one request of a batch, `item` is its id within the batch (its `custom_id`, at most 128 bytes, any secret in it redacted): every item of a batch shares the batch call's `request_id`, so a record is keyed by `request_id` and `item`. For a turn from the gateway's tee, also `dialect` (the wire format the call was made in, e.g. `anthropic`, `gemini_batch`) and `op` (`generate` or `batch`), and `history` (`full`, `server_side` or `prompt`: how much of the conversation the judged request carries) when the stage was read from the gateway's canonical conversation; absent `history` means `full` or unknown (a stage read from the raw body). The agent reads `history` case-insensitively and sends it in lower case; a value it does not know is sent as it is (lower-cased) and is read as not `full` (the goal is the new turn's own text). All four are optional strings, omitted when empty; an engine that does not know them ignores them, and `v` stays `1`. |
+| `meta` | `at`, `tenant_id`, `request_id` (the gateway's request id: the same id on both stages of a call, and the id of the call's gateway log row), and when known `session_id`, `key_id`, `principal`, `client_ip` (the caller's IP address as the gateway resolved it; blanked with `DETECTION_FORWARD_CLIENT_IP=false`), `model`, `path`. For one request of a batch, `item` is its id within the batch (its `custom_id`, at most 128 bytes, any secret in it redacted): every item of a batch shares the batch call's `request_id`, so a record is keyed by `request_id` and `item`. For a turn from the gateway's tee, also `dialect` (the wire format the call was made in, e.g. `anthropic`, `gemini_batch`) and `op` (`generate` or `batch`), and `history` (`full`, `server_side` or `prompt`: how much of the conversation the judged request carries) when the stage was read from the gateway's canonical conversation; absent `history` means `full` or unknown (a stage read from the raw body). The agent reads `history` case-insensitively and sends it in lower case; a value it does not know is sent as it is (lower-cased) and is read as not `full` (the goal is the new turn's own text). All four are optional strings, omitted when empty; an engine that does not know them ignores them, and `v` stays `1`. |
 | `turn.stage` | `request` or `response`. |
 | `turn.state` | The redacted new turn: `user_text`, `user_goal`, `harness_text`, `tool_results` (`[{tool, content}]`), `prior_tool_calls` (`[{name, input}]`), `response_text`, `response_tool_calls` (`[{name, input}]`). Omitted when empty. A request-stage turn has no `response_*` fields; a response-stage turn carries the request's `user_goal` and `tool_results` for context. |
 | `turn.refs` | Per-event ids that are not part of what a judge model reads, so a decision can point at an event: `tool_results` (`[{call_id, call_input}]`), `prior_tool_calls` and `response_tool_calls` (lists of call ids), matched to `state` by index. |

@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   usual outcome); a connector that is not exempt, or exempt but disabled, is
   refused as before with `-32003`. A non-boolean value is a `400`; creating a
   connector with `true`, or changing the value, needs `admin.manage` on top of
-  `connector.create`/`connector.update` (`403` otherwise). The console's MCP
+  `connector.create`/`connector.update` (`403` otherwise). So does repointing
+  an exempt connector (a new endpoint, slug or header), which would otherwise
+  send contained keys, and the connector's stored token, to a server of the
+  editor's choice. The console's MCP
   form has a **Callable while an agent is restricted** switch for admins, and
   the MCP details show a badge. No migration: the flag lives in `metadata`,
   like `metadata.enabled`. A killed key is unaffected.

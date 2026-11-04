@@ -21,7 +21,13 @@ export type HeaderConfig =
   | { type: 'static'; value: string }
   | { type: 'token_field'; field: string }
   | { type: 'incoming_field'; header: string }
-  | { type: 'external'; provider: string; config: Record<string, string> }
+  | {
+      type: 'external'
+      provider: string
+      /** Name of the credential source, for a provider that needs one. */
+      source?: string
+      config: Record<string, string>
+    }
 
 export interface TlsConfig {
   insecure_skip_verify?: boolean

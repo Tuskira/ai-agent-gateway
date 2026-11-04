@@ -86,6 +86,16 @@ import {
   searchCache,
 } from '@/lib/cache'
 import { fetchHeaderProviders } from '@/lib/headers'
+import {
+  createCredentialSource,
+  deleteCredentialSource,
+  fetchCredentialSourceOptions,
+  listCredentialSources,
+  testCredentialSource,
+  updateCredentialSource,
+  type CreateCredentialSourceInput,
+  type UpdateCredentialSourceInput,
+} from '@/lib/credential-sources'
 import { fetchAccessLogDetail, fetchAccessLogs, type AccessLogFilters } from '@/lib/logs'
 import { fetchLlmLogDetail, fetchLlmLogs, type LlmLogFilters } from '@/lib/llm-logs'
 import { fetchSessionTimeline, type TimelineOrder } from '@/lib/session-timeline'
@@ -574,6 +584,67 @@ export function useDeleteCredential() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['credentials'] })
     },
+  })
+}
+
+/* ------------------------------------------------------------------------ */
+/* Credential sources (Credentials page, Sources tab)                       */
+/* ------------------------------------------------------------------------ */
+
+export function useCredentialSourcesList(enabled = true) {
+  return useQuery({
+    queryKey: ['credential-sources', 'list'],
+    queryFn: listCredentialSources,
+    enabled,
+  })
+}
+
+/** A source change also changes the source names `/headers/providers` offers
+ * the connector header form, so that cached answer goes too. */
+function invalidateSources(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['credential-sources'] })
+  queryClient.invalidateQueries({ queryKey: ['headers', 'providers'] })
+}
+
+export function useCreateCredentialSource() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CreateCredentialSourceInput) => createCredentialSource(input),
+    onSuccess: () => invalidateSources(queryClient),
+  })
+}
+
+export function useUpdateCredentialSource() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateCredentialSourceInput }) =>
+      updateCredentialSource(id, input),
+    onSuccess: () => invalidateSources(queryClient),
+  })
+}
+
+export function useDeleteCredentialSource() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => deleteCredentialSource(id),
+    onSuccess: () => invalidateSources(queryClient),
+  })
+}
+
+export function useTestCredentialSource() {
+  return useMutation({ mutationFn: (id: string) => testCredentialSource(id) })
+}
+
+/** The values a source's service offers for one header config field. Off
+ * until both a source and a field are known; a service error comes back in
+ * the data (`error`), an HTTP failure as a query error. */
+export function useCredentialSourceOptions(sourceId: string | undefined, field: string) {
+  return useQuery({
+    queryKey: ['credential-sources', 'options', sourceId, field],
+    queryFn: () => fetchCredentialSourceOptions(sourceId!, field),
+    enabled: !!sourceId && !!field,
+    staleTime: 30_000,
+    retry: false,
   })
 }
 

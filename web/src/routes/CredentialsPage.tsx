@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCredentialsList, useDeleteCredential, useModelsRegistryList } from '@/lib/queries'
@@ -15,7 +15,10 @@ import { ConfirmDialog } from '@/components/app/ConfirmDialog'
 import { DismissibleBanner } from '@/components/app/DismissibleBanner'
 import { CredentialFormDialog } from '@/components/app/credentials/CredentialFormDialog'
 import { RotateCredentialDialog } from '@/components/app/credentials/RotateCredentialDialog'
+import { SourcesTab } from '@/components/app/credentials/SourcesTab'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useAuthOptional } from '@/auth/AuthContext'
 
 export default function CredentialsPage() {
   const credentialsQuery = useCredentialsList()
@@ -26,6 +29,20 @@ export default function CredentialsPage() {
   const modelsQuery = useModelsRegistryList()
 
   const [createOpen, setCreateOpen] = useState(false)
+  const [createSourceOpen, setCreateSourceOpen] = useState(false)
+
+  // Credential sources are admin.manage like everything on this page; the
+  // tab is disabled (not hidden) for a signed-in non-admin so the page does
+  // not look broken. Outside an AuthProvider the API is left to decide.
+  const auth = useAuthOptional()
+  const canManageSources =
+    auth === null || Boolean(auth.principal?.roles.includes('admin'))
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab =
+    searchParams.get('tab') === 'sources' && canManageSources ? 'sources' : 'credentials'
+  function setTab(next: string) {
+    setSearchParams(next === 'sources' ? { tab: 'sources' } : {}, { replace: true })
+  }
   const [rotateTarget, setRotateTarget] = useState<Credential | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null)
 
@@ -160,29 +177,67 @@ export default function CredentialsPage() {
             Secrets the gateway injects when calling your MCPs.
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="size-4" aria-hidden="true" />
-          Add credential
-        </Button>
+        {tab === 'sources' ? (
+          <Button onClick={() => setCreateSourceOpen(true)}>
+            <Plus className="size-4" aria-hidden="true" />
+            Add source
+          </Button>
+        ) : (
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="size-4" aria-hidden="true" />
+            Add credential
+          </Button>
+        )}
       </div>
 
-      <DismissibleBanner storageKey="gateway.credentialsBannerDismissed">
-        Values are encrypted at rest (AES-256-GCM) and never shown after creation. Rotate
-        to replace a value.
-      </DismissibleBanner>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList variant="line">
+          <TabsTrigger value="credentials">Credentials</TabsTrigger>
+          <TabsTrigger
+            value="sources"
+            disabled={!canManageSources}
+            title={
+              canManageSources ? undefined : 'Credential sources need the admin role'
+            }
+          >
+            Sources
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      <DataTable
-        storageKey="credentials"
-        columns={columns}
-        data={items}
-        getRowId={(c) => c.id}
-        getRowLabel={(c) => c.name}
-        rowActions={rowActions}
-        loading={credentialsQuery.isLoading}
-        error={credentialsQuery.isError && "Couldn't load credentials."}
-        emptyTitle="No credentials yet"
-        emptyDescription="Add a secret so the gateway can authenticate to your MCPs."
-      />
+      {tab === 'sources' ? (
+        <>
+          <DismissibleBanner storageKey="gateway.credentialSourcesBannerDismissed">
+            A source points the gateway at an outside credential service. MCP headers that
+            use an external provider name a source and ask it for their secret at call
+            time.
+          </DismissibleBanner>
+          <SourcesTab
+            createOpen={createSourceOpen}
+            onCreateOpenChange={setCreateSourceOpen}
+          />
+        </>
+      ) : (
+        <>
+          <DismissibleBanner storageKey="gateway.credentialsBannerDismissed">
+            Values are encrypted at rest (AES-256-GCM) and never shown after creation.
+            Rotate to replace a value.
+          </DismissibleBanner>
+
+          <DataTable
+            storageKey="credentials"
+            columns={columns}
+            data={items}
+            getRowId={(c) => c.id}
+            getRowLabel={(c) => c.name}
+            rowActions={rowActions}
+            loading={credentialsQuery.isLoading}
+            error={credentialsQuery.isError && "Couldn't load credentials."}
+            emptyTitle="No credentials yet"
+            emptyDescription="Add a secret so the gateway can authenticate to your MCPs."
+          />
+        </>
+      )}
 
       <CredentialFormDialog open={createOpen} onOpenChange={setCreateOpen} />
       <RotateCredentialDialog

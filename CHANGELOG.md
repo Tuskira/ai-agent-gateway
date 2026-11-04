@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Credential sources in the console.** **Credentials** has a new
+  **Sources** tab (admins only) to list, add, edit, enable, disable, delete
+  and test credential sources; the form follows the provider's source
+  schema and `auth_credential` is picked from the tenant's credentials.
+  Deleting a source a connector still names shows the `409` with the
+  connectors' names. In an MCP's header form, an external provider that
+  needs a source now shows a **Source** select and saves `source`, so an
+  `external_service` header can be created from the console, and a
+  `credential_id` picker lists the credentials the source's service offers
+  (free text still works). The MCP details show the source name.
+- **`GET /api/v1/credential-sources/{id}/options?field=<name>`** asks a
+  source's service for the values it offers for a header config field (for
+  `external_service`, `credential_id` lists the credential ids it holds for
+  the tenant) and returns `{"options":[{"value","label"}]}`. It needs
+  `connector.update`; failures answer `200` with an `error` like
+  `/test`. A new optional `SourceOptionLister` interface in `pkg/headers`
+  lets a provider offer options.
+- **`GET /api/v1/headers/providers`** also returns `needs_source` (true for a
+  provider whose headers must name a credential source), `source_refs` (the
+  enabled sources as `{id, name}`) and, where the provider can list options,
+  `option_fields`. All are additive. No migration.
+
 ## [0.9.0] - 2026-11-04
 
 ### Added

@@ -1,11 +1,13 @@
 import type { HeaderConfig } from '@/lib/connectors'
+import { providerNeedsSource, type HeaderProvider } from '@/lib/headers'
 
 export type HeaderRowType = HeaderConfig['type']
 
 /** Local, non-react-hook-form editable row — the shape of a single
- * connector auth header while it's being edited. `config` is only used
- * when `type === 'external'`, keyed by the selected provider's
- * `config_schema.properties`. */
+ * connector auth header while it's being edited. `config` and `source` are
+ * only used when `type === 'external'`: `config` is keyed by the selected
+ * provider's `config_schema.properties`, `source` is the credential source
+ * name for a provider that needs one ('' otherwise). */
 export interface HeaderRowState {
   id: string
   headerName: string
@@ -14,6 +16,7 @@ export interface HeaderRowState {
   field: string
   incomingHeader: string
   provider: string
+  source: string
   config: Record<string, string>
 }
 
@@ -26,6 +29,7 @@ export function newHeaderRow(): HeaderRowState {
     field: '',
     incomingHeader: '',
     provider: '',
+    source: '',
     config: {},
   }
 }
@@ -44,6 +48,7 @@ export function headersToRows(headers?: Record<string, HeaderConfig>): HeaderRow
     if (cfg.type === 'incoming_field') base.incomingHeader = cfg.header
     if (cfg.type === 'external') {
       base.provider = cfg.provider
+      base.source = cfg.source ?? ''
       base.config = { ...cfg.config }
     }
     return base
@@ -62,20 +67,39 @@ export function rowsToHeaders(
       headers[name] = { type: 'token_field', field: row.field }
     else if (row.type === 'incoming_field')
       headers[name] = { type: 'incoming_field', header: row.incomingHeader }
-    else headers[name] = { type: 'external', provider: row.provider, config: row.config }
+    else {
+      const source = row.source.trim()
+      headers[name] = {
+        type: 'external',
+        provider: row.provider,
+        ...(source ? { source } : {}),
+        config: row.config,
+      }
+    }
   }
   return Object.keys(headers).length > 0 ? headers : undefined
 }
 
 /** Whether a row has everything it needs to be sent to the API. Used to
  * block submit and show inline errors, without a full zod schema for this
- * genuinely heterogeneous, provider-driven shape. */
-export function headerRowError(row: HeaderRowState): string | null {
+ * genuinely heterogeneous, provider-driven shape. `providers` (from
+ * `/headers/providers`) lets it also require a source where the provider
+ * needs one; without it that check is left to the API. */
+export function headerRowError(
+  row: HeaderRowState,
+  providers?: HeaderProvider[],
+): string | null {
   if (!row.headerName.trim()) return 'Header name is required'
   if (row.type === 'static' && !row.value.trim()) return 'Value is required'
   if (row.type === 'token_field' && !row.field.trim()) return 'Token field is required'
   if (row.type === 'incoming_field' && !row.incomingHeader.trim())
     return 'Incoming header name is required'
   if (row.type === 'external' && !row.provider.trim()) return 'Provider is required'
+  if (
+    row.type === 'external' &&
+    !row.source.trim() &&
+    providerNeedsSource(providers?.find((p) => p.id === row.provider))
+  )
+    return 'Source is required for this provider'
   return null
 }

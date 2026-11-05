@@ -283,9 +283,11 @@ While off, a connector header that uses one is refused with `400 validation_erro
 `GET /api/v1/headers/providers` lists every registered provider (id, name,
 JSON-Schema `config_schema`) plus the four resolver type names, for a
 UI to build a schema-driven form. A provider that reads a
-[credential source](#credential-sources) also carries `source_schema` (the
-source's config shape) and `sources` (the caller's tenant's enabled source
-names for it), so a console can offer a source dropdown.
+[credential source](#credential-sources) also carries `needs_source: true`,
+`source_schema` (the source's config shape), `sources` (the caller's
+tenant's enabled source names for it) and `source_refs` (the same sources as
+`{id, name}`), so a console can offer a source dropdown. When the provider can list values for some of its config fields,
+`option_fields` names them (see [Listing options](#listing-options)).
 
 An `external` value (a stored credential, `env` or `file`) that contains
 CR or LF, such as a multi-line PEM key, has its trailing newline trimmed
@@ -367,14 +369,23 @@ Content-Type: application/json
 ```
 
 A non-2xx answer, an empty `value` or a body that is not this JSON fails
-the header. Options, called only by the test route:
+the header. Options, called by the test route and by the options route
+(see [Listing options](#listing-options)):
 
 ```http
 GET {url}/v1/credentials/options?tenant_id=<gateway tenant id>&field=credential_id
 Authorization: Bearer <token>
 ```
 
-Any 2xx answer counts as success; the body is not read for values.
+```json
+{"options": [{"value": "splunk-prod", "label": "Splunk (production)"}]}
+```
+
+The test route accepts any 2xx answer and does not read the body. The
+options route reads it: `label` is optional (it defaults to `value`), `id`
+and `name` are accepted in place of `value` and `label`, a bare string is
+taken as a value, and entries with no value or a repeated value are dropped.
+At most 1000 options are returned.
 
 ### Resolution rules
 
@@ -402,6 +413,44 @@ Any 2xx answer counts as success; the body is not read for values.
 /api/v1/credential-sources/{id}` changes `name`, `config` or `enabled`; the
 provider is fixed. Renaming or deleting a source that a connector header
 still names is `409 conflict`; point the headers elsewhere first.
+
+### Listing options
+
+`GET /api/v1/credential-sources/{id}/options?field=credential_id` asks the
+source's service which values it offers for a header config field, so a
+console can show a picker instead of making the admin type a credential id:
+
+```json
+{"options": [{"value": "splunk-prod", "label": "Splunk (production)"}]}
+```
+
+`field` is required and must be one of the provider's `option_fields` (shown
+by `GET /api/v1/headers/providers`; `external_service` lists
+`credential_id`), otherwise `400`. An unknown source is `404`. As with the
+test route, a source that cannot be asked (disabled, the service
+unreachable, the token rejected) answers `200` with
+`{"options":[],"error":"..."}`, so a console can fall back to a free-text
+box. The route needs `connector.update`, not `admin.manage`: it serves the
+connector editor, and it returns only the ids the service chooses to offer,
+never a secret value. The rest of `/credential-sources` stays
+`admin.manage`.
+
+### In the console
+
+**Credentials** has two tabs. **Credentials** is the gateway's own store.
+**Sources** (admins only) lists the tenant's sources with their provider,
+URL, state and the connectors using each, and lets you add, edit, enable,
+disable, delete and **Test** them. A source's form is generated from the
+provider's `source_schema`; `auth_credential` is a picker over the tenant's
+credentials. Deleting a source a connector still names shows the `409`
+message with the connectors' names.
+
+In an MCP's header form, choosing **External provider** and a provider that
+needs a source shows a **Source** select (the tenant's enabled sources for
+that provider) and writes `source` on the header. A config field the
+provider can list options for (`credential_id`) gets a searchable picker
+filled from the options route, with the plain text box kept for anything it
+does not list. The MCP details show the source's name next to the header.
 
 ## Credentials and rotation
 

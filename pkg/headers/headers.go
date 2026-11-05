@@ -103,6 +103,27 @@ type SourceTester interface {
 	TestSource(ctx context.Context, src Source) error
 }
 
+// Option is one value a provider offers for a header config field, with a
+// human-readable label (the value itself when the service gives none).
+type Option struct {
+	Value string
+	Label string
+}
+
+// SourceOptionLister is implemented by a SourceSchemaProvider that can ask
+// its outside service which values a header config field accepts (for
+// example the credential ids the service holds for the tenant), so a
+// console can offer a picker instead of a free-text box
+// (GET /api/v1/credential-sources/{id}/options?field=...). Like
+// SourceTester it never returns a secret value.
+type SourceOptionLister interface {
+	// OptionFields names the header config fields ListOptions answers for.
+	OptionFields() []string
+	// ListOptions returns the values src's service offers for field, one
+	// of OptionFields.
+	ListOptions(ctx context.Context, src Source, field string) ([]Option, error)
+}
+
 // ResolveInfo is request-scoped context a provider may read while
 // resolving one header: which connector and header it is resolving for,
 // and the credential source the header names (nil when it names none).

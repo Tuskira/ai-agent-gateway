@@ -19,6 +19,25 @@ export interface HeaderProvider {
   id: string
   name: string
   config_schema: HeaderProviderConfigSchema
+  /** True when a header of this provider must name a credential source
+   * (`source` next to `provider`). Absent on older gateways, which still
+   * send `source_schema` for such a provider. */
+  needs_source?: boolean
+  /** The shape of a source's config for this provider. */
+  source_schema?: HeaderProviderConfigSchema
+  /** The tenant's enabled source names for this provider. */
+  sources?: string[]
+  /** The same sources with their ids, which the options route is addressed
+   * by (readable without `admin.manage`, unlike `/credential-sources`). */
+  source_refs?: { id: string; name: string }[]
+  /** `config_schema` fields the provider can list values for through
+   * `GET /credential-sources/{id}/options`. */
+  option_fields?: string[]
+}
+
+/** Whether headers of `provider` must name a credential source. */
+export function providerNeedsSource(provider: HeaderProvider | undefined): boolean {
+  return Boolean(provider && (provider.needs_source ?? provider.source_schema))
 }
 
 export interface HeaderProvidersResponse {

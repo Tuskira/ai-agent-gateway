@@ -27,6 +27,13 @@ const ExternalServiceProviderID = "external_service"
 // whose value is sent to the credential service as a bearer token.
 const externalServiceTokenField = "token"
 
+// externalServiceOptionField is the header config field the service can
+// list values for: the ids of the credentials it holds for the tenant.
+const externalServiceOptionField = "credential_id"
+
+// maxExternalServiceOptions caps how many options one listing returns.
+const maxExternalServiceOptions = 1000
+
 // maxExternalServiceResponse caps how much of a credential service's
 // response body is read.
 const maxExternalServiceResponse = 1 << 20
@@ -74,6 +81,7 @@ var (
 	_ headers.Invalidator          = (*ExternalServiceProvider)(nil)
 	_ headers.SourceSchemaProvider = (*ExternalServiceProvider)(nil)
 	_ headers.SourceTester         = (*ExternalServiceProvider)(nil)
+	_ headers.SourceOptionLister   = (*ExternalServiceProvider)(nil)
 )
 
 // NewExternalServiceProvider builds the provider. fetch reads the token
@@ -235,23 +243,10 @@ func (p *ExternalServiceProvider) Resolve(ctx context.Context, cfg map[string]an
 // TestSource checks that src's service is reachable and accepts the
 // gateway's token, by listing the credential ids it offers this tenant:
 // GET {url}/v1/credentials/options?tenant_id=...&field=credential_id. No
-// secret value is requested or returned.
+// secret value is requested or returned, and the body is not read: any 2xx
+// answer counts as success.
 func (p *ExternalServiceProvider) TestSource(ctx context.Context, src headers.Source) error {
-	base, authCredential, err := externalServiceSourceArgs(src.Config)
-	if err != nil {
-		return err
-	}
-	if src.TenantID == "" {
-		return errors.New("source has no tenant")
-	}
-	token, err := p.token(ctx, src.TenantID, authCredential)
-	if err != nil {
-		return err
-	}
-	u := base.JoinPath("v1", "credentials", "options")
-	u.RawQuery = url.Values{"tenant_id": {src.TenantID}, "field": {"credential_id"}}.Encode()
-
-	resp, err := p.call(ctx, http.MethodGet, u.String(), token, nil)
+	resp, err := p.optionsCall(ctx, src, externalServiceOptionField)
 	if err != nil {
 		return err
 	}
@@ -261,6 +256,94 @@ func (p *ExternalServiceProvider) TestSource(ctx context.Context, src headers.So
 		return fmt.Errorf("credential service returned HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// OptionFields lists the header config fields ListOptions answers for.
+func (p *ExternalServiceProvider) OptionFields() []string {
+	return []string{externalServiceOptionField}
+}
+
+// ListOptions asks src's service for the values it offers for field:
+//
+//	GET {url}/v1/credentials/options?tenant_id=...&field=credential_id
+//
+// and expects {"options": [{"value": "...", "label": "..."}]}. label is
+// optional; "id" and "name" are accepted for "value" and "label", and a
+// bare string is taken as a value. Entries without a value and repeated
+// values are dropped, and at most 1000 are returned.
+func (p *ExternalServiceProvider) ListOptions(ctx context.Context, src headers.Source, field string) ([]headers.Option, error) {
+	if field != externalServiceOptionField {
+		return nil, fmt.Errorf("the service lists no options for %q", field)
+	}
+	resp, err := p.optionsCall(ctx, src, field)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxExternalServiceResponse))
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("credential service returned HTTP %d", resp.StatusCode)
+	}
+	var out struct {
+		Options []json.RawMessage `json:"options"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, errors.New("credential service response is not the expected JSON")
+	}
+	opts := make([]headers.Option, 0, len(out.Options))
+	seen := make(map[string]bool, len(out.Options))
+	for _, item := range out.Options {
+		var o struct {
+			Value string `json:"value"`
+			ID    string `json:"id"`
+			Label string `json:"label"`
+			Name  string `json:"name"`
+		}
+		if err := json.Unmarshal(item, &o); err != nil {
+			if err := json.Unmarshal(item, &o.Value); err != nil {
+				continue
+			}
+		}
+		if o.Value == "" {
+			o.Value = o.ID
+		}
+		if o.Label == "" {
+			o.Label = o.Name
+		}
+		if o.Value == "" || seen[o.Value] {
+			continue
+		}
+		seen[o.Value] = true
+		if o.Label == "" {
+			o.Label = o.Value
+		}
+		opts = append(opts, headers.Option{Value: o.Value, Label: o.Label})
+		if len(opts) == maxExternalServiceOptions {
+			break
+		}
+	}
+	return opts, nil
+}
+
+// optionsCall sends the options request for field to src's service.
+func (p *ExternalServiceProvider) optionsCall(ctx context.Context, src headers.Source, field string) (*http.Response, error) {
+	base, authCredential, err := externalServiceSourceArgs(src.Config)
+	if err != nil {
+		return nil, err
+	}
+	if src.TenantID == "" {
+		return nil, errors.New("source has no tenant")
+	}
+	token, err := p.token(ctx, src.TenantID, authCredential)
+	if err != nil {
+		return nil, err
+	}
+	u := base.JoinPath("v1", "credentials", "options")
+	u.RawQuery = url.Values{"tenant_id": {src.TenantID}, "field": {field}}.Encode()
+	return p.call(ctx, http.MethodGet, u.String(), token, nil)
 }
 
 // Invalidate drops every cached value for the calling principal's tenant.

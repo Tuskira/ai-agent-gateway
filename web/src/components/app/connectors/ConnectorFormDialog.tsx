@@ -6,7 +6,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuthOptional } from '@/auth/AuthContext'
-import { useCreateConnector, useUpdateConnector } from '@/lib/queries'
+import { useCreateConnector, useHeaderProviders, useUpdateConnector } from '@/lib/queries'
 import type { Connector } from '@/lib/connectors'
 import { cn, slugify } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -150,6 +150,9 @@ function ConnectorFormBody({
   const [tlsSkipVerify, setTlsSkipVerify] = useState(
     () => connector?.metadata?.tls?.insecure_skip_verify ?? false,
   )
+  // Lets a header row that needs a credential source be blocked before the
+  // API would refuse it; the editor rows read the same cached query.
+  const headerProviders = useHeaderProviders().data?.providers
   const [headerRows, setHeaderRows] = useState<HeaderRowState[]>(() =>
     headersToRows(connector?.metadata?.headers),
   )
@@ -201,7 +204,7 @@ function ConnectorFormBody({
 
   function onSubmit(values: FormValues) {
     const rowErrors = headerRows
-      .map(headerRowError)
+      .map((r) => headerRowError(r, headerProviders))
       .filter((e): e is string => e !== null)
     if (rowErrors.length > 0) {
       toast.error('Fix the highlighted headers before saving.')

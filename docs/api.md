@@ -140,6 +140,7 @@ authentication.
 | PUT | `/credential-sources/{id}` | `admin.manage` | Change `name`, `config` or `enabled` (each optional). `409` when renaming a source a connector header names. |
 | DELETE | `/credential-sources/{id}` | `admin.manage` | Soft-delete a source; `409` while any connector header names it. |
 | POST | `/credential-sources/{id}/test` | `admin.manage` | Check the source's service is reachable and accepts its token: `{"ok":true}` or `{"ok":false,"error":"..."}`. No secret is returned. |
+| GET | `/credential-sources/{id}/options?field=<name>` | `connector.update` | Ask the source's service which values it offers for a header config field (for `external_service`, `field=credential_id` lists the credential ids it holds for the tenant): `{"options":[{"value":"...","label":"..."}]}`. `field` is required and must be one of the provider's `option_fields`, else `400`; an unknown source is `404`. Like `/test`, a source that cannot be asked (disabled, the service unreachable, a rejected token) answers `200` with `{"options":[],"error":"..."}`. At most 1000 options. Values are ids, never secrets. |
 | POST | `/connectors` | `connector.create` | Register a connector (an MCP server registered with the gateway; the console's **MCPs** page). `name`/`slug` of `gateway` (case-insensitive) is rejected: it's reserved for the gateway's own native `gateway__skill` tool and command prompts. |
 | GET | `/connectors` | `connector.read` | List connectors. |
 | GET | `/connectors/{id}` | `connector.read` | Get one connector. |
@@ -188,7 +189,7 @@ authentication.
 | POST | `/skills/{id}/versions` | `skill.update` | Add a new version: `{files:[{path, content}]}`, same file/frontmatter validation as create. The skill's `description`/frontmatter are refreshed from the new `SKILL.md`; `name`, `kind` and `arguments` carry over unchanged (use `PUT /skills/{id}` to change `arguments`). Platform rows are `403`. Response is the new version (`{version, files, created_by, created_at}`). |
 | GET | `/skills/{id}/versions` | `skill.read` | List a skill/command's versions, newest first, without file bodies: `{items:[{version, created_by, created_at, file_count}]}`. |
 | GET | `/skills/{id}/versions/{v}` | `skill.read` | Get one version's files: `{version, files, created_by, created_at}`. |
-| GET | `/headers/providers` | `headers.read` | List header resolver types and registered external providers. A provider that uses credential sources also carries `source_schema` and `sources` (the caller's tenant's enabled source names). |
+| GET | `/headers/providers` | `headers.read` | List header resolver types and registered external providers. A provider that uses credential sources also carries `needs_source: true`, `source_schema`, `sources` (the caller's tenant's enabled source names) and `source_refs` (the same sources as `{id, name}`, since the options route is addressed by id and `GET /credential-sources` needs `admin.manage`), and `option_fields` when it can list values for some of its config fields through `/credential-sources/{id}/options`. |
 | GET | `/cache/stats` | `cache.read` | Per-connector tool-cache counts. |
 | GET | `/cache/search` | `cache.read` | Full-text search over cached tools. |
 | POST | `/cache/refresh` | `cache.manage` | Re-discover and rewrite the cache for every connector. |

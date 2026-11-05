@@ -1,6 +1,8 @@
 import { Trash2 } from 'lucide-react'
-import { useHeaderProviders } from '@/lib/queries'
+import { useCredentialSourceOptions, useHeaderProviders } from '@/lib/queries'
+import { providerNeedsSource } from '@/lib/headers'
 import { headerRowError, type HeaderRowState, type HeaderRowType } from './header-rows'
+import { OptionPicker } from './OptionPicker'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,6 +21,42 @@ const HEADER_TYPE_ITEMS: { value: HeaderRowType; label: string }[] = [
   { value: 'external', label: 'External provider' },
 ]
 
+interface ConfigFieldPickerProps {
+  sourceId: string
+  field: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+}
+
+/** A config field the provider can list values for: a searchable picker
+ * over what the chosen source's service offers. The text box keeps working
+ * when the listing is empty or fails. */
+function ConfigFieldPicker({
+  sourceId,
+  field,
+  label,
+  value,
+  onChange,
+}: ConfigFieldPickerProps) {
+  const optionsQuery = useCredentialSourceOptions(sourceId, field)
+  const error = optionsQuery.isError
+    ? optionsQuery.error instanceof Error
+      ? optionsQuery.error.message
+      : 'request failed'
+    : optionsQuery.data?.error
+  return (
+    <OptionPicker
+      label={label}
+      value={value}
+      onChange={onChange}
+      options={optionsQuery.data?.options ?? []}
+      loading={optionsQuery.isLoading}
+      error={error}
+    />
+  )
+}
+
 interface HeaderRowEditorProps {
   row: HeaderRowState
   onChange: (next: HeaderRowState) => void
@@ -30,7 +68,18 @@ export function HeaderRowEditor({ row, onChange, onRemove }: HeaderRowEditorProp
   const providers = providersQuery.data?.providers ?? []
   const selectedProvider = providers.find((p) => p.id === row.provider)
   const providerItems = providers.map((p) => ({ value: p.id, label: p.name }))
-  const error = headerRowError(row)
+  const error = headerRowError(row, providers)
+  const needsSource = providerNeedsSource(selectedProvider)
+  // The source's id is what the options route is addressed by; a source
+  // the row names that is not (or no longer) enabled has none, so its
+  // fields stay plain text.
+  const sourceNames = selectedProvider?.sources ?? []
+  const sourceItems = (
+    sourceNames.includes(row.source) || !row.source
+      ? sourceNames
+      : [row.source, ...sourceNames]
+  ).map((name) => ({ value: name, label: name }))
+  const sourceId = selectedProvider?.source_refs?.find((s) => s.name === row.source)?.id
 
   return (
     <div className="flex flex-col gap-3 rounded-r-4 border border-border bg-bg-subtle p-3.5">
@@ -51,7 +100,7 @@ export function HeaderRowEditor({ row, onChange, onRemove }: HeaderRowEditorProp
             value={row.type}
             onValueChange={(value) => onChange({ ...row, type: value as HeaderRowType })}
           >
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full" aria-label="Header type">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -109,10 +158,10 @@ export function HeaderRowEditor({ row, onChange, onRemove }: HeaderRowEditorProp
               items={providerItems}
               value={row.provider || null}
               onValueChange={(value) =>
-                onChange({ ...row, provider: value ?? '', config: {} })
+                onChange({ ...row, provider: value ?? '', source: '', config: {} })
               }
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-full" aria-label="Provider">
                 <SelectValue placeholder="Select a provider…" />
               </SelectTrigger>
               <SelectContent>
@@ -124,26 +173,59 @@ export function HeaderRowEditor({ row, onChange, onRemove }: HeaderRowEditorProp
               </SelectContent>
             </Select>
           </div>
+          {needsSource ? (
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs text-text-muted">Source *</Label>
+              <Select
+                items={sourceItems}
+                value={row.source || null}
+                onValueChange={(value) => onChange({ ...row, source: value ?? '' })}
+              >
+                <SelectTrigger className="w-full" aria-label="Source">
+                  <SelectValue placeholder="Select a credential source…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sourceItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {sourceItems.length === 0 ? (
+                <p className="text-xs text-text-subtle">
+                  No enabled credential sources yet. An admin can add one under
+                  Credentials, on the Sources tab.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           {selectedProvider
             ? Object.entries(selectedProvider.config_schema.properties).map(
                 ([key, prop]) => {
                   const required = selectedProvider.config_schema.required?.includes(key)
+                  const labelText = `${prop.description ?? key}${required ? ' *' : ''}`
+                  const setValue = (value: string) =>
+                    onChange({ ...row, config: { ...row.config, [key]: value } })
                   return (
                     <div key={key} className="flex flex-col gap-1.5">
-                      <Label className="text-xs text-text-muted">
-                        {prop.description ?? key}
-                        {required ? ' *' : ''}
-                      </Label>
-                      <Input
-                        className="font-mono"
-                        value={row.config[key] ?? ''}
-                        onChange={(e) =>
-                          onChange({
-                            ...row,
-                            config: { ...row.config, [key]: e.target.value },
-                          })
-                        }
-                      />
+                      <Label className="text-xs text-text-muted">{labelText}</Label>
+                      {sourceId && selectedProvider.option_fields?.includes(key) ? (
+                        <ConfigFieldPicker
+                          sourceId={sourceId}
+                          field={key}
+                          label={key}
+                          value={row.config[key] ?? ''}
+                          onChange={setValue}
+                        />
+                      ) : (
+                        <Input
+                          aria-label={prop.description ?? key}
+                          className="font-mono"
+                          value={row.config[key] ?? ''}
+                          onChange={(e) => setValue(e.target.value)}
+                        />
+                      )}
                     </div>
                   )
                 },

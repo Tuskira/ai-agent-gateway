@@ -338,7 +338,14 @@ export function ConnectorDetailDialog({
                           <span className="font-mono text-[12.5px] font-semibold text-foreground">
                             {name}
                           </span>
-                          <span className="text-text-muted">{headerSource(cfg)}</span>
+                          <span className="text-text-muted">
+                            {headerSource(cfg)}
+                            {cfg.type === 'external' && cfg.source ? (
+                              <span className="block text-[12px] text-text-subtle">
+                                Source: <span className="font-mono">{cfg.source}</span>
+                              </span>
+                            ) : null}
+                          </span>
                           <span className="font-mono text-[12.5px] text-text-link">
                             {headerField(cfg)}
                           </span>

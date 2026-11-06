@@ -12,6 +12,7 @@ import (
 	"time"
 
 	internalauth "github.com/Tuskira/tusk-ai-secured-gateway/internal/auth"
+	oidcauth "github.com/Tuskira/tusk-ai-secured-gateway/internal/auth/oidc"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
 	dataplaneheaders "github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/headers"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/secrets"
@@ -128,6 +129,11 @@ type Deps struct {
 	// implements it). Nil skips the reporting (the per-user lockout still
 	// applies).
 	LoginThrottle LoginThrottle
+	// OIDC backs single sign-on: GET /auth/oidc/{provider}/start and
+	// .../callback, and GET /auth/config's sso_providers. Nil when no
+	// provider is configured (the routes then answer every provider as
+	// unknown).
+	OIDC *oidcauth.Service
 
 	// IngestConfig configures POST /api/v1/ingest (Ingest handler): off by
 	// default, so the route always answers the same 404 an unmounted route

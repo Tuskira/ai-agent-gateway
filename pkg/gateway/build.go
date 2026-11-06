@@ -44,6 +44,9 @@ import (
 type secretsDeps struct {
 	Service  *secrets.Service
 	Registry *dataplaneheaders.Registry
+	// MasterKey is the ring's active key; single sign-on derives its
+	// login-state sealing key from it (internal/auth/oidc.New).
+	MasterKey []byte
 }
 
 // buildSecretsDeps loads the master key ring, builds the secrets.Service
@@ -103,7 +106,7 @@ func buildSecretsDeps(cfg *config.Config, st store.Store, logger *slog.Logger) (
 		"external_service_enabled", es.Enabled,
 	)
 
-	return &secretsDeps{Service: svc, Registry: registry}, nil
+	return &secretsDeps{Service: svc, Registry: registry, MasterKey: ring.Keys[ring.ActiveKeyID]}, nil
 }
 
 // llmConfig maps the LLMProxy config section onto the llmplane package's own

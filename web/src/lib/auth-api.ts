@@ -16,6 +16,51 @@ export interface AuthConfig {
    * username up across tenants and answers 409 `tenant_required` only when
    * it exists in more than one. Absent on older gateways (tenant required). */
   tenant_optional?: boolean
+  /** Single sign-on (OIDC) providers, one "Sign in with ..." button each.
+   * Absent on older gateways. */
+  sso_providers?: SsoProvider[]
+}
+
+/** One `sso_providers` entry. `start_url` is relative to the console origin;
+ * the console appends `?return_to=<path>`. */
+export interface SsoProvider {
+  name: string
+  display_name: string
+  start_url: string
+}
+
+/** The failure codes a single sign-on callback redirects back with
+ * (`/login?sso_error=<code>`), and what the login page says for each. */
+export const SSO_ERROR_MESSAGES: Record<string, string> = {
+  state: 'The sign-in took too long or was interrupted. Try again.',
+  token: 'The identity provider’s answer could not be verified. Try again.',
+  domain: 'Your email domain is not allowed to sign in here.',
+  unverified: 'Your email address is not verified with the identity provider.',
+  idp: 'Sign in through your organization’s identity provider.',
+  no_user: 'No gateway account matches your email. Ask a gateway admin to create one.',
+  disabled: 'Your gateway account is disabled. Ask a gateway admin.',
+  linked: 'Your gateway account is linked to a different identity. Ask a gateway admin.',
+  link_required:
+    'Your gateway account has a password, so it cannot be linked to this sign-in automatically. Ask a gateway admin.',
+  role: 'This account cannot use single sign-on. Sign in with your password.',
+  provider:
+    'Single sign-on is unavailable right now. Try again, or use another sign-in method.',
+}
+
+/** The message for an `sso_error` code; unknown codes get a generic one, so
+ * nothing from the URL is ever shown verbatim. */
+export function ssoErrorMessage(code: string): string {
+  const known = Object.hasOwn(SSO_ERROR_MESSAGES, code)
+    ? SSO_ERROR_MESSAGES[code]
+    : undefined
+  return known ?? 'Single sign-on failed. Try again.'
+}
+
+/** The link that starts a login with provider p and comes back to returnTo
+ * (a console path). */
+export function ssoStartHref(p: SsoProvider, returnTo: string): string {
+  const path = returnTo.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/'
+  return `${p.start_url}?return_to=${encodeURIComponent(path)}`
 }
 
 /** `POST /api/v1/auth/login` response. */

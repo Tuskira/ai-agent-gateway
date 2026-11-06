@@ -862,7 +862,9 @@ multi-arch, distroless images to `ghcr.io/tuskira/ai-agent-gateway`;
 **Not supported** (see [security-model.md](security-model.md#known-limits)
 for the security-relevant ones in detail):
 
-- No OIDC/SSO authenticator: API keys and console username/password only.
+- No OIDC authenticator for programs: the MCP and LLM planes take API keys
+  only. Console users can sign in with username/password or single sign-on
+  (OIDC, [authentication.md](authentication.md#single-sign-on-oidc)).
 - No Redis-backed tool cache or connector health: the `redis` section
   feeds only the session store. The tool cache stays on Postgres (already
   shared by every replica) and router health stays per process (a

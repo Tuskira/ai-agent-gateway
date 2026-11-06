@@ -95,6 +95,14 @@ var credentialSourcesMigration string
 //go:embed migrations/000012_containment.up.sql
 var containmentMigration string
 
+// userIdentitiesMigration (000013) adds user_identities, the links from an
+// OIDC identity (provider, issuer, subject) to a console user, and
+// user_sessions.auth_method. Its sibling 000013_user_identities.down.sql
+// is for a hand rollback only.
+//
+//go:embed migrations/000013_user_identities.up.sql
+var userIdentitiesMigration string
+
 // migrations are applied in version order; each is recorded in
 // schema_migrations once applied. Append new migrations here (with the next
 // version) — never edit one that has already shipped.
@@ -114,6 +122,7 @@ var migrations = []struct {
 	{10, platformAdminMigration},
 	{11, credentialSourcesMigration},
 	{12, containmentMigration},
+	{13, userIdentitiesMigration},
 }
 
 // migrationLockKey is an arbitrary constant used as a Postgres advisory
@@ -168,6 +177,9 @@ func (s *Store) Skills() store.SkillStore               { return &skillStore{db:
 func (s *Store) Users() store.UserStore                 { return &userStore{db: s.db} }
 func (s *Store) UserSessions() store.UserSessionStore   { return &userSessionStore{db: s.db} }
 func (s *Store) AuthAudit() store.AuthAuditStore        { return &authAuditStore{db: s.db} }
+func (s *Store) UserIdentities() store.UserIdentityStore {
+	return &userIdentityStore{db: s.db}
+}
 
 // Migrate applies the baseline schema if it hasn't been applied yet. It is
 // safe to call repeatedly (a no-op once schema_migrations already records

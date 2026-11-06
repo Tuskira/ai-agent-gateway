@@ -37,6 +37,7 @@ type Store struct {
 	users    map[string]*store.User
 	sessions map[string]*store.UserSession
 	audit    []*store.AuthAuditEntry
+	idents   map[string]*store.UserIdentity
 
 	nextID int
 }
@@ -56,6 +57,7 @@ func New() *Store {
 		profileSkl: make(map[string][]store.ProfileSkill),
 		users:      make(map[string]*store.User),
 		sessions:   make(map[string]*store.UserSession),
+		idents:     make(map[string]*store.UserIdentity),
 	}
 }
 
@@ -107,6 +109,9 @@ func (s *Store) UserSessions() store.UserSessionStore { return (*userSessionStor
 
 // AuthAudit implements store.Store.
 func (s *Store) AuthAudit() store.AuthAuditStore { return (*authAuditStore)(s) }
+
+// UserIdentities implements store.Store.
+func (s *Store) UserIdentities() store.UserIdentityStore { return (*userIdentityStore)(s) }
 
 // Migrate implements store.Store.
 func (s *Store) Migrate(context.Context) error { return nil }

@@ -136,6 +136,38 @@ Duration values use Go's duration syntax (`30s`, `5m`, `1h`).
 | `auth.rate_limit.credential_max_failures` | int | `20` | `GATEWAY_AUTH_RATE_LIMIT_CREDENTIAL_MAX_FAILURES` | Failed lookups of unknown keys sharing one key prefix (`gk_` + 8 chars), from any IPs, within `credential_window` that lock the prefix for `lockout`. A locked prefix still serves cached (legitimate) keys. |
 | `auth.rate_limit.credential_window` | duration | `5m` | `GATEWAY_AUTH_RATE_LIMIT_CREDENTIAL_WINDOW` | Period `credential_max_failures` is counted over. |
 
+## auth.oidc.providers (single sign-on)
+
+Single sign-on for console users through OpenID Connect issuers; see
+[authentication.md](authentication.md#single-sign-on-oidc) for the flow,
+the checks and examples. Empty (the default) turns SSO off. A list of
+objects has no per-key environment variables: set it in the YAML file, or
+as **one JSON array** in `GATEWAY_AUTH_OIDC_PROVIDERS` (same keys as the
+YAML; it replaces the file's list, and an unknown key fails startup).
+Every problem below fails startup.
+
+| Key (per provider) | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | string | required | Slug used in the provider's URLs (`/api/v1/auth/oidc/<name>/start`, `.../callback`), identity links and audit rows: lowercase letters, digits, `-`, at most 32. Unique. |
+| `display_name` | string | `name` | Button label: "Sign in with &lt;display_name&gt;". At most 64 bytes. |
+| `issuer` | string | required | Issuer URL. The discovery document is read from `<issuer>/.well-known/openid-configuration` (on the first login, retried if the issuer is down) and must name the same issuer. `https`; plain `http` only on a loopback host. Reached through the [egress](#egress-outbound-request-policy) guard. |
+| `client_id` | string | required | The OAuth client id; the ID token's audience. |
+| `client_secret_file` | string | — | File holding the client secret (trimmed). Exactly one of `client_secret_file` / `client_secret_env`; read at startup. |
+| `client_secret_env` | string | — | Name of the environment variable holding the client secret. |
+| `scopes` | list | `[openid, email, profile]` | Scopes requested; must include `openid`. |
+| `redirect_url` | string | required | The callback registered at the IdP: `<console origin>/api/v1/auth/oidc/<name>/callback`, exactly that path. The origin may be a host that proxies `/api/v1/auth/*` to the gateway. `https`; plain `http` only on a loopback host. |
+| `redirect_urls` | list | `[]` | Further registered callbacks, for a console on several hosts; a login uses the one whose host is the host the login started on, else `redirect_url`. Same rules. |
+| `auth_params` | map | `{}` | Extra authorize parameters, e.g. `{identity_provider: EntraID}` for Cognito or `{kc_idp_hint: corp}` for Keycloak. Cannot set the parameters the gateway sets (`response_type`, `client_id`, `redirect_uri`, `scope`, `state`, `nonce`, `code_challenge`, `code_challenge_method`, `response_mode`, `request`, `request_uri`). |
+| `tenant` | string | required | Tenant (slug or id) every login through this provider lands in. Resolved per login. |
+| `allowed_email_domains` | list | required | Email domains that may sign in, exact match (no subdomains, no wildcards, no trailing dot). |
+| `email_claim` | string | `email` | ID-token claim holding the user's address (matched against usernames and `allowed_email_domains`). Use a claim users cannot edit at the IdP (e.g. `upn`, `custom:<attr>`) when `email` is user-writable. Letters, digits, `_ : . / -`. |
+| `require_verified_email` | bool | `true` | Refuse tokens whose `email_verified` is not true. `false` only together with `required_upstream_idp`; then an email links only to users with no usable password (SSO-only), and a user with a password is refused (`link_required`). The email claim must not be user-writable at the IdP. |
+| `required_upstream_idp` | string | `""` | When set, every entry of the token's `identities` claim (Cognito's format for federated users) must have this `providerName`. |
+| `provision` | string | `existing` | `existing`: only users an admin created (username = email). `jit`: also create a missing user on first login. |
+| `jit_role` | string | `viewer` | Role of a just-in-time user: `viewer` or `admin` (only with `provision: jit`). |
+| `allow_platform_admin` | bool | `false` | Let `platform-admin` users sign in through this provider. |
+| `session_max` | duration | `0` (= `auth.session_max`) | Shorter absolute lifetime for sessions this provider starts; at most `auth.session_max`. |
+
 ## secret_store
 
 | Key | Type | Default | Env var | Meaning |
@@ -310,6 +342,10 @@ derived name of one of these (e.g. `GATEWAY_AUTH_ROLES`) fails startup with
 - `sinks.otel.headers` (`map[string]string`)
 - `llm_proxy.models` (list of objects)
 - `mcp_catalog.seed` (list of objects)
+
+`auth.oidc.providers` is a list of objects too, but it can also be set as
+one JSON array in `GATEWAY_AUTH_OIDC_PROVIDERS` (see
+[auth.oidc.providers](#authoidcproviders-single-sign-on)).
 
 ## Secrets never live in YAML
 

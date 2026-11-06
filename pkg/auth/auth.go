@@ -44,9 +44,9 @@ type Principal struct {
 	// is refused visibly rather than silently impossible.
 	ToolsRestricted bool
 
-	// The fields below are set only when AuthMethod == AuthMethodSession,
-	// i.e. for a console user logged in with a session cookie. Subject is
-	// then the user id.
+	// The fields below are set only for a console user logged in with a
+	// session cookie (IsUser: AuthMethod is AuthMethodSession or
+	// AuthMethodOIDC). Subject is then the user id.
 	Username           string
 	SessionID          string // user_sessions.id (the token hash)
 	CSRFToken          string // the session's double-submit CSRF token
@@ -98,13 +98,21 @@ type Authenticator interface {
 }
 
 // AuthMethodSession is Principal.AuthMethod for a console user
-// authenticated by a session cookie (internal/auth/session).
+// authenticated by a session cookie (internal/auth/session) that a
+// password login started.
 const AuthMethodSession = "session"
 
-// IsUser reports whether p is a console user (session) rather than an API
-// key or another machine identity.
+// AuthMethodOIDC is Principal.AuthMethod for a console user authenticated
+// by a session cookie that a single sign-on (OIDC) login started. Such a
+// principal is a console user like any other (IsUser), with the same
+// session, CSRF and role handling.
+const AuthMethodOIDC = "oidc"
+
+// IsUser reports whether p is a console user (a session cookie, however
+// the session was started) rather than an API key or another machine
+// identity.
 func (p *Principal) IsUser() bool {
-	return p != nil && p.AuthMethod == AuthMethodSession
+	return p != nil && (p.AuthMethod == AuthMethodSession || p.AuthMethod == AuthMethodOIDC)
 }
 
 // Authorizer decides whether a Principal holds a given permission.

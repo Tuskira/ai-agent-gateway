@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Single sign-on (OIDC) for console users.** The gateway is now a generic
+  OpenID Connect relying party: configure one or more issuers (Cognito,
+  Keycloak, Entra ID, Okta, ...) under `auth.oidc.providers` (YAML, or one
+  JSON array in `GATEWAY_AUTH_OIDC_PROVIDERS`), and the login page shows a
+  **Sign in with ...** button per provider next to the password form. New
+  public routes `GET /api/v1/auth/oidc/{provider}/start` and
+  `.../callback` run the authorization code flow with state, nonce and
+  PKCE (S256); the login state is sealed into a short-lived cookie with a
+  key derived from the master key. The ID token is verified against the
+  issuer's JWKS (asymmetric algorithms only), plus `iss`, `aud`, `exp`,
+  `iat`, `nonce`, `azp` and Cognito's `token_use`; the email must be in
+  `allowed_email_domains` (exact match) and verified, or, with
+  `required_upstream_idp`, come through the named upstream IdP (Cognito's
+  `identities` claim). Each provider lands in one fixed `tenant`; the
+  first login links the admin-created user whose username is the email,
+  later logins match by subject (new `user_identities` table, migration
+  13), and disabled, already-linked and (unless `allow_platform_admin`)
+  `platform-admin` users are refused. `provision: jit` creates missing
+  users with `jit_role` and no usable password. With
+  `require_verified_email: false`, an email links only to users without a
+  usable password (otherwise `link_required`), and `email_claim` can map
+  the address from a claim users cannot edit. A user's unused temporary
+  password is discarded at its first SSO link. Only refusals after the
+  login state verified count toward the per-IP lockout, so a third-party
+  page cannot lock visitors out by firing forged callbacks. Discovery is
+  refreshed hourly (one fetch shared by concurrent logins; a failed
+  refresh keeps the previous document). Success is the normal
+  console session (`gw_session`, CSRF, roles, audit `login_ok` with detail
+  `oidc:<provider>`); failure redirects to `/login?sso_error=<code>` and is
+  audited and counted by the per-IP lockout. `GET /api/v1/auth/config`
+  lists `sso_providers`. See
+  [authentication.md](docs/authentication.md#single-sign-on-oidc).
+- **SSO-only users**: `POST /api/v1/users` takes `sso_only: true` (no
+  password at all, none generated), `gateway create-user -sso-only` does
+  the same, and the console's create-user form has a **Single sign-on
+  only** switch when a provider is configured. User objects report
+  `sso_only`.
+- **`pkg/store.UserIdentityStore`** (`Store.UserIdentities()`), covered by
+  `pkg/store/storetest`, and `UserSession.AuthMethod` (`password` or
+  `oidc`; new column `user_sessions.auth_method`).
+
+### Changed
+
+- **`GET /auth/me` reports `auth_method: "oidc"`** for a session started by
+  single sign-on (`"session"` for a password login, as before), and
+  `pkg/auth.Principal.IsUser` is true for both `AuthMethodSession` and the
+  new `AuthMethodOIDC`. Code that compared `AuthMethod` to `"session"` to
+  detect a console user should use `IsUser` (or `/auth/me`'s `kind`).
+- **Promoting a user to `platform-admin` revokes its sessions** (password
+  and SSO), so it signs in again under the new role.
+- **A custom `store.Store` must implement `UserIdentities()`** and persist
+  `UserSession.AuthMethod`.
+
 ## [0.9.1] - 2026-11-05
 
 ### Added

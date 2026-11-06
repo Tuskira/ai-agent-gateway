@@ -7,8 +7,12 @@ Every request that reaches a plane handler carries a `Principal`
 auth method. Two `Authenticator`s issue one from real credentials: the
 API-key authenticator (`internal/auth/apikey`, every plane) and the console
 session authenticator (`internal/auth/session`, the `gw_session` cookie,
-control plane only). A dev-mode gap-filler exists for local use only (see
-below).
+control plane only). A console session is started by a password login or
+by single sign-on through an OIDC identity provider (`internal/auth/oidc`,
+see [authentication.md](authentication.md#single-sign-on-oidc)); both are
+the same session with the same CSRF and role handling, and `auth_method`
+says which (`session` or `oidc`). A dev-mode gap-filler exists for local
+use only (see below).
 
 **API keys.** A key is `gk_` followed by the base62 encoding of 32
 `crypto/rand` bytes (`internal/auth/apikey.Generate`). Only the SHA-256
@@ -706,10 +710,21 @@ pin is a maintainer task; see
   `cache_ttl`. A store without the optional `store.RevocationNotifier`
   interface has the TTL only. Console sessions are not cached (read per
   request), so a session revoke is immediate everywhere.
-- **No OIDC/SSO.** Programs authenticate with API keys and console users
-  with username/password sessions ([authentication.md](authentication.md)).
-  `pkg/auth.Authenticator` is an interface a plugin could add another
-  implementation against, but none ships here.
+- **Single sign-on covers console users only.** Programs authenticate with
+  API keys; console users with username/password or through an OIDC
+  identity provider ([authentication.md](authentication.md#single-sign-on-oidc)),
+  both ending in the same session cookie. The MCP and LLM planes never
+  accept an ID token. SSO maps an identity to a user that exists in one
+  fixed tenant per provider (or creates one with `provision: jit`); roles
+  always come from the gateway user, never from IdP claims, and
+  `platform-admin` users are refused unless `allow_platform_admin` is set.
+  The issuer is trusted to authenticate the people in
+  `allowed_email_domains`. With `require_verified_email: false` the email
+  is not proven, so it links only to users with no usable password
+  (SSO-only), never to a password account; the email claim must still not
+  be user-writable at the IdP (use `email_claim` otherwise). Refused
+  callbacks that a third-party page could forge (bad state, unknown
+  provider) are not charged to the per-IP lockout.
 - **A key is only confined to a profile if you bind it.** Without a
   binding, profile enforcement is driven by the caller-supplied
   `X-Agent-Profile-Name` header, checked against the tenant's profiles —

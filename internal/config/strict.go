@@ -100,6 +100,11 @@ func UnknownEnvVars(cfg *Config) []string {
 	if cfg.SecretStore.MasterKeyEnv != "" {
 		known[cfg.SecretStore.MasterKeyEnv] = true
 	}
+	for _, p := range cfg.Auth.OIDC.Providers {
+		if p.ClientSecretEnv != "" {
+			known[p.ClientSecretEnv] = true
+		}
+	}
 	var out []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")

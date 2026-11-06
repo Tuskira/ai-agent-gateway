@@ -17,14 +17,14 @@ import {
 
 const HEALTH = { status: 'ok', plane: 'api', version: '0.1.0' }
 
-function renderLogin() {
+function renderLogin(entry = '/login') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(
     [
       { path: '/login', element: <LoginPage /> },
       { path: '/', element: <div>Home stub</div> },
     ],
-    { initialEntries: ['/login'] },
+    { initialEntries: [entry] },
   )
   render(
     <QueryClientProvider client={queryClient}>
@@ -373,6 +373,86 @@ describe('LoginPage', () => {
       renderLogin()
       expect(await screen.findByLabelText('Username')).toBeInTheDocument()
       expect(screen.queryByTestId('first-run-notice')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('single sign-on', () => {
+    const SSO_CONFIG = {
+      ...AUTH_CONFIG,
+      sso_providers: [
+        {
+          name: 'corp',
+          display_name: 'Corp SSO',
+          start_url: '/api/v1/auth/oidc/corp/start',
+        },
+        {
+          name: 'backup',
+          display_name: 'Backup IdP',
+          start_url: '/api/v1/auth/oidc/backup/start',
+        },
+      ],
+    }
+    const notSignedIn = () => errorResponse(401, 'authentication_error', 'no session')
+
+    it('shows one sign-in link per provider next to the password form', async () => {
+      stubApi({
+        'GET /health': () => jsonResponse(HEALTH),
+        'GET /auth/config': () => jsonResponse(SSO_CONFIG),
+        'GET /auth/me': notSignedIn,
+      })
+      renderLogin()
+
+      const corp = await screen.findByRole('link', { name: 'Sign in with Corp SSO' })
+      expect(corp).toHaveAttribute('href', '/api/v1/auth/oidc/corp/start?return_to=%2F')
+      expect(
+        screen.getByRole('link', { name: 'Sign in with Backup IdP' }),
+      ).toHaveAttribute('href', '/api/v1/auth/oidc/backup/start?return_to=%2F')
+      // The password form stays.
+      expect(screen.getByLabelText('Password')).toBeInTheDocument()
+    })
+
+    it('shows no SSO section when the gateway lists no provider', async () => {
+      stubApi({
+        'GET /health': () => jsonResponse(HEALTH),
+        'GET /auth/config': () => jsonResponse(AUTH_CONFIG),
+        'GET /auth/me': notSignedIn,
+      })
+      renderLogin()
+      await screen.findByLabelText('Password')
+      expect(screen.queryByTestId('sso-providers')).not.toBeInTheDocument()
+    })
+
+    it('explains a known sso_error code and can dismiss it', async () => {
+      stubApi({
+        'GET /health': () => jsonResponse(HEALTH),
+        'GET /auth/config': () => jsonResponse(SSO_CONFIG),
+        'GET /auth/me': notSignedIn,
+      })
+      const user = userEvent.setup()
+      const router = renderLogin('/login?sso_error=no_user')
+
+      expect(await screen.findByTestId('sso-error')).toHaveTextContent(
+        'No gateway account matches your email. Ask a gateway admin to create one.',
+      )
+      const [dismiss] = screen.getAllByRole('button', { name: 'Dismiss' })
+      await user.click(dismiss!)
+      await waitFor(() =>
+        expect(screen.queryByTestId('sso-error')).not.toBeInTheDocument(),
+      )
+      expect(router.state.location.search).toBe('')
+    })
+
+    it('never shows an unknown sso_error value verbatim', async () => {
+      stubApi({
+        'GET /health': () => jsonResponse(HEALTH),
+        'GET /auth/config': () => jsonResponse(SSO_CONFIG),
+        'GET /auth/me': notSignedIn,
+      })
+      renderLogin('/login?sso_error=' + encodeURIComponent('<b>call +1 555 0100</b>'))
+
+      const alert = await screen.findByTestId('sso-error')
+      expect(alert).toHaveTextContent('Single sign-on failed. Try again.')
+      expect(alert.textContent).not.toContain('555')
     })
   })
 })

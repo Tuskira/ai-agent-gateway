@@ -11,3 +11,7 @@ import (
 func TestMCPCatalogConformance(t *testing.T) {
 	storetest.RunMCPCatalog(t, func(*testing.T) store.Store { return dptest.New() })
 }
+
+func TestUserIdentitiesConformance(t *testing.T) {
+	storetest.RunUserIdentities(t, func(*testing.T) store.Store { return dptest.New() })
+}

@@ -182,8 +182,11 @@ func TestAuthConfig_SingleTenant(t *testing.T) {
 	var got map[string]any
 	decodeInto(t, w, &got)
 	want := map[string]any{"password_login": true, "api_key_login": true, "single_tenant": true, "default_tenant": "only", "has_users": false, "tenant_optional": true}
-	if len(got) != len(want) {
-		t.Errorf("config = %v, want exactly the keys %v", got, want)
+	if len(got) != len(want)+1 {
+		t.Errorf("config = %v, want exactly the keys %v and sso_providers", got, want)
+	}
+	if sso, ok := got["sso_providers"].([]any); !ok || len(sso) != 0 {
+		t.Errorf("config[sso_providers] = %#v, want an empty list without SSO configured", got["sso_providers"])
 	}
 	for k, v := range want {
 		if got[k] != v {

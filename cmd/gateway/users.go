@@ -65,6 +65,7 @@ func runCreateUser() error {
 	username := fs.String("username", "", "username, lowercase; an email address is fine (required)")
 	role := fs.String("role", "", "admin | viewer | platform-admin (required; platform-admin acts in every tenant)")
 	displayName := fs.String("display-name", "", "name shown in the console")
+	ssoOnly := fs.Bool("sso-only", false, "create the user with no usable password: it signs in through single sign-on only (nothing is printed on stdout)")
 	configPath := fs.String("config", os.Getenv("CONFIG_PATH"), "path to YAML config file")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
@@ -99,17 +100,18 @@ func runCreateUser() error {
 		return fmt.Errorf("look up tenant %q: %w", *tenant, err)
 	}
 
-	temp, err := password.GenerateTemporary()
-	if err != nil {
-		return err
-	}
-	hash, err := password.Hash(temp)
-	if err != nil {
-		return err
+	temp, hash := "", password.Unusable
+	if !*ssoOnly {
+		if temp, err = password.GenerateTemporary(); err != nil {
+			return err
+		}
+		if hash, err = password.Hash(temp); err != nil {
+			return err
+		}
 	}
 	u := &store.User{
 		TenantID: t.ID, Username: name, DisplayName: *displayName, PasswordHash: hash,
-		Role: *role, MustChangePassword: true,
+		Role: *role, MustChangePassword: !*ssoOnly,
 	}
 	if err := st.Users().Create(ctx, u); err != nil {
 		if errors.Is(err, store.ErrConflict) {
@@ -119,11 +121,16 @@ func runCreateUser() error {
 	}
 	if err := st.AuthAudit().Append(ctx, &store.AuthAuditEntry{
 		TenantID: t.ID, ActorKind: "cli", ActorID: cliActor(), Action: "user_create",
-		TargetUserID: u.ID, Detail: "role=" + u.Role,
+		TargetUserID: u.ID, Detail: createDetail(u.Role, *ssoOnly),
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write the audit entry: %v\n", err)
 	}
 
+	if *ssoOnly {
+		fmt.Fprintf(os.Stderr, "created %s %q in tenant %q (id=%s) with no password: it signs in through single sign-on only\n",
+			u.Role, u.Username, *tenant, u.ID)
+		return nil
+	}
 	fmt.Fprintf(os.Stderr, "created %s %q in tenant %q (id=%s)\n", u.Role, u.Username, *tenant, u.ID)
 	fmt.Fprintln(os.Stderr, "temporary password below -- shown once; the user must change it at first login:")
 	fmt.Println(temp)
@@ -199,4 +206,12 @@ func runResetPassword() error {
 	fmt.Fprintln(os.Stderr, "temporary password below -- shown once; the user must change it at next login:")
 	fmt.Println(temp)
 	return nil
+}
+
+// createDetail is the audit detail of a user_create row.
+func createDetail(role string, ssoOnly bool) string {
+	if ssoOnly {
+		return "role=" + role + " sso_only"
+	}
+	return "role=" + role
 }

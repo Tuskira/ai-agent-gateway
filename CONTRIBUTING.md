@@ -26,6 +26,38 @@ serves the real app instead of a `503 UI-not-built` response. Use
 `make build-go-only` alone for a fast Go-only iteration loop when you
 don't need the console rebuilt.
 
+### End-to-end tests with a real identity provider
+
+`test/e2e` (build tag `e2e`) runs the real gateway against a real Postgres
+and skips cleanly when `GATEWAY_TEST_DATABASE_URL` is unset. The single
+sign-on test (`TestOIDCKeycloakEndToEnd`) also needs a real Keycloak and
+skips without it. It creates its own realm, confidential client (PKCE S256
+enforced) and users through Keycloak's admin API, deletes the realm
+afterwards, and drives the login like a browser: start, Keycloak's HTML
+login form, callback, `/auth/me`, a CSRF-protected write, logout, and the
+refusals (forged state, disallowed domain, unknown, disabled and
+platform-admin users).
+
+```sh
+docker run -d --rm --name gw-e2e-pg -p 127.0.0.1:25440:5432 \
+  -e POSTGRES_USER=gateway -e POSTGRES_PASSWORD=gateway -e POSTGRES_DB=gateway postgres:16-alpine
+docker run -d --rm --name gw-e2e-keycloak -p 127.0.0.1:18180:8080 \
+  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+  quay.io/keycloak/keycloak:26.3.3 start-dev
+
+GATEWAY_TEST_DATABASE_URL='postgres://gateway:gateway@127.0.0.1:25440/gateway?sslmode=disable' \
+GATEWAY_MASTER_KEY=$(go run ./cmd/gateway secrets genkey) \
+GATEWAY_TEST_KEYCLOAK_URL=http://localhost:18180 \
+GATEWAY_TEST_KEYCLOAK_ADMIN=admin GATEWAY_TEST_KEYCLOAK_ADMIN_PASSWORD=admin \
+  go test -tags e2e ./test/e2e/ -run TestOIDCKeycloak -v
+
+docker rm -f gw-e2e-pg gw-e2e-keycloak
+```
+
+Use `localhost` for Keycloak (the gateway listens on `127.0.0.1`), so the
+two keep separate cookies in the test's cookie jar, as two sites would in
+a browser. Keycloak takes about half a minute to start.
+
 ## `make` targets
 
 | Target | Does |

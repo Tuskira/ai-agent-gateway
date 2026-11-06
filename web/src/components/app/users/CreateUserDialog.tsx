@@ -4,7 +4,7 @@ import { useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { toast } from 'sonner'
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/password-policy'
-import { useCreateUser } from '@/lib/queries'
+import { useAuthConfig, useCreateUser } from '@/lib/queries'
 import { describeUserError } from '@/lib/users'
 import type { RevealedPassword } from '@/components/app/users/RevealPasswordDialog'
 import { Button } from '@/components/ui/button'
@@ -49,11 +49,12 @@ const schema = z
       ),
     display_name: z.string().trim().max(200),
     role: z.enum(['admin', 'viewer', 'platform-admin']),
+    sso_only: z.boolean(),
     generate: z.boolean(),
     password: z.string(),
   })
   .superRefine((values, ctx) => {
-    if (values.generate) return
+    if (values.sso_only || values.generate) return
     if (values.password.length < PASSWORD_MIN_LENGTH) {
       ctx.addIssue({
         code: 'custom',
@@ -103,11 +104,15 @@ export function CreateUserDialog({
       username: '',
       display_name: '',
       role: 'viewer',
+      sso_only: false,
       generate: true,
       password: '',
     },
   })
   const generate = useWatch({ control: form.control, name: 'generate' })
+  const ssoOnly = useWatch({ control: form.control, name: 'sso_only' })
+  // Offered only when the gateway has a single sign-on provider.
+  const ssoAvailable = (useAuthConfig().data?.sso_providers?.length ?? 0) > 0
 
   function handleOpenChange(next: boolean) {
     if (!next) {
@@ -127,7 +132,11 @@ export function CreateUserDialog({
           ? { display_name: values.display_name.trim() }
           : {}),
         role: values.role,
-        ...(values.generate ? {} : { password: values.password }),
+        ...(ssoAvailable && values.sso_only
+          ? { sso_only: true }
+          : values.generate
+            ? {}
+            : { password: values.password }),
       },
       {
         onSuccess: (created) => {
@@ -228,19 +237,40 @@ export function CreateUserDialog({
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="generate"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-center justify-between gap-3">
-                    <FormLabel>Generate a temporary password</FormLabel>
-                    <FormControl>
-                      <Switch checked={field.value} onCheckedChange={field.onChange} />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-              {generate ? null : (
+              {ssoAvailable ? (
+                <FormField
+                  control={form.control}
+                  name="sso_only"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between gap-3">
+                      <div className="flex flex-col gap-1">
+                        <FormLabel>Single sign-on only</FormLabel>
+                        <FormDescription>
+                          No password: the user signs in only through single sign-on.
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              ) : null}
+              {ssoAvailable && ssoOnly ? null : (
+                <FormField
+                  control={form.control}
+                  name="generate"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between gap-3">
+                      <FormLabel>Generate a temporary password</FormLabel>
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              )}
+              {generate || (ssoAvailable && ssoOnly) ? null : (
                 <FormField
                   control={form.control}
                   name="password"

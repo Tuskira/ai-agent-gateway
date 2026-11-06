@@ -1,9 +1,26 @@
 import { useState, type FormEvent } from 'react'
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { Building2, Eye, EyeOff, KeyRound, Loader2, Lock, User, X } from 'lucide-react'
+import {
+  Link,
+  Navigate,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from 'react-router-dom'
+import {
+  Building2,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Loader2,
+  Lock,
+  LogIn,
+  User,
+  X,
+} from 'lucide-react'
 import tuskiraLogo from '@/assets/tuskira-logo.svg'
 import { useAuth } from '@/auth/AuthContext'
 import { ApiError } from '@/lib/api'
+import { ssoErrorMessage, ssoStartHref } from '@/lib/auth-api'
 import { useAuthConfig, useHealth } from '@/lib/queries'
 import { BrandWordmark } from '@/components/app/BrandWordmark'
 import { ShinyButton } from '@/components/app/ShinyButton'
@@ -15,6 +32,7 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import { Label } from '@/components/ui/label'
+import { buttonVariants } from '@/components/ui/button'
 
 interface LocationState {
   from?: { pathname: string }
@@ -31,6 +49,10 @@ export default function LoginPage() {
   const location = useLocation()
   const { data: health } = useHealth()
   const configQuery = useAuthConfig()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Set by a failed single sign-on callback; only fixed codes are shown,
+  // mapped to our own messages.
+  const ssoErrorCode = searchParams.get('sso_error')
 
   // Until the config call settles we don't know whether to show the tenant
   // field; if it fails (older gateway) fall back to the most general form.
@@ -44,6 +66,7 @@ export default function LoginPage() {
   const defaultTenant = config?.default_tenant ?? ''
   // First run: a single-tenant install with no console user yet.
   const firstRun = config?.has_users === false
+  const ssoProviders = config?.sso_providers ?? []
 
   // null = "not toggled yet": first run opens the API-key form first.
   const [useKey, setUseKey] = useState<boolean | null>(null)
@@ -72,6 +95,14 @@ export default function LoginPage() {
   if (principal) {
     const from = (location.state as LocationState | null)?.from?.pathname ?? '/'
     return <Navigate to={from} replace />
+  }
+
+  const returnTo = (location.state as LocationState | null)?.from?.pathname ?? '/'
+
+  function dismissSsoError() {
+    const next = new URLSearchParams(searchParams)
+    next.delete('sso_error')
+    setSearchParams(next, { replace: true })
   }
 
   function finish() {
@@ -180,6 +211,24 @@ export default function LoginPage() {
                   <code className="font-mono text-[13px]">gateway create-user</code>.
                 </>
               )}
+            </div>
+          ) : null}
+
+          {ssoErrorCode ? (
+            <div
+              role="alert"
+              data-testid="sso-error"
+              className="flex items-start gap-2 rounded-r-3 border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              <span className="flex-1">{ssoErrorMessage(ssoErrorCode)}</span>
+              <button
+                type="button"
+                onClick={dismissSsoError}
+                aria-label="Dismiss"
+                className="-my-0.5 -mr-1 shrink-0 rounded-r-2 p-0.5 text-destructive/70 outline-none transition-colors hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </button>
             </div>
           ) : null}
 
@@ -366,6 +415,29 @@ export default function LoginPage() {
               </ShinyButton>
             </form>
           )}
+
+          {!keyMode && !configQuery.isLoading && ssoProviders.length > 0 ? (
+            <div className="flex flex-col gap-3" data-testid="sso-providers">
+              <div className="flex items-center gap-3 text-xs text-text-subtle">
+                <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                or
+                <span className="h-px flex-1 bg-border" aria-hidden="true" />
+              </div>
+              {ssoProviders.map((p) => (
+                <a
+                  key={p.name}
+                  href={ssoStartHref(p, returnTo)}
+                  className={buttonVariants({
+                    variant: 'outline',
+                    className: 'h-10 w-full gap-2',
+                  })}
+                >
+                  <LogIn aria-hidden="true" />
+                  Sign in with {p.display_name}
+                </a>
+              ))}
+            </div>
+          ) : null}
 
           {apiKeyLogin ? (
             <button

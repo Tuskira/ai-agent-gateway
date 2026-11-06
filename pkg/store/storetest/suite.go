@@ -55,6 +55,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("Users", func(t *testing.T) { testUsers(t, newStore(t)) })
 	t.Run("UserSessions", func(t *testing.T) { testUserSessions(t, newStore(t)) })
 	t.Run("AuthAudit", func(t *testing.T) { testAuthAudit(t, newStore(t)) })
+	t.Run("UserIdentities", func(t *testing.T) { testUserIdentities(t, newStore(t)) })
 	t.Run("PingAndMigrateAreIdempotent", func(t *testing.T) { testPingMigrate(t, newStore(t)) })
 }
 
@@ -2472,6 +2473,19 @@ func testUserSessions(t *testing.T, s store.Store) {
 	if got.UserID != u1.ID || got.TenantID != tenant.ID || got.CSRFToken != s1.CSRFToken || !got.ExpiresAt.Equal(expires) ||
 		got.RevokedAt != nil || got.UserAgent != "ua" || got.IP != "203.0.113.9" {
 		t.Errorf("Get = %+v, want the created session", got)
+	}
+	if got.AuthMethod != store.SessionAuthPassword {
+		t.Errorf("Get AuthMethod = %q for a session created without one, want %q", got.AuthMethod, store.SessionAuthPassword)
+	}
+	sso := &store.UserSession{
+		ID: unique("sha"), UserID: u2.ID, TenantID: tenant.ID, CSRFToken: unique("csrf"),
+		ExpiresAt: expires, AuthMethod: store.SessionAuthOIDC,
+	}
+	if err := sessions.Create(ctx, sso); err != nil {
+		t.Fatalf("Create(oidc session): %v", err)
+	}
+	if g, err := sessions.Get(ctx, sso.ID); err != nil || g.AuthMethod != store.SessionAuthOIDC {
+		t.Errorf("Get(oidc session) = %+v, %v; want AuthMethod %q", g, err, store.SessionAuthOIDC)
 	}
 	if _, err := sessions.Get(ctx, unique("nope")); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Get(missing) error = %v, want ErrNotFound", err)

@@ -5,7 +5,7 @@ The gateway has two kinds of caller and two ways in.
 | | Who | How they prove it | Used for |
 |---|---|---|---|
 | **API key** | A program: an agent, CI, the interceptor | `Authorization: Bearer gk_...` or `X-Gateway-Key: gk_...` | Every plane: MCP, LLM, and the control-plane REST API |
-| **Console user** | A person | Username and password, exchanged for a session cookie | The admin console, and the control-plane REST API from a browser |
+| **Console user** | A person | Username and password, or single sign-on through an OIDC identity provider, exchanged for a session cookie | The admin console, and the control-plane REST API from a browser |
 
 The two are separate on purpose. A user never calls the MCP or LLM planes
 (those accept API keys only), and an API key never needs a password.
@@ -276,7 +276,8 @@ break-glass CLI recovers that case.
 Every authentication action appends a row to `auth_audit`: `login_ok`,
 `login_fail` (with the internal reason: `bad_password`, `unknown_user`,
 `unknown_tenant`, `user_disabled`, `user_locked`, `password_too_long`,
-`bad_stored_hash`), `logout`,
+`bad_stored_hash`, `no_password`, or `oidc:<provider>:<code>` for single
+sign-on), `logout`,
 `password_change`, `password_reset`, `user_create`, `user_update`,
 `user_disable`, `user_delete`, `session_revoke`. Each row records the actor
 (`user`, `api_key`, `cli` or `anonymous`), the target user, the client IP and
@@ -303,13 +304,270 @@ accepting API keys on every API route regardless of it**; turning it off
 hides the option, it does not restrict keys. **This fallback is planned for
 removal**: new deployments should set the flag to `false` once a user exists.
 
-## SSO later
+## Single sign-on (OIDC)
 
-Sessions record who is logged in, not how they proved it, so an SSO login
-(OIDC) can create the same `user_sessions` rows and reuse the cookie, CSRF,
-role and audit machinery unchanged. Only a new login route and an
-identity-to-user mapping would be added. Password login stays as the
-break-glass path.
+Console users can also sign in through an OpenID Connect identity provider:
+the gateway is a generic OIDC relying party (authorization code flow with
+PKCE), so any issuer that publishes a discovery document works: AWS
+Cognito, Keycloak, Entra ID, Okta and so on. Each configured provider adds
+a **Sign in with &lt;display name&gt;** button to the login page. The
+password form (and the API-key fallback, if enabled) stays: password login
+is the break-glass path when the identity provider is down.
+
+An SSO login ends in exactly the session a password login creates (a
+`user_sessions` row, the `gw_session` cookie, a CSRF token), so roles,
+CSRF, idle and absolute timeouts, logout, revocation and the audit trail
+work the same way. `GET /auth/me` reports `auth_method: "oidc"` for it
+(`"session"` for a password session); `kind` is `"user"` for both.
+
+SSO is off until at least one provider is configured.
+
+### The flow
+
+1. The login page links to
+   `GET /api/v1/auth/oidc/{provider}/start?return_to=<console path>`.
+   The gateway creates a fresh `state`, `nonce` and PKCE verifier (S256),
+   seals them with `return_to` and the chosen callback URL into the
+   login-state cookie, and redirects to the issuer's authorize endpoint
+   (with the provider's `auth_params` added).
+2. The user signs in at the identity provider, which redirects to
+   `GET /api/v1/auth/oidc/{provider}/callback?code=...&state=...`.
+3. The gateway checks `state` against the cookie (constant time), exchanges
+   the code (sending the PKCE verifier and the client secret), and verifies
+   the ID token (below).
+4. It maps the identity to a console user of the provider's tenant (below),
+   creates the session and answers a small page that navigates to
+   `return_to`.
+
+On any failure the callback redirects to `/login?sso_error=<code>`, the
+login page shows a fixed message for that code, and the attempt is
+audited. The code is one of a fixed set, never text from the identity
+provider:
+
+| `sso_error` | Meaning |
+|---|---|
+| `state` | No login-state cookie, or it expired (10 minutes), was tampered with, belongs to another provider, or does not match `state` |
+| `token` | The code exchange failed, or the ID token failed a check |
+| `domain` | No email claim, a malformed one, or a domain not in `allowed_email_domains` |
+| `unverified` | `email_verified` is not true and `require_verified_email` is on |
+| `idp` | `required_upstream_idp` is set and the token does not show that upstream IdP |
+| `no_user` | No live user with that email in the tenant (`provision: existing`) |
+| `disabled` | The user is disabled |
+| `linked` | The user is already linked to a different identity at this provider |
+| `role` | The user is a `platform-admin` and the provider does not allow it |
+| `provider` | Unknown provider, the issuer is unreachable or returned an error, or the gateway could not finish the login |
+
+### What is checked
+
+The ID token is verified with
+[go-oidc](https://github.com/coreos/go-oidc): signature against the
+issuer's JWKS (fetched again when a token names an unknown key id, so key
+rotation works), `iss` equal to the configured `issuer`, `aud` containing
+`client_id` (and `azp` equal to it when there are several audiences), `exp`.
+On top of that the gateway requires:
+
+- an asymmetric signature (RS, PS, ES or EdDSA); `none` and every `HS*`
+  algorithm are refused whatever the discovery document lists;
+- `nonce` equal to the one sealed in the login state (constant time);
+- `iat` present and not more than 5 minutes in the future;
+- a `sub`, and `token_use` equal to `id` when the claim is present
+  (Cognito puts it in its tokens);
+- `email`: lowercased, printable ASCII without spaces, exactly one `@`, and
+  a domain that **exactly** equals one entry of `allowed_email_domains` (no
+  subdomains, no trailing dot);
+- `email_verified` true (JSON `true` or the string `"true"`) unless
+  `require_verified_email` is `false`;
+- when `required_upstream_idp` is set, the `identities` claim (Cognito's
+  list of a user's federated identities: a JSON array, or the array
+  JSON-encoded in a string) must be present, non-empty, and every entry's
+  `providerName` must equal it. A user linked to several upstream IdPs is
+  refused, because the token does not say which one this login used.
+
+`require_verified_email: false` is accepted only together with
+`required_upstream_idp` (otherwise startup fails): an issuer that lets
+anyone register could otherwise hand out an unverified address that
+matches a pre-made user, and the first login would take that user over.
+With `required_upstream_idp`, the upstream IdP vouches for the address.
+This is the usual Cognito-in-front-of-Entra-ID setup, where federated
+users often arrive with `email_verified` false.
+
+### Mapping to a user
+
+Every login through a provider lands in its one `tenant`. Identities are
+linked in the `user_identities` table, keyed by (tenant, provider, issuer,
+subject); a user has at most one identity per provider and issuer.
+
+1. If the subject is already linked, that user signs in, whatever the
+   email now says (the email must still pass the domain rule). A link
+   whose user has been deleted is removed and step 2 runs.
+2. Otherwise the gateway looks for the live user whose username equals the
+   email (case-insensitive, since usernames are lowercase). With
+   `provision: existing` (the default) only users an admin already created
+   can sign in; anyone else gets `no_user`. A user already linked to a
+   *different* subject at this provider is refused (`linked`), so a second
+   account at the issuer that claims the same address cannot take the
+   user over; an admin can remove the user and create it again to reset
+   the link.
+3. A disabled user is refused (`disabled`). A `platform-admin` is refused
+   (`role`) unless the provider sets `allow_platform_admin: true`; such
+   accounts keep password login.
+4. The first successful login creates the link; later ones update its
+   `last_login_at` and email.
+
+The user's role is always the gateway user's role: the identity provider
+does not grant roles. A pending password change (an admin-made account's
+temporary password) does not gate an SSO session; it still applies to
+password login.
+
+**Just-in-time users.** With `provision: jit` a missing user is created on
+first login: username = the email (it must be a valid username),
+display name = the token's `name`, role = `jit_role` (`viewer` by default,
+`admin` allowed, `platform-admin` never). Such a user has **no usable
+password**: password login fails for it (audited as `no_password`) until an
+admin resets the password. Every address in `allowed_email_domains` that
+the issuer will vouch for can then get into the tenant, so use it only
+with a domain you control.
+
+Disabling or deleting a user ends its SSO sessions on their next request,
+exactly as for password sessions.
+
+### Cookies
+
+| Cookie | Set by | Attributes |
+|---|---|---|
+| `__Host-gw_oidc` (https callback) or `gw_oidc` (plain-http loopback callback) | `start` | `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` with the `__Host-` name, 10 minutes. Cleared by every callback answer. |
+| `gw_session` | `callback` | Exactly as for password login (`HttpOnly`, `SameSite=Strict`, see [Sessions](#sessions-cookies-and-csrf)). |
+
+The login-state cookie holds the state, nonce, PKCE verifier, `return_to`
+and callback URL, sealed with AES-256-GCM under a key derived (HKDF-SHA256)
+from the secret-store master key, with the cookie name as additional data.
+Any replica can finish a login another started, and nothing in it is
+readable or forgeable by the browser. It is `SameSite=Lax` because the
+callback arrives as a cross-site navigation from the identity provider,
+which a `Strict` cookie would miss. An https login only accepts the
+`__Host-` cookie, which a plain-http response or a sibling host cannot set.
+
+The callback answers `200` with a tiny HTML page (no script, CSP
+`default-src 'none'`, `no-referrer`, `no-store`) that navigates to
+`return_to` with `<meta http-equiv="refresh">`. A `302` would not do: the
+browser treats the whole redirect chain as cross-site and would not send
+the new `SameSite=Strict` session cookie on the first console request.
+Navigating from the gateway's own page is same-site, so it does.
+
+`return_to` must be a relative path on the console's origin: it must start
+with exactly one `/` (not `//` or `/\`), contain no backslash, and only
+printable ASCII without spaces (percent-encode anything else). Anything
+else is ignored and the user lands on `/`.
+
+### Configuring a provider
+
+Providers live under `auth.oidc.providers` (all keys in
+[configuration.md](configuration.md#authoidcproviders-single-sign-on)). A
+list cannot be set with per-key environment variables, so it comes from the
+YAML file, or as one JSON array in `GATEWAY_AUTH_OIDC_PROVIDERS` (same
+keys; the variable replaces the file's list). The client secret is never in
+the config itself: point `client_secret_file` at a file or
+`client_secret_env` at an environment variable.
+
+Register the callback URL at the identity provider exactly as
+`redirect_url` says: `<console origin>/api/v1/auth/oidc/<name>/callback`.
+The gateway enforces that path, and `https` (plain `http` is allowed only on
+a loopback host, for local development; the same rule applies to `issuer`).
+
+The issuer is called through the gateway's egress guard
+([`egress`](configuration.md#egress-outbound-request-policy)): an issuer on
+an internal address (a Keycloak in the same cluster, say) needs its host or
+range allowlisted.
+
+**Keycloak:**
+
+```yaml
+auth:
+  oidc:
+    providers:
+      - name: keycloak
+        display_name: Keycloak
+        issuer: https://sso.example.com/realms/corp
+        client_id: ai-gateway                    # a confidential client
+        client_secret_file: /run/secrets/keycloak-client-secret
+        redirect_url: https://gateway.example.com/api/v1/auth/oidc/keycloak/callback
+        tenant: default
+        allowed_email_domains: [example.com]
+```
+
+In Keycloak, create an OpenID Connect client with client authentication
+on, the standard flow enabled, the redirect URI above, and (recommended)
+**PKCE method S256** under the client's advanced settings.
+
+**AWS Cognito, federating to Entra ID:**
+
+```yaml
+auth:
+  oidc:
+    providers:
+      - name: cognito
+        display_name: Microsoft
+        issuer: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_EXAMPLE
+        client_id: 1example23456789
+        client_secret_env: COGNITO_CLIENT_SECRET
+        redirect_url: https://console.example.com/api/v1/auth/oidc/cognito/callback
+        auth_params:
+          identity_provider: EntraID       # skip the hosted UI, go straight to Entra ID
+        required_upstream_idp: EntraID     # refuse users who did not come through it
+        require_verified_email: false      # federated users often arrive unverified
+        tenant: default
+        allowed_email_domains: [example.com]
+```
+
+The issuer is the user pool's
+`https://cognito-idp.<region>.amazonaws.com/<pool id>`, not the hosted-UI
+domain. The app client needs a client secret, the authorization code
+grant, the `openid` and `email` scopes, and the callback URL above.
+`identity_provider` and `required_upstream_idp` name the identity provider
+as it is called in the user pool. Without federation (users who sign in to
+Cognito directly), drop those three lines.
+
+The same through the environment:
+
+```sh
+GATEWAY_AUTH_OIDC_PROVIDERS='[{"name":"cognito","display_name":"Microsoft",
+  "issuer":"https://cognito-idp.us-east-1.amazonaws.com/us-east-1_EXAMPLE",
+  "client_id":"1example23456789","client_secret_env":"COGNITO_CLIENT_SECRET",
+  "redirect_url":"https://console.example.com/api/v1/auth/oidc/cognito/callback",
+  "auth_params":{"identity_provider":"EntraID"},"required_upstream_idp":"EntraID",
+  "require_verified_email":false,"tenant":"default","allowed_email_domains":["example.com"]}]'
+COGNITO_CLIENT_SECRET=...
+```
+
+### Behind a proxy
+
+A service that serves the console on its own host can proxy
+`/api/v1/auth/*` to the gateway unchanged and needs no login code of its
+own: the gateway's redirects and `Set-Cookie` headers pass through. Then:
+
+- `redirect_url` is on the proxy's host
+  (`https://console.example.com/api/v1/auth/oidc/<name>/callback`), and the
+  login must start on that same host, so the login-state cookie is sent
+  back to the callback. With several console hosts, list the extra
+  callbacks in `redirect_urls`; a login uses the one whose host is the
+  host it started on (`X-Forwarded-Host` first, then `Host`), else the
+  first. Only configured URLs are ever used.
+- The proxy must not strip or rewrite `Set-Cookie`, and should send
+  `X-Forwarded-Proto: https` so the session cookie gets `Secure` (or set
+  `auth.cookie_secure: true`).
+- Put the proxy in `api.trusted_proxies` so lockout and audit see the
+  user's IP, not the proxy's.
+
+### Throttling and audit
+
+Both routes are public and sit behind the same per-IP lockout as
+`POST /auth/login`: every refused callback counts as one failure, a
+successful one resets the IP. A successful login is audited as `login_ok`
+with detail `oidc:<provider>`; a refusal as `login_fail` with detail
+`oidc:<provider>:<code>` (`code` as in the table above), under the
+provider's tenant. A just-in-time user is audited as `user_create` with
+detail `role=<role> oidc:<provider>`. The identity provider's own error
+text goes to the server log only.
 
 ## Reference
 
@@ -319,6 +577,7 @@ Routes (full table in [api.md](api.md#route-table)):
 |---|---|
 | `GET /auth/config` | public |
 | `POST /auth/login` | public, rate limited |
+| `GET /auth/oidc/{provider}/start`, `GET /auth/oidc/{provider}/callback` | public, rate limited (see [Single sign-on](#single-sign-on-oidc)) |
 | `POST /auth/logout` | any authenticated caller (revokes the session, if any) |
 | `GET /auth/me` | any caller |
 | `POST /auth/password` | console user session only |
@@ -330,4 +589,5 @@ that request to the named tenant for a caller holding `platform.admin`; for
 anyone else it is `403` (see [Acting in another tenant](#acting-in-another-tenant)).
 
 Configuration: [`auth.console_api_key_login`, `auth.cookie_secure`,
-`auth.session_idle`, `auth.session_max`, `auth.default_tenant`](configuration.md#auth).
+`auth.session_idle`, `auth.session_max`, `auth.default_tenant`](configuration.md#auth),
+[`auth.oidc.providers`](configuration.md#authoidcproviders-single-sign-on).

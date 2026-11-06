@@ -167,21 +167,28 @@ var _ store.UserSessionStore = (*userSessionStore)(nil)
 
 func (s *userSessionStore) Create(ctx context.Context, us *store.UserSession) error {
 	const q = `
-		INSERT INTO user_sessions (id, user_id, tenant_id, csrf_token, expires_at, user_agent, ip)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO user_sessions (id, user_id, tenant_id, csrf_token, expires_at, user_agent, ip, auth_method)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at, last_seen_at`
-	err := s.db.QueryRowContext(ctx, q, us.ID, us.UserID, us.TenantID, us.CSRFToken, us.ExpiresAt, us.UserAgent, us.IP).
+	method := us.AuthMethod
+	if method == "" {
+		method = store.SessionAuthPassword
+	}
+	err := s.db.QueryRowContext(ctx, q, us.ID, us.UserID, us.TenantID, us.CSRFToken, us.ExpiresAt, us.UserAgent, us.IP, method).
 		Scan(&us.CreatedAt, &us.LastSeenAt)
+	if err == nil {
+		us.AuthMethod = method
+	}
 	return mapWriteErr(err)
 }
 
 func (s *userSessionStore) Get(ctx context.Context, id string) (*store.UserSession, error) {
 	const q = `
-		SELECT id, user_id, tenant_id, csrf_token, created_at, last_seen_at, expires_at, revoked_at, user_agent, ip
+		SELECT id, user_id, tenant_id, csrf_token, created_at, last_seen_at, expires_at, revoked_at, user_agent, ip, auth_method
 		FROM user_sessions WHERE id = $1`
 	var us store.UserSession
 	if err := s.db.QueryRowContext(ctx, q, id).Scan(
-		&us.ID, &us.UserID, &us.TenantID, &us.CSRFToken, &us.CreatedAt, &us.LastSeenAt, &us.ExpiresAt, &us.RevokedAt, &us.UserAgent, &us.IP,
+		&us.ID, &us.UserID, &us.TenantID, &us.CSRFToken, &us.CreatedAt, &us.LastSeenAt, &us.ExpiresAt, &us.RevokedAt, &us.UserAgent, &us.IP, &us.AuthMethod,
 	); err != nil {
 		return nil, mapReadErr(err)
 	}

@@ -206,6 +206,9 @@ func (us *userSessionStore) Create(_ context.Context, ns *store.UserSession) err
 	}
 	now := time.Now()
 	ns.CreatedAt, ns.LastSeenAt = now, now
+	if ns.AuthMethod == "" {
+		ns.AuthMethod = store.SessionAuthPassword
+	}
 	cp := *ns
 	s.sessions[ns.ID] = &cp
 	return nil

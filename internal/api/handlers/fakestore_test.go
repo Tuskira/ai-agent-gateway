@@ -77,9 +77,12 @@ func (f *fakeStore) Skills() store.SkillStore               { return f.skills }
 func (f *fakeStore) Users() store.UserStore                 { return f.authn.Users() }
 func (f *fakeStore) UserSessions() store.UserSessionStore   { return f.authn.UserSessions() }
 func (f *fakeStore) AuthAudit() store.AuthAuditStore        { return f.authn.AuthAudit() }
-func (f *fakeStore) Migrate(context.Context) error          { return nil }
-func (f *fakeStore) Ping(context.Context) error             { return nil }
-func (f *fakeStore) Close() error                           { return nil }
+func (f *fakeStore) UserIdentities() store.UserIdentityStore {
+	return f.authn.UserIdentities()
+}
+func (f *fakeStore) Migrate(context.Context) error { return nil }
+func (f *fakeStore) Ping(context.Context) error    { return nil }
+func (f *fakeStore) Close() error                  { return nil }
 
 var _ store.Store = (*fakeStore)(nil)
 

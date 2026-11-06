@@ -168,6 +168,36 @@ type UserSession struct {
 
 	UserAgent string
 	IP        string
+
+	// AuthMethod is how the session was started: SessionAuthPassword
+	// (POST /auth/login) or SessionAuthOIDC (single sign-on). "" is read
+	// as SessionAuthPassword.
+	AuthMethod string
+}
+
+// UserSession.AuthMethod values.
+const (
+	SessionAuthPassword = "password"
+	SessionAuthOIDC     = "oidc"
+)
+
+// UserIdentity links one identity at an OIDC issuer to one console user:
+// (TenantID, Provider, Issuer, Subject) is unique, and so is (TenantID,
+// Provider, Issuer, UserID) -- a user has at most one identity per
+// provider and issuer. Provider is the configured provider name
+// (auth.oidc.providers[].name), Issuer the issuer URL it verified the ID
+// token against, Subject the token's "sub". Email is the address the
+// identity last signed in with (informational; the link is by subject).
+type UserIdentity struct {
+	ID          string
+	TenantID    string
+	Provider    string
+	Issuer      string
+	Subject     string
+	UserID      string
+	Email       string
+	CreatedAt   time.Time
+	LastLoginAt time.Time
 }
 
 // AuthAuditEntry is one row of the authentication audit trail. TenantID
@@ -1164,6 +1194,30 @@ type UserSessionStore interface {
 	RevokeAllForUser(ctx context.Context, userID, exceptID string) (int, error)
 }
 
+// UserIdentityStore manages UserIdentity rows. Every method is scoped by
+// tenant.
+type UserIdentityStore interface {
+	// Create persists i, setting ID, CreatedAt and LastLoginAt.
+	// ErrConflict when the tenant already has a row for the same
+	// (provider, issuer, subject) or the same (provider, issuer, user).
+	Create(ctx context.Context, i *UserIdentity) error
+	// GetBySubject returns the tenant's link for (provider, issuer,
+	// subject); ErrNotFound when there is none.
+	GetBySubject(ctx context.Context, tenantID, provider, issuer, subject string) (*UserIdentity, error)
+	// GetByUser returns the user's link for (provider, issuer);
+	// ErrNotFound when there is none.
+	GetByUser(ctx context.Context, tenantID, provider, issuer, userID string) (*UserIdentity, error)
+	// ListByUser returns every link of the user, ordered by provider then
+	// issuer.
+	ListByUser(ctx context.Context, tenantID, userID string) ([]*UserIdentity, error)
+	// RecordLogin sets LastLoginAt = at and Email = email. ErrNotFound
+	// when the row is missing or in another tenant.
+	RecordLogin(ctx context.Context, tenantID, id, email string, at time.Time) error
+	// Delete removes the row. ErrNotFound when it is missing or in another
+	// tenant.
+	Delete(ctx context.Context, tenantID, id string) error
+}
+
 // AuthAuditListOptions filters and pages AuthAuditStore.List.
 type AuthAuditListOptions struct {
 	Limit        int // <= 0 means 50
@@ -1220,6 +1274,7 @@ type Store interface {
 	Users() UserStore
 	UserSessions() UserSessionStore
 	AuthAudit() AuthAuditStore
+	UserIdentities() UserIdentityStore
 
 	// Migrate brings the backend's schema up to date. It must be safe to
 	// call repeatedly (a no-op once already current).

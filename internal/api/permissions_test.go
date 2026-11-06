@@ -244,6 +244,9 @@ var nopAuthn = dptest.New()
 func (nopStore) Users() store.UserStore               { return nopAuthn.Users() }
 func (nopStore) UserSessions() store.UserSessionStore { return nopAuthn.UserSessions() }
 func (nopStore) AuthAudit() store.AuthAuditStore      { return nopAuthn.AuthAudit() }
+func (nopStore) UserIdentities() store.UserIdentityStore {
+	return nopAuthn.UserIdentities()
+}
 func (nopStore) CredentialSources() store.CredentialSourceStore {
 	return nopAuthn.CredentialSources()
 }

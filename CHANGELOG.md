@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-06
+
 ### Added
 
 - **Single sign-on (OIDC) for console users.** The gateway is now a generic
@@ -61,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and SSO), so it signs in again under the new role.
 - **A custom `store.Store` must implement `UserIdentities()`** and persist
   `UserSession.AuthMethod`.
+
+### Security
+
+- Dependencies `github.com/andybalholm/brotli` (1.2.7, GO-2026-6888) and
+  `github.com/klauspost/compress` (1.20.2, GO-2026-6865) updated in the
+  gateway and the detection agent.
 
 ## [0.9.1] - 2026-11-05
 
@@ -2099,7 +2107,8 @@ First release: phase 1 of the open-source AI gateway.
   `bootstrap-key` transcript.
 - CI badge in `README.md`.
 
-[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.1...v0.8.2

@@ -54,6 +54,15 @@ var (
 // string with acceptable parameters.
 var ErrMalformedHash = errors.New("password: malformed argon2id hash")
 
+// Unusable is the stored password hash of an account that has no password
+// (a user created by a single sign-on login). It is not a PHC string, so
+// nothing verifies against it; callers check IsUnusable first to refuse
+// such a login without logging a broken hash.
+const Unusable = "!no-password"
+
+// IsUnusable reports whether encoded is Unusable.
+func IsUnusable(encoded string) bool { return encoded == Unusable }
+
 // hashSlots bounds how many hashes run at once: each holds 64 MiB, and a
 // burst of logins must not be able to exhaust the process's memory.
 var hashSlots = make(chan struct{}, max(2, runtime.NumCPU()))

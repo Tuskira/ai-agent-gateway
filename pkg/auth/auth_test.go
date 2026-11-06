@@ -370,3 +370,14 @@ func TestRoleAuthorizer_CatalogManage(t *testing.T) {
 		}
 	})
 }
+
+func TestIsUserCoversSSOSessions(t *testing.T) {
+	for method, want := range map[string]bool{AuthMethodSession: true, AuthMethodOIDC: true, "apikey": false, "dev": false, "": false} {
+		if got := (&Principal{AuthMethod: method}).IsUser(); got != want {
+			t.Errorf("IsUser(%q) = %v, want %v", method, got, want)
+		}
+	}
+	if (*Principal)(nil).IsUser() {
+		t.Error("nil Principal is a user")
+	}
+}

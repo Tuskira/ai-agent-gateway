@@ -178,6 +178,25 @@ auth:
   session_idle: 8h
   session_max: 24h
 
+  # oidc: single sign-on for console users through OpenID Connect issuers
+  # (Cognito, Keycloak, Entra ID, Okta, ...). No providers (the default) =
+  # SSO off. Also settable as one JSON array in GATEWAY_AUTH_OIDC_PROVIDERS.
+  # Every key: docs/configuration.md; flow and checks: docs/authentication.md.
+  #
+  #   oidc:
+  #     providers:
+  #       - name: keycloak                  # used in /api/v1/auth/oidc/<name>/...
+  #         display_name: Keycloak
+  #         issuer: https://sso.example.com/realms/corp
+  #         client_id: ai-gateway
+  #         client_secret_file: /run/secrets/oidc-client-secret   # or client_secret_env
+  #         redirect_url: https://gateway.example.com/api/v1/auth/oidc/keycloak/callback
+  #         tenant: default                 # every login lands in this tenant
+  #         allowed_email_domains: [example.com]
+  #         # provision: existing           # or jit (creates users, jit_role viewer)
+  oidc:
+    providers: []
+
   # roles: custom role -> permission-pattern grants, merged over the
   # built-in roles (admin: "*"; platform-admin: "platform.*"; agent:
   # "mcp.*", "llm.*", "*.read"; viewer: "*.read"; interceptor: "ingest.write")

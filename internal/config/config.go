@@ -684,6 +684,9 @@ type Auth struct {
 	SessionIdle time.Duration `yaml:"session_idle"`
 	SessionMax  time.Duration `yaml:"session_max"`
 
+	// OIDC configures single sign-on for console users (see OIDC).
+	OIDC OIDC `yaml:"oidc"`
+
 	// DevMode configures the dev-mode gap-filling Authenticator
 	// (internal/auth/devmode). Must never be enabled outside local
 	// development: it grants an admin Principal to any request that
@@ -1163,6 +1166,18 @@ func overlayStruct(v reflect.Value, prefix string) error {
 		if !ok {
 			continue
 		}
+		if t.Field(i).Tag.Get("env") == "json" {
+			// A list of objects that has to be settable from the
+			// environment (auth.oidc.providers) opts in with env:"json":
+			// the variable holds the whole value as JSON, which is YAML, so
+			// it decodes strictly through the same yaml tags as the file.
+			ptr := reflect.New(fv.Type())
+			if err := DecodeYAMLStrict([]byte(raw), envName, ptr.Interface()); err != nil {
+				return err
+			}
+			fv.Set(ptr.Elem())
+			continue
+		}
 		if err := setField(fv, raw); err != nil {
 			return fmt.Errorf("env %s: %w", envName, err)
 		}
@@ -1193,7 +1208,8 @@ func setField(fv reflect.Value, raw string) error {
 
 	switch fv.Kind() {
 	case reflect.Slice:
-		// Only []string is supported: a comma-separated list.
+		// Only []string is supported: a comma-separated list. (A field
+		// tagged env:"json" takes one JSON value instead; see overlayStruct.)
 		if fv.Type().Elem().Kind() != reflect.String {
 			return fmt.Errorf("unsupported field kind %s of %s", fv.Kind(), fv.Type().Elem())
 		}
@@ -1351,6 +1367,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Auth.SessionIdle > c.Auth.SessionMax {
 		return fmt.Errorf("auth: session_idle (%s) must not exceed session_max (%s)", c.Auth.SessionIdle, c.Auth.SessionMax)
+	}
+	if err := c.Auth.OIDC.validate(c.Auth.SessionMax); err != nil {
+		return err
 	}
 
 	if c.Auth.RateLimit.Enabled {

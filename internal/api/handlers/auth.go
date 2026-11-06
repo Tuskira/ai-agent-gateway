@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/httpx"
+	oidcauth "github.com/Tuskira/tusk-ai-secured-gateway/internal/auth/oidc"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/auth/password"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/auth/session"
 	applog "github.com/Tuskira/tusk-ai-secured-gateway/internal/log"
@@ -132,6 +133,19 @@ type authConfigView struct {
 	// so a console built for this server can hide the tenant field and
 	// an older server (which lacks it) keeps showing it.
 	TenantOptional bool `json:"tenant_optional"`
+	// SSOProviders lists the configured single sign-on (OIDC) providers,
+	// one "Sign in with ..." button each. Always present; empty when SSO
+	// is off.
+	SSOProviders []ssoProviderView `json:"sso_providers"`
+}
+
+// ssoProviderView is one entry of GET /auth/config's sso_providers.
+// StartURL is relative to the console origin; the console appends
+// ?return_to=<path>.
+type ssoProviderView struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	StartURL    string `json:"start_url"`
 }
 
 // defaultTenant resolves the tenant the login form should prefill: the
@@ -172,6 +186,10 @@ func (h Auth) Config(w http.ResponseWriter, r *http.Request) {
 	if single {
 		hasUsers = h.hasActiveUsers(r.Context(), tenantID)
 	}
+	sso := []ssoProviderView{}
+	for _, p := range h.OIDC.Providers() {
+		sso = append(sso, ssoProviderView{Name: p.Name, DisplayName: p.DisplayName, StartURL: oidcauth.StartPath(p.Name)})
+	}
 	httpx.WriteJSON(w, http.StatusOK, authConfigView{
 		PasswordLogin:  true,
 		APIKeyLogin:    h.Console.APIKeyLogin,
@@ -179,6 +197,7 @@ func (h Auth) Config(w http.ResponseWriter, r *http.Request) {
 		DefaultTenant:  slug,
 		HasUsers:       hasUsers,
 		TenantOptional: true,
+		SSOProviders:   sso,
 	})
 }
 
@@ -339,6 +358,12 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if password.IsUnusable(user.PasswordHash) {
+		// A single-sign-on-only account: no password can match.
+		password.DummyVerify(req.Password)
+		fail(tenant.ID, user.ID, "no_password")
+		return
+	}
 	ok, err := password.Verify(req.Password, user.PasswordHash)
 	if err != nil {
 		applog.From(ctx).Error("login: stored password hash unusable", "user_id", user.ID, "error", err)
@@ -353,7 +378,7 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, raw, err := h.newSession(r, user)
+	sess, raw, err := h.newSession(r, user, store.SessionAuthPassword, h.max())
 	if err != nil {
 		applog.From(ctx).Error("login: create session failed", "user_id", user.ID, "error", err)
 		httpx.Internal(w, "internal error")
@@ -377,7 +402,10 @@ func (h Auth) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h Auth) newSession(r *http.Request, user *store.User) (*store.UserSession, string, error) {
+// newSession creates a session row for user, started by method
+// (store.SessionAuthPassword or store.SessionAuthOIDC) and living at most
+// lifetime, and returns it with the raw cookie token.
+func (d Deps) newSession(r *http.Request, user *store.User, method string, lifetime time.Duration) (*store.UserSession, string, error) {
 	raw, id, err := session.NewToken()
 	if err != nil {
 		return nil, "", err
@@ -388,10 +416,11 @@ func (h Auth) newSession(r *http.Request, user *store.User) (*store.UserSession,
 	}
 	sess := &store.UserSession{
 		ID: id, UserID: user.ID, TenantID: user.TenantID, CSRFToken: csrf,
-		ExpiresAt: time.Now().Add(h.max()),
-		UserAgent: truncate(r.UserAgent(), 255), IP: h.clientIP(r),
+		ExpiresAt: time.Now().Add(lifetime),
+		UserAgent: truncate(r.UserAgent(), 255), IP: d.clientIP(r),
+		AuthMethod: method,
 	}
-	if err := h.Store.UserSessions().Create(r.Context(), sess); err != nil {
+	if err := d.Store.UserSessions().Create(r.Context(), sess); err != nil {
 		return nil, "", err
 	}
 	return sess, raw, nil
@@ -553,7 +582,7 @@ func (h Auth) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	locked := user.LockedUntil != nil && time.Now().Before(*user.LockedUntil)
 	matches := false
-	if locked || len(req.CurrentPassword) > maxLoginPasswordBytes {
+	if locked || len(req.CurrentPassword) > maxLoginPasswordBytes || password.IsUnusable(user.PasswordHash) {
 		password.DummyVerify(req.CurrentPassword)
 	} else {
 		matches, err = password.Verify(req.CurrentPassword, user.PasswordHash)

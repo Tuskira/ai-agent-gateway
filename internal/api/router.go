@@ -17,6 +17,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/handlers"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/httpx"
 	internalauth "github.com/Tuskira/tusk-ai-secured-gateway/internal/auth"
+	oidcauth "github.com/Tuskira/tusk-ai-secured-gateway/internal/auth/oidc"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/auth/session"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
 	dataplaneheaders "github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/headers"
@@ -67,6 +68,10 @@ type Deps struct {
 	// fallback flag, the default tenant. The zero value works (default
 	// lifetimes, "auto" cookies, no API-key login, no default tenant).
 	Console handlers.ConsoleConfig
+	// OIDC backs single sign-on for console users (GET
+	// /auth/oidc/{provider}/start and .../callback, and /auth/config's
+	// sso_providers). Nil when no provider is configured.
+	OIDC *oidcauth.Service
 
 	// Store is the control-plane persistence layer backing tenants,
 	// API keys, credentials, connectors, agent profiles, console users
@@ -328,6 +333,7 @@ func buildRoutes(deps Deps) []routeSpec {
 		IngestSink:        deps.IngestSink,
 		IngestRateLimiter: deps.IngestRateLimiter,
 		Console:           deps.Console,
+		OIDC:              deps.OIDC,
 	}
 	if deps.RateLimiter != nil {
 		// Only when set: a nil *RateLimiter in the interface would be a
@@ -350,6 +356,7 @@ func buildRoutes(deps Deps) []routeSpec {
 	mcpCatalog := handlers.MCPCatalog{Deps: hdeps}
 	ingestH := handlers.Ingest{Deps: hdeps}
 	authH := handlers.Auth{Deps: hdeps}
+	oidcH := handlers.OIDC{Deps: hdeps}
 	usersH := handlers.Users{Deps: hdeps}
 	docs := &handlers.Docs{}
 
@@ -388,6 +395,8 @@ func buildRoutes(deps Deps) []routeSpec {
 		// and adds a per-user one (handlers.Auth).
 		{Method: http.MethodGet, Pattern: "/auth/config", Tag: "auth", Summary: "What the console login page should offer (password login, API-key fallback, tenant prefill)", Public: true, Handler: authH.Config},
 		{Method: http.MethodPost, Pattern: "/auth/login", Tag: "auth", Summary: "Log in with tenant, username and password; sets the session cookie", Public: true, Handler: authH.Login},
+		{Method: http.MethodGet, Pattern: "/auth/oidc/{provider}/start", Tag: "auth", Summary: "Start a single sign-on (OIDC) login: sets the login-state cookie and redirects to the identity provider", Public: true, Handler: oidcH.Start},
+		{Method: http.MethodGet, Pattern: "/auth/oidc/{provider}/callback", Tag: "auth", Summary: "Single sign-on (OIDC) callback: verifies the login and sets the session cookie, or redirects to the login page with sso_error", Public: true, Handler: oidcH.Callback},
 		{Method: http.MethodPost, Pattern: "/auth/logout", Tag: "auth", Summary: "Revoke the current session and clear the cookie", Handler: authH.Logout},
 		{Method: http.MethodGet, Pattern: "/auth/me", Tag: "auth", Summary: "The caller's Principal (and, for a console user, the account and CSRF token)", Handler: authH.Me},
 		{Method: http.MethodPost, Pattern: "/auth/password", Tag: "auth", Summary: "Change your own password (console user session only)", Handler: authH.ChangePassword},

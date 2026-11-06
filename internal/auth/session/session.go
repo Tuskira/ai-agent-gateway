@@ -3,8 +3,9 @@
 // CSRF double-submit check for cookie-authenticated requests, and the
 // must-change-password gate.
 //
-// Sessions are method-agnostic: a session row records WHO is logged in,
-// not how they proved it, so a later SSO login can create the same rows.
+// A session row records who is logged in and how the session was started
+// (store.UserSession.AuthMethod: a password or an SSO login); both kinds
+// are handled identically apart from the reported AuthMethod.
 package session
 
 import (
@@ -185,6 +186,13 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*aut
 		SessionID:          sess.ID,
 		CSRFToken:          sess.CSRFToken,
 		MustChangePassword: user.MustChangePassword,
+	}
+	if sess.AuthMethod == store.SessionAuthOIDC {
+		// The identity provider vouched for this login, so a pending
+		// password change (an admin-made account's temporary password)
+		// does not gate an SSO session; it still applies to password login.
+		p.AuthMethod = auth.AuthMethodOIDC
+		p.MustChangePassword = false
 	}
 	if strings.Contains(user.Username, "@") {
 		p.Email = user.Username

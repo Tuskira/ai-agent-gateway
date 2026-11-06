@@ -30,6 +30,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/handlers"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/ui"
 	internalauth "github.com/Tuskira/tusk-ai-secured-gateway/internal/auth"
+	oidcauth "github.com/Tuskira/tusk-ai-secured-gateway/internal/auth/oidc"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/capture"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/clientip"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
@@ -601,6 +602,18 @@ func Run(ctx context.Context, opts Options) error {
 		}
 		if cfg.API.ServeUI {
 			apiDeps.UIHandler = ui.Handler()
+		}
+		if providers := cfg.Auth.OIDC.Providers; len(providers) > 0 {
+			sso, err := oidcauth.New(providers, secDeps.MasterKey, oidcauth.Options{})
+			if err != nil {
+				return fmt.Errorf("single sign-on: %w", err)
+			}
+			apiDeps.OIDC = sso
+			names := make([]string, 0, len(providers))
+			for _, p := range providers {
+				names = append(names, p.Name)
+			}
+			logger.Info("single sign-on enabled", "providers", names)
 		}
 		apiHandler := api.NewRouter(apiDeps)
 		routines = append(routines, httpplane.New(

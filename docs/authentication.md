@@ -354,6 +354,7 @@ provider:
 | `no_user` | No live user with that email in the tenant (`provision: existing`) |
 | `disabled` | The user is disabled |
 | `linked` | The user is already linked to a different identity at this provider |
+| `link_required` | `require_verified_email` is off and the matching user has a usable password, so the email may not link to it (see [Mapping to a user](#mapping-to-a-user)) |
 | `role` | The user is a `platform-admin` and the provider does not allow it |
 | `provider` | Unknown provider, the issuer is unreachable or returned an error, or the gateway could not finish the login |
 
@@ -372,9 +373,10 @@ On top of that the gateway requires:
 - `iat` present and not more than 5 minutes in the future;
 - a `sub`, and `token_use` equal to `id` when the claim is present
   (Cognito puts it in its tokens);
-- `email`: lowercased, printable ASCII without spaces, exactly one `@`, and
-  a domain that **exactly** equals one entry of `allowed_email_domains` (no
-  subdomains, no trailing dot);
+- the email (the `email` claim, or the one `email_claim` names): lowercased,
+  printable ASCII without spaces, exactly one `@`, and a domain that
+  **exactly** equals one entry of `allowed_email_domains` (no subdomains, no
+  trailing dot);
 - `email_verified` true (JSON `true` or the string `"true"`) unless
   `require_verified_email` is `false`;
 - when `required_upstream_idp` is set, the `identities` claim (Cognito's
@@ -390,6 +392,18 @@ matches a pre-made user, and the first login would take that user over.
 With `required_upstream_idp`, the upstream IdP vouches for the address.
 This is the usual Cognito-in-front-of-Entra-ID setup, where federated
 users often arrive with `email_verified` false.
+
+> **Warning: the email claim must not be user-writable when verification
+> is off.** Many IdPs let a signed-in user edit their own profile. A Cognito
+> app client, for example, gives users write access to the `email`
+> attribute by default, and a still-valid hosted-UI session can sign in
+> again without going back through the upstream IdP. A user who rewrites
+> their address could then present someone else's. Remove write access to
+> the attribute on the app client, or map the address from a claim users
+> cannot change with `email_claim` (such as `upn`, or a custom attribute
+> filled only by the upstream IdP). As a second line of defence, while
+> `require_verified_email` is `false` an email links **only to users
+> without a usable password** (see below).
 
 ### Mapping to a user
 
@@ -407,24 +421,48 @@ subject); a user has at most one identity per provider and issuer.
    *different* subject at this provider is refused (`linked`), so a second
    account at the issuer that claims the same address cannot take the
    user over; an admin can remove the user and create it again to reset
-   the link.
+   the link. When the provider has `require_verified_email: false`, the
+   email links only to a user with **no usable password** (created
+   SSO-only, below, or just in time); a user with a password, including
+   one still on a temporary password, is refused (`link_required`), so an
+   unverified address can never take over a password account such as an
+   admin's.
 3. A disabled user is refused (`disabled`). A `platform-admin` is refused
    (`role`) unless the provider sets `allow_platform_admin: true`; such
    accounts keep password login.
 4. The first successful login creates the link; later ones update its
-   `last_login_at` and email.
+   `last_login_at` and email. If the user still has an admin-issued
+   temporary password it never changed (`must_change_password`), that
+   password is discarded at this first link (replaced by no usable
+   password, audited as `password_reset`): SSO sessions skip the forced
+   change, so it would otherwise stay valid for password login for good.
+   An admin can issue a new one with reset-password.
 
 The user's role is always the gateway user's role: the identity provider
-does not grant roles. A pending password change (an admin-made account's
-temporary password) does not gate an SSO session; it still applies to
-password login.
+does not grant roles. A pending password change does not gate an SSO
+session. Promoting a user to `platform-admin` ends all of its sessions, so
+a provider without `allow_platform_admin` refuses it at the next login.
+
+**SSO-only users.** A user created without a password can sign in only
+through single sign-on (and is the only kind an unverified email links
+to):
+
+- API: `POST /api/v1/users` with `"sso_only": true` (no `password`; no
+  temporary password is generated or returned).
+- CLI: `gateway create-user -tenant default -username jane@example.com -role viewer -sso-only`
+  (prints nothing on stdout).
+- Console: the **Single sign-on only** switch in the Users page's create
+  form, shown when a provider is configured.
+
+User objects carry `sso_only: true` while the user has no usable
+password. Password login fails for such a user (audited as `no_password`)
+until an admin resets the password.
 
 **Just-in-time users.** With `provision: jit` a missing user is created on
 first login: username = the email (it must be a valid username),
 display name = the token's `name`, role = `jit_role` (`viewer` by default,
-`admin` allowed, `platform-admin` never). Such a user has **no usable
-password**: password login fails for it (audited as `no_password`) until an
-admin resets the password. Every address in `allowed_email_domains` that
+`admin` allowed, `platform-admin` never). Such a user is SSO-only: it has
+**no usable password**. Every address in `allowed_email_domains` that
 the issuer will vouch for can then get into the tenant, so use it only
 with a domain you control.
 
@@ -473,6 +511,11 @@ Register the callback URL at the identity provider exactly as
 `redirect_url` says: `<console origin>/api/v1/auth/oidc/<name>/callback`.
 The gateway enforces that path, and `https` (plain `http` is allowed only on
 a loopback host, for local development; the same rule applies to `issuer`).
+
+The discovery document is fetched on the first login and again once it is
+an hour old (concurrent logins share one fetch); if a refresh fails, the
+previous document stays in use and the fetch is retried a few seconds
+later. Signing keys are refetched whenever a token names an unknown key.
 
 The issuer is called through the gateway's egress guard
 ([`egress`](configuration.md#egress-outbound-request-policy)): an issuer on
@@ -524,8 +567,10 @@ The issuer is the user pool's
 domain. The app client needs a client secret, the authorization code
 grant, the `openid` and `email` scopes, and the callback URL above.
 `identity_provider` and `required_upstream_idp` name the identity provider
-as it is called in the user pool. Without federation (users who sign in to
-Cognito directly), drop those three lines.
+as it is called in the user pool. Because verification is off, remove the
+app client's write access to `email` (or set `email_claim` to an attribute
+users cannot write), and create the users SSO-only (`sso_only: true`). Without
+federation (users who sign in to Cognito directly), drop those three lines.
 
 The same through the environment:
 
@@ -561,8 +606,17 @@ own: the gateway's redirects and `Set-Cookie` headers pass through. Then:
 ### Throttling and audit
 
 Both routes are public and sit behind the same per-IP lockout as
-`POST /auth/login`: every refused callback counts as one failure, a
-successful one resets the IP. A successful login is audited as `login_ok`
+`POST /auth/login`, with one difference: only refusals **after the login
+state verified** (codes `token`, `domain`, `unverified`, `idp`, `no_user`,
+`disabled`, `linked`, `link_required`, `role`) count as failures. The
+callback is a `GET` that any web page can make a visitor's browser send
+(an `<img>` pointing at it), so failures it could forge (`state`, and
+`provider`: unknown provider, an `error` parameter, an unreachable issuer)
+are audited but never charged to the IP; otherwise a third-party page
+could lock its visitors out of the whole API. (Like every request, they
+still count toward the general per-IP request cap,
+`auth.rate_limit.requests_per_minute`, which refills within seconds.) A
+successful login resets the IP. A successful login is audited as `login_ok`
 with detail `oidc:<provider>`; a refusal as `login_fail` with detail
 `oidc:<provider>:<code>` (`code` as in the table above), under the
 provider's tenant. A just-in-time user is audited as `user_create` with

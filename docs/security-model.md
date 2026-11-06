@@ -719,9 +719,12 @@ pin is a maintainer task; see
   always come from the gateway user, never from IdP claims, and
   `platform-admin` users are refused unless `allow_platform_admin` is set.
   The issuer is trusted to authenticate the people in
-  `allowed_email_domains`: an issuer that lets anyone claim such an
-  address unverified is guarded only by `require_verified_email` (or
-  `required_upstream_idp`).
+  `allowed_email_domains`. With `require_verified_email: false` the email
+  is not proven, so it links only to users with no usable password
+  (SSO-only), never to a password account; the email claim must still not
+  be user-writable at the IdP (use `email_claim` otherwise). Refused
+  callbacks that a third-party page could forge (bad state, unknown
+  provider) are not charged to the per-IP lockout.
 - **A key is only confined to a profile if you bind it.** Without a
   binding, profile enforcement is driven by the caller-supplied
   `X-Agent-Profile-Name` header, checked against the tenant's profiles —

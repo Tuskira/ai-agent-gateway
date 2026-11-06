@@ -27,12 +27,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   later logins match by subject (new `user_identities` table, migration
   13), and disabled, already-linked and (unless `allow_platform_admin`)
   `platform-admin` users are refused. `provision: jit` creates missing
-  users with `jit_role` and no usable password. Success is the normal
+  users with `jit_role` and no usable password. With
+  `require_verified_email: false`, an email links only to users without a
+  usable password (otherwise `link_required`), and `email_claim` can map
+  the address from a claim users cannot edit. A user's unused temporary
+  password is discarded at its first SSO link. Only refusals after the
+  login state verified count toward the per-IP lockout, so a third-party
+  page cannot lock visitors out by firing forged callbacks. Discovery is
+  refreshed hourly (one fetch shared by concurrent logins; a failed
+  refresh keeps the previous document). Success is the normal
   console session (`gw_session`, CSRF, roles, audit `login_ok` with detail
   `oidc:<provider>`); failure redirects to `/login?sso_error=<code>` and is
   audited and counted by the per-IP lockout. `GET /api/v1/auth/config`
   lists `sso_providers`. See
   [authentication.md](docs/authentication.md#single-sign-on-oidc).
+- **SSO-only users**: `POST /api/v1/users` takes `sso_only: true` (no
+  password at all, none generated), `gateway create-user -sso-only` does
+  the same, and the console's create-user form has a **Single sign-on
+  only** switch when a provider is configured. User objects report
+  `sso_only`.
 - **`pkg/store.UserIdentityStore`** (`Store.UserIdentities()`), covered by
   `pkg/store/storetest`, and `UserSession.AuthMethod` (`password` or
   `oidc`; new column `user_sessions.auth_method`).
@@ -44,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pkg/auth.Principal.IsUser` is true for both `AuthMethodSession` and the
   new `AuthMethodOIDC`. Code that compared `AuthMethod` to `"session"` to
   detect a console user should use `IsUser` (or `/auth/me`'s `kind`).
+- **Promoting a user to `platform-admin` revokes its sessions** (password
+  and SSO), so it signs in again under the new role.
 - **A custom `store.Store` must implement `UserIdentities()`** and persist
   `UserSession.AuthMethod`.
 

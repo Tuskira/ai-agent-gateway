@@ -160,7 +160,8 @@ Every problem below fails startup.
 | `auth_params` | map | `{}` | Extra authorize parameters, e.g. `{identity_provider: EntraID}` for Cognito or `{kc_idp_hint: corp}` for Keycloak. Cannot set the parameters the gateway sets (`response_type`, `client_id`, `redirect_uri`, `scope`, `state`, `nonce`, `code_challenge`, `code_challenge_method`, `response_mode`, `request`, `request_uri`). |
 | `tenant` | string | required | Tenant (slug or id) every login through this provider lands in. Resolved per login. |
 | `allowed_email_domains` | list | required | Email domains that may sign in, exact match (no subdomains, no wildcards, no trailing dot). |
-| `require_verified_email` | bool | `true` | Refuse tokens whose `email_verified` is not true. `false` only together with `required_upstream_idp`. |
+| `email_claim` | string | `email` | ID-token claim holding the user's address (matched against usernames and `allowed_email_domains`). Use a claim users cannot edit at the IdP (e.g. `upn`, `custom:<attr>`) when `email` is user-writable. Letters, digits, `_ : . / -`. |
+| `require_verified_email` | bool | `true` | Refuse tokens whose `email_verified` is not true. `false` only together with `required_upstream_idp`; then an email links only to users with no usable password (SSO-only), and a user with a password is refused (`link_required`). The email claim must not be user-writable at the IdP. |
 | `required_upstream_idp` | string | `""` | When set, every entry of the token's `identities` claim (Cognito's format for federated users) must have this `providerName`. |
 | `provision` | string | `existing` | `existing`: only users an admin created (username = email). `jit`: also create a missing user on first login. |
 | `jit_role` | string | `viewer` | Role of a just-in-time user: `viewer` or `admin` (only with `provision: jit`). |

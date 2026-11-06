@@ -29,9 +29,10 @@ import (
 // cookie, CSRF token), with auth_method "oidc".
 //
 // Every failure redirects to the console login page with
-// ?sso_error=<code> (a fixed oidcauth.Code* value, never free text), is
-// audited as login_fail with detail "oidc:<provider>:<code>", and counts
-// as a failure against the caller's IP.
+// ?sso_error=<code> (a fixed oidcauth.Code* value, never free text) and is
+// audited as login_fail with detail "oidc:<provider>:<code>". Only
+// failures after the login state verified count against the caller's IP
+// (see countsTowardLockout).
 type OIDC struct{ Deps }
 
 // Start handles GET /api/v1/auth/oidc/{provider}/start?return_to=<path>:
@@ -153,11 +154,24 @@ func (h OIDC) redirectError(w http.ResponseWriter, r *http.Request, code string)
 	http.Redirect(w, r, oidcauth.LoginErrorPath(code), http.StatusFound)
 }
 
-// fail logs, audits and counts a failed SSO login, then redirects with its
-// code. The error detail goes to the server log only.
+// countsTowardLockout reports whether a failure code is charged to the
+// caller's IP. The callback is a GET any web page can make a visitor's
+// browser send (an <img> pointing at it), so a failure that happens before
+// the login-state cookie verifies -- no or forged state, an unknown
+// provider, an error parameter or an unreachable issuer (all "state" or
+// "provider") -- proves nothing about the caller and must not let a third
+// party lock the visitor out of the whole API. Failures after the state
+// verified (a real login through the IdP that was then refused) count.
+func countsTowardLockout(code string) bool {
+	return code != oidcauth.CodeState && code != oidcauth.CodeProvider
+}
+
+// fail logs, audits and (see countsTowardLockout) counts a failed SSO
+// login, then redirects with its code. The error detail goes to the
+// server log only.
 func (h OIDC) fail(w http.ResponseWriter, r *http.Request, tenantID, provider, email, targetUserID string, e *oidcauth.Error) {
 	applog.From(r.Context()).Warn("sso login refused", "provider", provider, "code", e.Code, "error", e.Err)
-	if h.LoginThrottle != nil {
+	if h.LoginThrottle != nil && countsTowardLockout(e.Code) {
 		h.LoginThrottle.ReportFailure(h.clientIP(r))
 	}
 	h.audit(r, store.AuthAuditEntry{
@@ -189,7 +203,10 @@ func refuse(code, msg string) *oidcauth.Error {
 //     provisions just in time. A candidate already linked to another
 //     subject at this provider and issuer is refused (linked): a second
 //     account at the issuer claiming the same address must not take the
-//     user over.
+//     user over. When the provider does not require a verified email, the
+//     address may have been typed by the user at the IdP, so it links only
+//     to a user with no usable password (created SSO-only or just in
+//     time); a user with a password is refused (link_required).
 //  3. A disabled user is refused (disabled); a platform-admin is refused
 //     (role) unless the provider allows it.
 //  4. A first login creates the link; later ones record the login on it.
@@ -247,6 +264,10 @@ func (h OIDC) resolveUser(r *http.Request, p *oidcauth.Provider, tenantID string
 		case !errors.Is(err, store.ErrNotFound):
 			return nil, err
 		}
+		if link == nil && !p.Config().VerifiedEmailRequired() && !password.IsUnusable(user.PasswordHash) {
+			return user, refuse(oidcauth.CodeLinkRequired,
+				"unverified email may not link to a user with a usable password; create the user SSO-only")
+		}
 	}
 
 	if user.Disabled {
@@ -275,12 +296,34 @@ func (h OIDC) resolveUser(r *http.Request, p *oidcauth.Provider, tenantID string
 		if err != nil {
 			return nil, err
 		}
+		h.discardTemporaryPassword(r, p, user)
 		return user, nil
 	}
 	if err := ids.RecordLogin(ctx, tenantID, link.ID, ident.Email, now); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
 	return user, nil
+}
+
+// discardTemporaryPassword runs on a user's first SSO link: if the user
+// still holds an admin-issued temporary password it never replaced
+// (must_change_password), that password would otherwise stay valid for
+// password login indefinitely, since SSO sessions skip the forced change.
+// It is replaced by password.Unusable (audited as password_reset). Best
+// effort: a failure is logged and the login goes on.
+func (h OIDC) discardTemporaryPassword(r *http.Request, p *oidcauth.Provider, user *store.User) {
+	if !user.MustChangePassword || password.IsUnusable(user.PasswordHash) {
+		return
+	}
+	if err := h.Store.Users().SetPassword(r.Context(), user.TenantID, user.ID, password.Unusable, false); err != nil {
+		applog.From(r.Context()).Error("sso callback: discard temporary password failed", "user_id", user.ID, "error", err)
+		return
+	}
+	user.PasswordHash, user.MustChangePassword = password.Unusable, false
+	h.audit(r, store.AuthAuditEntry{
+		TenantID: user.TenantID, ActorKind: "user", ActorID: user.ID, Action: "password_reset", TargetUserID: user.ID,
+		Detail: "oidc:" + p.Name + ": unused temporary password discarded",
+	})
 }
 
 // provisionUser creates the user for a just-in-time login: username = the

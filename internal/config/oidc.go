@@ -66,9 +66,17 @@ type OIDCProvider struct {
 	// AllowedEmailDomains lists the email domains that may sign in, exact
 	// match (no subdomains). Required.
 	AllowedEmailDomains []string `yaml:"allowed_email_domains"`
+	// EmailClaim is the ID-token claim that holds the user's address,
+	// matched against usernames and allowed_email_domains. Default
+	// "email". Point it at a claim users cannot edit at the IdP (for
+	// example upn, or a custom attribute) when email is user-writable.
+	EmailClaim string `yaml:"email_claim"`
 	// RequireVerifiedEmail refuses an ID token whose email_verified is not
 	// true. Default true. It may be false only together with
-	// RequiredUpstreamIdP, which then vouches for the address.
+	// RequiredUpstreamIdP, which then vouches for the address. While it is
+	// false, a first login links by email only to users without a usable
+	// password (created SSO-only, or just in time); a user with a password
+	// is refused (link_required).
 	RequireVerifiedEmail *bool `yaml:"require_verified_email"`
 	// RequiredUpstreamIdP, when set, refuses an ID token that does not
 	// show the user came through that upstream identity provider: every
@@ -102,6 +110,14 @@ func (p OIDCProvider) VerifiedEmailRequired() bool {
 	return p.RequireVerifiedEmail == nil || *p.RequireVerifiedEmail
 }
 
+// EmailClaimName is the effective email_claim.
+func (p OIDCProvider) EmailClaimName() string {
+	if p.EmailClaim == "" {
+		return "email"
+	}
+	return p.EmailClaim
+}
+
 // AllRedirectURLs is RedirectURL followed by RedirectURLs.
 func (p OIDCProvider) AllRedirectURLs() []string {
 	out := make([]string, 0, 1+len(p.RedirectURLs))
@@ -116,6 +132,7 @@ func OIDCCallbackPath(name string) string { return "/api/v1/auth/oidc/" + name +
 
 var (
 	reOIDCName   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+	reOIDCClaim  = regexp.MustCompile(`^[A-Za-z0-9_:./-]{1,64}$`)
 	reOIDCDomain = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 )
 
@@ -205,6 +222,9 @@ func (o OIDC) validate(globalSessionMax time.Duration) error {
 			}
 		}
 
+		if p.EmailClaim != "" && !reOIDCClaim.MatchString(p.EmailClaim) {
+			return fmt.Errorf("%s: email_claim %q must match %s", at, p.EmailClaim, reOIDCClaim)
+		}
 		if strings.TrimSpace(p.Tenant) == "" {
 			return fmt.Errorf("%s: tenant is required", at)
 		}

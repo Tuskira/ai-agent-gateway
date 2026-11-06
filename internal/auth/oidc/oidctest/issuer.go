@@ -47,6 +47,12 @@ type Issuer struct {
 	Alg string
 	// JWKSHits counts JWKS fetches.
 	JWKSHits int
+	// DiscoveryHits counts discovery fetches; FailDiscovery makes them
+	// answer 500.
+	DiscoveryHits int
+	FailDiscovery bool
+	// DiscoveryDelay holds each discovery answer back (to overlap callers).
+	DiscoveryDelay time.Duration
 }
 
 type authRequest struct {
@@ -86,6 +92,15 @@ func (i *Issuer) RotateKey() {
 }
 
 func (i *Issuer) discovery(w http.ResponseWriter, _ *http.Request) {
+	i.mu.Lock()
+	i.DiscoveryHits++
+	fail, delay := i.FailDiscovery, i.DiscoveryDelay
+	i.mu.Unlock()
+	time.Sleep(delay)
+	if fail {
+		http.Error(w, "unavailable", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"issuer":                                i.URL,
@@ -237,4 +252,18 @@ func sign(claims map[string]any, alg string, key *rsa.PrivateKey, kid, secret st
 		return enc.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`)) + "." + enc.EncodeToString(payload) + ".", nil
 	}
 	return "", fmt.Errorf("unsupported alg %q", alg)
+}
+
+// SetDiscovery changes the discovery failure switch and delay.
+func (i *Issuer) SetDiscovery(fail bool, delay time.Duration) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.FailDiscovery, i.DiscoveryDelay = fail, delay
+}
+
+// Discoveries returns how many discovery fetches the issuer served.
+func (i *Issuer) Discoveries() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.DiscoveryHits
 }

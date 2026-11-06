@@ -107,8 +107,10 @@ func (k *keycloak) admin(method, path string, body any) {
 }
 
 // setup creates a realm with a confidential, PKCE-enforcing client whose
-// only redirect URI is redirectURL, and returns the issuer URL.
-func (k *keycloak) setup(redirectURL, clientSecret string) string {
+// only redirect URIs are redirectURLs, and returns the issuer URL. The
+// client's ID tokens carry a hard-coded Cognito-style identities claim
+// ([{"providerName":"corp"}]) so required_upstream_idp can be exercised.
+func (k *keycloak) setup(clientSecret string, redirectURLs ...string) string {
 	k.t.Helper()
 	k.realm = "gw-e2e-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
 	k.admin(http.MethodPost, "", map[string]any{"realm": k.realm, "enabled": true, "sslRequired": "none"})
@@ -117,8 +119,15 @@ func (k *keycloak) setup(redirectURL, clientSecret string) string {
 		"clientId": "gateway", "enabled": true, "protocol": "openid-connect",
 		"publicClient": false, "clientAuthenticatorType": "client-secret", "secret": clientSecret,
 		"standardFlowEnabled": true, "directAccessGrantsEnabled": false,
-		"redirectUris": []string{redirectURL},
+		"redirectUris": redirectURLs,
 		"attributes":   map[string]string{"pkce.code.challenge.method": "S256"},
+		"protocolMappers": []map[string]any{{
+			"name": "identities", "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper",
+			"config": map[string]string{
+				"claim.name": "identities", "claim.value": `[{"providerName":"corp"}]`, "jsonType.label": "JSON",
+				"id.token.claim": "true", "access.token.claim": "false", "userinfo.token.claim": "false",
+			},
+		}},
 	})
 	return k.base + "/realms/" + k.realm
 }
@@ -174,10 +183,14 @@ var reLoginForm = regexp.MustCompile(`<form[^>]+id="kc-form-login"[^>]+action="(
 // login form as username, and returns the redirect Keycloak sends the
 // browser to (the gateway callback URL), without following it.
 func (b *browser) toIdPCallback(gw, username string) *url.URL {
+	return b.toIdPCallbackVia(gw, "keycloak", username)
+}
+
+func (b *browser) toIdPCallbackVia(gw, provider, username string) *url.URL {
 	b.t.Helper()
 	// The start route answers 302 to Keycloak, which the client follows
 	// (it leaves the gateway host) to Keycloak's HTML login form.
-	resp, body := b.get(gw + "/api/v1/auth/oidc/keycloak/start?return_to=%2Fconnectors")
+	resp, body := b.get(gw + "/api/v1/auth/oidc/" + provider + "/start?return_to=%2Fconnectors")
 	m := reLoginForm.FindStringSubmatch(body)
 	if resp.StatusCode != http.StatusOK || m == nil || resp.Request.URL.Host == b.gwHost {
 		b.t.Fatalf("start -> keycloak login page: HTTP %d at %s, no kc-form-login form", resp.StatusCode, resp.Request.URL)
@@ -208,10 +221,14 @@ func TestOIDCKeycloakEndToEnd(t *testing.T) {
 
 	const secret = "e2e-client-secret-0123456789"
 	gw := "http://" + a.api
-	issuer := kc.setup(gw+"/api/v1/auth/oidc/keycloak/callback", secret)
+	issuer := kc.setup(secret, gw+"/api/v1/auth/oidc/keycloak/callback", gw+"/api/v1/auth/oidc/kc-unverified/callback")
 	for _, u := range [][2]string{
 		{"alice", "alice@example.com"}, {"dan", "dan@example.com"}, {"root", "root@example.com"},
 		{"nobody", "nobody@example.com"}, {"eve", "eve@evil.example.net"},
+		// For the kc-unverified provider, which reads the address from
+		// preferred_username (the Keycloak username) instead of email.
+		{"boss@example.com", "boss.mail@elsewhere.example.net"},
+		{"sso.only@example.com", "sso.mail@elsewhere.example.net"},
 	} {
 		kc.user(u[0], u[1])
 	}
@@ -220,6 +237,12 @@ func TestOIDCKeycloakEndToEnd(t *testing.T) {
 		"name": "keycloak", "display_name": "Keycloak", "issuer": issuer, "client_id": "gateway",
 		"client_secret_env": "GATEWAY_E2E_KC_SECRET", "redirect_url": gw + "/api/v1/auth/oidc/keycloak/callback",
 		"tenant": "sso-e2e", "allowed_email_domains": []string{"example.com"},
+	}, {
+		// require_verified_email off: an address links only to SSO-only users.
+		"name": "kc-unverified", "issuer": issuer, "client_id": "gateway",
+		"client_secret_env": "GATEWAY_E2E_KC_SECRET", "redirect_url": gw + "/api/v1/auth/oidc/kc-unverified/callback",
+		"tenant": "sso-e2e", "allowed_email_domains": []string{"example.com"},
+		"require_verified_email": false, "required_upstream_idp": "corp", "email_claim": "preferred_username",
 	}})
 	t.Setenv("GATEWAY_AUTH_OIDC_PROVIDERS", string(providers))
 	t.Setenv("GATEWAY_E2E_KC_SECRET", secret)
@@ -258,6 +281,10 @@ func TestOIDCKeycloakEndToEnd(t *testing.T) {
 	mk("dan@example.com", store.UserRoleViewer, true)
 	mk("root@example.com", store.UserRolePlatformAdmin, false)
 	mk("eve@evil.example.net", store.UserRoleViewer, false)
+	boss := mk("boss@example.com", store.UserRoleAdmin, false)
+	if err := st.Users().SetPassword(ctx, tenant.ID, boss.ID, hash, false); err != nil { // a real password, not a temporary one
+		t.Fatal(err)
+	}
 
 	gwHost := a.api
 
@@ -308,7 +335,7 @@ func TestOIDCKeycloakEndToEnd(t *testing.T) {
 
 		write := func(csrf string) (int, string) {
 			req, _ := http.NewRequest(http.MethodPost, gw+"/api/v1/users",
-				strings.NewReader(`{"username":"made-by-sso@example.com","role":"viewer"}`))
+				strings.NewReader(`{"username":"sso.only@example.com","role":"viewer","sso_only":true}`))
 			req.Header.Set("Content-Type", "application/json")
 			if csrf != "" {
 				req.Header.Set("X-CSRF-Token", csrf)
@@ -319,8 +346,8 @@ func TestOIDCKeycloakEndToEnd(t *testing.T) {
 		if code, body := write(""); code != http.StatusForbidden || !strings.Contains(body, "csrf_error") {
 			t.Errorf("write without CSRF token: %d %s, want 403 csrf_error", code, body)
 		}
-		if code, body := write(me.CSRF); code != http.StatusCreated {
-			t.Errorf("write with CSRF token: %d %s, want 201", code, body)
+		if code, body := write(me.CSRF); code != http.StatusCreated || !strings.Contains(body, `"sso_only":true`) || strings.Contains(body, "temporary_password") {
+			t.Errorf("write with CSRF token (create an SSO-only user): %d %s, want 201 sso_only", code, body)
 		}
 
 		var method string
@@ -381,4 +408,51 @@ func TestOIDCKeycloakEndToEnd(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("unverified email does not link to a password user", func(t *testing.T) {
+		b := newBrowser(t, gwHost)
+		resp, _ := b.get(b.toIdPCallbackVia(gw, "kc-unverified", "boss@example.com").String())
+		if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/login?sso_error=link_required" {
+			t.Fatalf("callback: %d Location %q, want sso_error=link_required", resp.StatusCode, resp.Header.Get("Location"))
+		}
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM user_identities WHERE user_id = $1`, boss.ID).Scan(&n); err != nil || n != 0 {
+			t.Errorf("identity links of the password admin = %d, %v; want 0", n, err)
+		}
+	})
+
+	t.Run("unverified email links an SSO-only user, by email_claim", func(t *testing.T) {
+		b := newBrowser(t, gwHost)
+		resp, body := b.get(b.toIdPCallbackVia(gw, "kc-unverified", "sso.only@example.com").String())
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("callback: %d Location %q %s", resp.StatusCode, resp.Header.Get("Location"), body)
+		}
+		resp, body = b.get(gw + "/api/v1/auth/me")
+		if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"username":"sso.only@example.com"`) || !strings.Contains(body, `"auth_method":"oidc"`) {
+			t.Errorf("/auth/me: %d %s", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("forged callbacks do not lock the browser out", func(t *testing.T) {
+		b := newBrowser(t, gwHost)
+		for i := 0; i < 25; i++ {
+			// What an <img> on another site can make the browser send: no
+			// login-state cookie, a made-up state. Paced under the general
+			// per-IP request cap (auth.rate_limit.requests_per_minute, a
+			// token bucket every route shares), so a 429 here could only
+			// come from the failure lockout under test.
+			time.Sleep(120 * time.Millisecond)
+			resp, _ := b.get(gw + "/api/v1/auth/oidc/keycloak/callback?code=x&state=forged")
+			if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/login?sso_error=state" {
+				t.Fatalf("forged callback %d: %d %q", i, resp.StatusCode, resp.Header.Get("Location"))
+			}
+		}
+		if resp, _ := b.get(gw + "/api/v1/auth/config"); resp.StatusCode != http.StatusOK {
+			t.Fatalf("/auth/config after 25 forged callbacks: %d, want 200 (not locked out)", resp.StatusCode)
+		}
+		resp, _ := b.login(gw, "alice")
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("real login after forged callbacks: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+		}
+	})
 }

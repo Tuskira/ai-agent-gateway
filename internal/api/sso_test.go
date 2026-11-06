@@ -66,9 +66,12 @@ func newSSOEnv(t *testing.T, mutate ...func(*config.OIDCProvider)) *ssoEnv {
 	limiter := internalauth.NewRateLimiter(internalauth.RateLimiterConfig{Enabled: true, MaxFailures: 10, Window: time.Minute, Lockout: 5 * time.Minute})
 	t.Cleanup(limiter.Close)
 	sess := session.New(st.Users(), st.UserSessions(), session.Options{})
+	keys := &scriptedAuthenticator{principals: map[string]*pkgauth.Principal{
+		"platform-key": {Subject: "key-plat", KeyID: "key-plat", TenantID: e.tenant.ID, Roles: pkgauth.RolesForKey(pkgauth.RolePlatformAdmin), AuthMethod: "apikey"},
+	}}
 	e.h = NewRouter(Deps{
 		ServiceVersion: "test",
-		Authenticator:  internalauth.RateLimitedAuthenticator(internalauth.Chain(sess), limiter),
+		Authenticator:  internalauth.RateLimitedAuthenticator(internalauth.Chain(keys, sess), limiter),
 		Authorizer:     pkgauth.NewRoleAuthorizer(),
 		Store:          st,
 		RateLimiter:    limiter,
@@ -420,5 +423,177 @@ func TestSSOJustInTimeProvisioning(t *testing.T) {
 	fails := e.audit("login_fail")
 	if len(fails) == 0 || fails[0].Detail != "no_password" {
 		t.Errorf("login_fail audit = %+v, want no_password", fails)
+	}
+}
+
+// apiKeyCall makes a platform-admin API-key request (no cookie, no CSRF).
+func (e *ssoEnv) apiKeyCall(method, path, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, ssoConsole+path, strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer platform-key")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	e.h.ServeHTTP(w, r)
+	return w
+}
+
+func newUnverifiedSSOEnv(t *testing.T, mutate ...func(*config.OIDCProvider)) *ssoEnv {
+	t.Helper()
+	f := false
+	e := newSSOEnv(t, append([]func(*config.OIDCProvider){func(p *config.OIDCProvider) {
+		p.RequireVerifiedEmail = &f
+		p.RequiredUpstreamIdP = "EntraID"
+	}}, mutate...)...)
+	e.iss.Claims = func(c map[string]any) {
+		c["email_verified"] = false
+		c["identities"] = []map[string]any{{"providerName": "EntraID"}}
+	}
+	return e
+}
+
+// Finding 1: with verification off, the (possibly self-edited) email must
+// not link to a user who has a password.
+func TestSSOUnverifiedEmailDoesNotLinkToPasswordUsers(t *testing.T) {
+	e := newUnverifiedSSOEnv(t)
+	admin := e.user("boss@example.com", store.UserRoleAdmin, func(u *store.User) { u.MustChangePassword = false })
+	w := e.ssoLogin("attacker-sub", "boss@example.com", "/")
+	if w.Header().Get("Location") != "/login?sso_error=link_required" {
+		t.Fatalf("callback = %d %q, want sso_error=link_required", w.Code, w.Header().Get("Location"))
+	}
+	if _, err := e.st.UserIdentities().GetByUser(context.Background(), e.tenant.ID, "corp", e.iss.URL, admin.ID); err == nil {
+		t.Error("the password user was linked")
+	}
+	if fails := e.audit("login_fail"); len(fails) == 0 || fails[0].Detail != "oidc:corp:link_required" {
+		t.Errorf("login_fail audit = %+v", fails)
+	}
+	// Even a user whose temporary password was never used has a usable
+	// password and is refused.
+	e.user("fresh@example.com", store.UserRoleViewer)
+	if w := e.ssoLogin("s2", "fresh@example.com", "/"); w.Header().Get("Location") != "/login?sso_error=link_required" {
+		t.Errorf("must-change user: %q, want link_required", w.Header().Get("Location"))
+	}
+}
+
+func TestSSOUnverifiedEmailLinksSSOOnlyUsers(t *testing.T) {
+	e := newUnverifiedSSOEnv(t)
+	// Created through the API with sso_only.
+	w := e.apiKeyCall(http.MethodPost, "/api/v1/users", `{"username":"sso.only@example.com","role":"viewer","sso_only":true}`)
+	if w.Code != http.StatusCreated || strings.Contains(w.Body.String(), "temporary_password") || !strings.Contains(w.Body.String(), `"sso_only":true`) {
+		t.Fatalf("POST /users sso_only = %d %s", w.Code, w.Body)
+	}
+	u, _ := e.st.Users().GetByUsername(context.Background(), e.tenant.ID, "sso.only@example.com")
+	if u == nil || !password.IsUnusable(u.PasswordHash) || u.MustChangePassword {
+		t.Fatalf("sso_only user = %+v", u)
+	}
+	if w := e.ssoLogin("sub-sso", "sso.only@example.com", "/"); w.Code != http.StatusOK {
+		t.Fatalf("SSO-only login = %d %q", w.Code, w.Header().Get("Location"))
+	}
+	// Once linked, the link (by subject) keeps working.
+	if w := e.ssoLogin("sub-sso", "sso.only@example.com", "/"); w.Code != http.StatusOK {
+		t.Errorf("second login = %d", w.Code)
+	}
+}
+
+func TestSSOUnverifiedJITStillWorks(t *testing.T) {
+	e := newUnverifiedSSOEnv(t, func(p *config.OIDCProvider) { p.Provision = config.OIDCProvisionJIT })
+	if w := e.ssoLogin("sub-new", "new.person@example.com", "/"); w.Code != http.StatusOK {
+		t.Fatalf("jit login = %d %q", w.Code, w.Header().Get("Location"))
+	}
+}
+
+func TestCreateUserSSOOnlyValidation(t *testing.T) {
+	e := newSSOEnv(t)
+	w := e.apiKeyCall(http.MethodPost, "/api/v1/users", `{"username":"x@example.com","role":"viewer","sso_only":true,"password":"a-long-password-123"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("sso_only with password = %d, want 400", w.Code)
+	}
+	w = e.apiKeyCall(http.MethodPost, "/api/v1/users", `{"username":"y@example.com","role":"viewer"}`)
+	if w.Code != http.StatusCreated || !strings.Contains(w.Body.String(), `"sso_only":false`) || !strings.Contains(w.Body.String(), "temporary_password") {
+		t.Errorf("ordinary create = %d %s", w.Code, w.Body)
+	}
+}
+
+// Finding 2: failures before the login state verifies (anyone can make a
+// visitor's browser send them) never lock the visitor's IP out.
+func TestSSOUnverifiedStateFailuresDoNotLockOut(t *testing.T) {
+	e := newSSOEnv(t)
+	for i := 0; i < 25; i++ {
+		e.get("/api/v1/auth/oidc/corp/callback?code=x&state=forged")
+		e.get("/api/v1/auth/oidc/corp/callback?error=access_denied&state=x")
+		e.get("/api/v1/auth/oidc/nope/callback?code=x&state=y")
+	}
+	if w := e.get("/api/v1/auth/config"); w.Code != http.StatusOK {
+		t.Fatalf("/auth/config after 75 forged callbacks = %d, want 200 (not locked out)", w.Code)
+	}
+	e.user("alice@example.com", "viewer")
+	if w := e.ssoLogin("s", "alice@example.com", "/"); w.Code != http.StatusOK {
+		t.Errorf("real login after forged callbacks = %d", w.Code)
+	}
+	if fails := e.audit("login_fail"); len(fails) == 0 {
+		t.Error("forged callbacks are no longer audited")
+	}
+}
+
+func TestSSOPostStateFailuresStillCount(t *testing.T) {
+	e := newSSOEnv(t)
+	for i := 0; i < 10; i++ {
+		if w := e.ssoLogin("s", "nobody@example.com", "/"); w.Header().Get("Location") != "/login?sso_error=no_user" {
+			t.Fatalf("login %d: %q", i, w.Header().Get("Location"))
+		}
+	}
+	if w := e.get("/api/v1/auth/config"); w.Code != http.StatusTooManyRequests {
+		t.Errorf("/auth/config after 10 refused real logins = %d, want 429", w.Code)
+	}
+}
+
+// Finding 3: an unused temporary password does not outlive the first SSO
+// link.
+func TestSSOFirstLinkDiscardsTemporaryPassword(t *testing.T) {
+	e := newSSOEnv(t)
+	temp := e.user("temp@example.com", store.UserRoleViewer) // MustChangePassword: true
+	keep := e.user("keeper@example.com", store.UserRoleViewer, func(u *store.User) { u.MustChangePassword = false })
+	for _, u := range []*store.User{temp, keep} {
+		if w := e.ssoLogin("sub-"+u.Username, u.Username, "/"); w.Code != http.StatusOK {
+			t.Fatalf("%s: login = %d", u.Username, w.Code)
+		}
+	}
+	got, _ := e.st.Users().Get(context.Background(), e.tenant.ID, temp.ID)
+	if !password.IsUnusable(got.PasswordHash) || got.MustChangePassword {
+		t.Errorf("temporary password kept: hash unusable=%v must_change=%v", password.IsUnusable(got.PasswordHash), got.MustChangePassword)
+	}
+	resets := e.audit("password_reset")
+	if len(resets) != 1 || resets[0].TargetUserID != temp.ID || !strings.Contains(resets[0].Detail, "temporary password discarded") {
+		t.Errorf("password_reset audit = %+v", resets)
+	}
+	if got, _ := e.st.Users().Get(context.Background(), e.tenant.ID, keep.ID); got.PasswordHash != keep.PasswordHash {
+		t.Error("a user's own (non-temporary) password was replaced")
+	}
+	// The old temporary password no longer signs in.
+	r := httptest.NewRequest(http.MethodPost, ssoConsole+"/api/v1/auth/login",
+		strings.NewReader(`{"tenant":"acme","username":"temp@example.com","password":"`+cpwAdmin+`"}`))
+	r.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("password login with the discarded temporary password = %d, want 401", rec.Code)
+	}
+}
+
+// Finding 4: promotion to platform-admin ends existing (SSO) sessions, so
+// the provider's platform-admin check applies again at the next login.
+func TestSSOPromotionToPlatformAdminRevokesSessions(t *testing.T) {
+	e := newSSOEnv(t)
+	u := e.user("alice@example.com", store.UserRoleAdmin)
+	gw := cookieNamed(e.ssoLogin("s", "alice@example.com", "/"), session.CookieName)
+	if e.get("/api/v1/auth/me", gw).Code != http.StatusOK {
+		t.Fatal("session not usable")
+	}
+	if w := e.apiKeyCall(http.MethodPatch, "/api/v1/users/"+u.ID, `{"role":"platform-admin"}`); w.Code != http.StatusOK {
+		t.Fatalf("promote = %d %s", w.Code, w.Body)
+	}
+	if w := e.get("/api/v1/auth/me", gw); w.Code != http.StatusUnauthorized {
+		t.Errorf("/auth/me after promotion = %d, want 401", w.Code)
+	}
+	if w := e.ssoLogin("s", "alice@example.com", "/"); w.Header().Get("Location") != "/login?sso_error=role" {
+		t.Errorf("SSO login after promotion: %q, want sso_error=role", w.Header().Get("Location"))
 	}
 }

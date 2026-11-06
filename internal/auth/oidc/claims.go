@@ -26,9 +26,9 @@ type Identity struct {
 // maxIssuedAtSkew is how far in the future an ID token's iat may be.
 const maxIssuedAtSkew = 5 * time.Minute
 
-// idClaims are the claims read beyond what go-oidc verifies.
+// idClaims are the claims read beyond what go-oidc verifies. The email
+// itself is read from the provider's email_claim (see emailClaim).
 type idClaims struct {
-	Email         string          `json:"email"`
 	EmailVerified json.RawMessage `json:"email_verified"`
 	Name          string          `json:"name"`
 	TokenUse      string          `json:"token_use"`
@@ -66,7 +66,11 @@ func (s *Service) checkToken(p *Provider, t *gooidc.IDToken, wantNonce string) (
 			return nil, &Error{Code: CodeIdP, Err: err}
 		}
 	}
-	email, err := NormalizeEmail(c.Email, p.domains)
+	raw, err := emailClaim(t, p.cfg.EmailClaimName())
+	if err != nil {
+		return nil, &Error{Code: CodeDomain, Err: err}
+	}
+	email, err := NormalizeEmail(raw, p.domains)
 	if err != nil {
 		return nil, &Error{Code: CodeDomain, Err: err}
 	}
@@ -78,6 +82,24 @@ func (s *Service) checkToken(p *Provider, t *gooidc.IDToken, wantNonce string) (
 		Provider: p.Name, Issuer: p.Issuer, Subject: t.Subject,
 		Email: email, EmailVerified: verified, Name: c.Name,
 	}, nil
+}
+
+// emailClaim reads the string claim name from the token; absent is "",
+// any non-string value is an error.
+func emailClaim(t *gooidc.IDToken, name string) (string, error) {
+	var all map[string]json.RawMessage
+	if err := t.Claims(&all); err != nil {
+		return "", fmt.Errorf("decode claims: %w", err)
+	}
+	raw, ok := all[name]
+	if !ok || string(raw) == "null" {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", fmt.Errorf("claim %q is not a string", name)
+	}
+	return s, nil
 }
 
 // emailVerified reads email_verified: JSON true, or the string "true"

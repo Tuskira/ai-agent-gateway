@@ -33,6 +33,8 @@ func TestOIDCValidate(t *testing.T) {
 		}, ""},
 		{"unverified with upstream idp", func(p *OIDCProvider) { p.RequireVerifiedEmail = &f; p.RequiredUpstreamIdP = "EntraID" }, ""},
 		{"jit admin", func(p *OIDCProvider) { p.Provision = "jit"; p.JITRole = "admin" }, ""},
+		{"email claim", func(p *OIDCProvider) { p.EmailClaim = "custom:upn" }, ""},
+		{"bad email claim", func(p *OIDCProvider) { p.EmailClaim = "e mail" }, "email_claim"},
 		{"bad name", func(p *OIDCProvider) { p.Name = "Corp SSO" }, "name"},
 		{"plain http issuer", func(p *OIDCProvider) { p.Issuer = "http://idp.example.com" }, "https"},
 		{"issuer with query", func(p *OIDCProvider) { p.Issuer = "https://idp.example.com/?x=1" }, "absolute URL"},
@@ -92,6 +94,9 @@ func TestOIDCVerifiedEmailDefault(t *testing.T) {
 	p := validOIDCProvider()
 	if !p.VerifiedEmailRequired() {
 		t.Error("require_verified_email must default to true")
+	}
+	if p.EmailClaimName() != "email" {
+		t.Errorf("email_claim default = %q, want email", p.EmailClaimName())
 	}
 }
 

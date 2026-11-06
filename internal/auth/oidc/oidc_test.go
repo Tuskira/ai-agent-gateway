@@ -511,3 +511,91 @@ func TestDiscoveryFailureRetries(t *testing.T) {
 	_, _, err = svc.Begin(p, httptest.NewRequest(http.MethodGet, "https://console.example.com/", nil), "/")
 	wantCode(t, err, oidc.CodeProvider)
 }
+
+func TestEmailClaim(t *testing.T) {
+	r := newRig(t, func(c *config.OIDCProvider) { c.EmailClaim = "upn" })
+	r.iss.Claims = func(c map[string]any) {
+		c["email"] = "self-edited@example.com" // user-writable, must be ignored
+		c["upn"] = "Real.User@Example.com"
+	}
+	res, err := r.login(t, "sub-1", "ignored@example.com")
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	if res.Identity.Email != "real.user@example.com" {
+		t.Errorf("Email = %q, want the upn claim lowercased", res.Identity.Email)
+	}
+
+	for name, edit := range map[string]func(c map[string]any){
+		"claim missing":    func(c map[string]any) { delete(c, "upn") },
+		"claim not string": func(c map[string]any) { c["upn"] = []string{"a@example.com"} },
+		"claim off-domain": func(c map[string]any) { c["upn"] = "a@evil.example.net" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r.iss.Claims = edit
+			_, err := r.login(t, "sub-1", "a@example.com")
+			wantCode(t, err, oidc.CodeDomain)
+		})
+	}
+}
+
+func TestDiscoveryRefreshAndSharing(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.login(t, "s", "a@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.iss.Discoveries(); n != 1 {
+		t.Fatalf("discoveries after first login = %d, want 1", n)
+	}
+	if _, err := r.login(t, "s", "a@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.iss.Discoveries(); n != 1 {
+		t.Errorf("discoveries within the TTL = %d, want still 1 (cached)", n)
+	}
+
+	// Past the TTL the document is fetched again.
+	r.now = r.now.Add(61 * time.Minute)
+	if _, err := r.login(t, "s", "a@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.iss.Discoveries(); n != 2 {
+		t.Errorf("discoveries after the TTL = %d, want 2", n)
+	}
+
+	// A failed refresh keeps the previous document in use, and is not
+	// retried on every call.
+	r.iss.SetDiscovery(true, 0)
+	r.now = r.now.Add(61 * time.Minute)
+	if _, err := r.login(t, "s", "a@example.com"); err != nil {
+		t.Errorf("login with a failing refresh: %v, want the cached document used", err)
+	}
+	before := r.iss.Discoveries()
+	if _, err := r.login(t, "s", "a@example.com"); err != nil {
+		t.Errorf("second login with a failing refresh: %v", err)
+	}
+	if r.iss.Discoveries() != before {
+		t.Error("a failed refresh was retried at once")
+	}
+}
+
+func TestDiscoveryIsFetchedOnceForConcurrentLogins(t *testing.T) {
+	r := newRig(t)
+	r.iss.SetDiscovery(false, 200*time.Millisecond)
+	errs := make(chan error, 8)
+	for range 8 {
+		go func() {
+			req := httptest.NewRequest(http.MethodGet, "https://console.example.com/", nil)
+			_, _, err := r.svc.Begin(r.p, req, "/")
+			errs <- err
+		}()
+	}
+	for range 8 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := r.iss.Discoveries(); n != 1 {
+		t.Errorf("discoveries for 8 concurrent first logins = %d, want 1", n)
+	}
+}

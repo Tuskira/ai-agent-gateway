@@ -28,6 +28,7 @@ import (
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/netguard"
@@ -45,8 +46,11 @@ const (
 	CodeNoUser     = "no_user"    // no matching console user (provision: existing)
 	CodeDisabled   = "disabled"   // the user is disabled
 	CodeLinked     = "linked"     // the user is already linked to another identity
-	CodeRole       = "role"       // a platform-admin, and the provider does not allow it
-	CodeProvider   = "provider"   // unknown provider, IdP unreachable or returned an error, misconfiguration
+	// CodeLinkRequired: require_verified_email is off and the matching user
+	// has a usable password, so the unverified email may not link to it.
+	CodeLinkRequired = "link_required"
+	CodeRole         = "role"     // a platform-admin, and the provider does not allow it
+	CodeProvider     = "provider" // unknown provider, IdP unreachable or returned an error, misconfiguration
 )
 
 // Error is a failed login: Code is what the user and the audit trail see,
@@ -77,6 +81,10 @@ const (
 	// discoveryRetry is the least time between two failed discovery
 	// attempts, so a down IdP is not hammered by every click.
 	discoveryRetry = 5 * time.Second
+	// discoveryTTL is how long a fetched discovery document is used before
+	// it is fetched again (endpoints or key URLs the issuer changed are
+	// picked up). A failed refresh keeps the previous one in use.
+	discoveryTTL = time.Hour
 )
 
 // signingAlgs are the ID-token algorithms accepted: asymmetric only, so
@@ -105,10 +113,14 @@ type Provider struct {
 	redirects    []*url.URL
 	client       *http.Client
 
+	// mu guards the discovery cache only; it is never held across a
+	// network call. sf collapses concurrent fetches into one.
 	mu         sync.Mutex
 	discovered *gooidc.Provider
 	verifier   *gooidc.IDTokenVerifier
+	fetchedAt  time.Time
 	lastFail   time.Time
+	sf         singleflight.Group
 }
 
 // Config returns the provider's configuration (no secret: the client
@@ -247,29 +259,53 @@ func (s *Service) Provider(name string) (*Provider, bool) {
 // StartPath is the gateway path that starts a login with provider name.
 func StartPath(name string) string { return "/api/v1/auth/oidc/" + name + "/start" }
 
-// discover returns the provider's discovery result and ID-token verifier,
-// fetching them on first use. A failure is not cached beyond
-// discoveryRetry, so an IdP that was down at the first click works later.
+// discover returns the provider's discovery result and ID-token verifier.
+// The document is fetched on first use and again once it is older than
+// discoveryTTL; concurrent callers share one fetch (singleflight) and the
+// cache lock is never held across it. A failed fetch is retried no sooner
+// than discoveryRetry later; meanwhile a previously fetched document, if
+// any, stays in use.
 func (p *Provider) discover(now time.Time) (*gooidc.Provider, *gooidc.IDTokenVerifier, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.discovered != nil {
-		return p.discovered, p.verifier, nil
+	d, v, fetched, failed := p.discovered, p.verifier, p.fetchedAt, p.lastFail
+	p.mu.Unlock()
+	if d != nil && now.Sub(fetched) < discoveryTTL {
+		return d, v, nil
 	}
-	if !p.lastFail.IsZero() && now.Sub(p.lastFail) < discoveryRetry {
+	if !failed.IsZero() && now.Sub(failed) < discoveryRetry {
+		if d != nil {
+			return d, v, nil
+		}
 		return nil, nil, errors.New("issuer discovery failed recently; retrying shortly")
 	}
-	// The context outlives this request on purpose: go-oidc keeps it for
-	// the JWKS fetches it makes later (key rotation, unknown kid).
-	ctx := gooidc.ClientContext(context.Background(), p.client)
-	d, err := gooidc.NewProvider(ctx, p.Issuer)
+
+	type result struct {
+		d *gooidc.Provider
+		v *gooidc.IDTokenVerifier
+	}
+	got, err, _ := p.sf.Do("discover", func() (any, error) {
+		// The context outlives this request on purpose: go-oidc keeps it
+		// for the JWKS fetches it makes later (key rotation, unknown kid).
+		ctx := gooidc.ClientContext(context.Background(), p.client)
+		nd, err := gooidc.NewProvider(ctx, p.Issuer)
+		if err != nil {
+			return nil, err
+		}
+		nv := nd.Verifier(&gooidc.Config{ClientID: p.cfg.ClientID, SupportedSigningAlgs: signingAlgs})
+		return result{nd, nv}, nil
+	})
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if err != nil {
 		p.lastFail = now
+		if p.discovered != nil {
+			return p.discovered, p.verifier, nil
+		}
 		return nil, nil, err
 	}
-	p.discovered = d
-	p.verifier = d.Verifier(&gooidc.Config{ClientID: p.cfg.ClientID, SupportedSigningAlgs: signingAlgs})
-	return p.discovered, p.verifier, nil
+	r := got.(result)
+	p.discovered, p.verifier, p.fetchedAt, p.lastFail = r.d, r.v, now, time.Time{}
+	return r.d, r.v, nil
 }
 
 func (p *Provider) oauth2Config(d *gooidc.Provider, redirectURL string) *oauth2.Config {

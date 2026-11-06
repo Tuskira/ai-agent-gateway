@@ -86,6 +86,10 @@ type userView struct {
 	Role               string `json:"role"`
 	MustChangePassword bool   `json:"must_change_password"`
 	Disabled           bool   `json:"disabled"`
+	// SSOOnly reports a user with no usable password (created sso_only or
+	// by single sign-on just in time, or whose unused temporary password
+	// was discarded at its first SSO login).
+	SSOOnly bool `json:"sso_only"`
 	// Locked reports an active per-user login lockout.
 	Locked            bool   `json:"locked"`
 	LastLoginAt       string `json:"last_login_at,omitempty"`
@@ -97,7 +101,7 @@ type userView struct {
 func newUserView(u *store.User) userView {
 	return userView{
 		ID: u.ID, Username: u.Username, DisplayName: u.DisplayName, Role: u.Role,
-		MustChangePassword: u.MustChangePassword, Disabled: u.Disabled,
+		MustChangePassword: u.MustChangePassword, Disabled: u.Disabled, SSOOnly: password.IsUnusable(u.PasswordHash),
 		Locked:      u.LockedUntil != nil && time.Now().Before(*u.LockedUntil),
 		LastLoginAt: formatTimePtr(u.LastLoginAt), PasswordChangedAt: formatTime(u.PasswordChangedAt),
 		CreatedAt: formatTime(u.CreatedAt), UpdatedAt: formatTime(u.UpdatedAt),
@@ -120,6 +124,9 @@ type createUserRequest struct {
 	DisplayName string  `json:"display_name"`
 	Role        string  `json:"role"`
 	Password    *string `json:"password"`
+	// SSOOnly creates a user with no usable password, who can sign in only
+	// through single sign-on (OIDC). Excludes Password.
+	SSOOnly bool `json:"sso_only"`
 }
 
 type createUserResponse struct {
@@ -129,7 +136,10 @@ type createUserResponse struct {
 
 // Create handles POST /api/v1/users. With no password, a temporary one is
 // generated, returned once, and the user must change it at first login.
-// With a password (checked against the policy) the user may keep it.
+// With a password (checked against the policy) the user may keep it. With
+// sso_only the user gets no usable password at all and signs in through
+// single sign-on only (an admin can still give it one with
+// reset-password).
 func (h Users) Create(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -156,14 +166,21 @@ func (h Users) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plain, temporary := "", false
-	if req.Password != nil {
+	if req.SSOOnly && req.Password != nil {
+		httpx.ValidationError(w, "sso_only and password are mutually exclusive")
+		return
+	}
+	plain, temporary, hash := "", false, ""
+	switch {
+	case req.SSOOnly:
+		hash = password.Unusable
+	case req.Password != nil:
 		plain = *req.Password
 		if err := password.ValidatePolicy(plain, username); err != nil {
 			httpx.ValidationError(w, err.Error())
 			return
 		}
-	} else {
+	default:
 		if plain, err = password.GenerateTemporary(); err != nil {
 			applog.From(r.Context()).Error("create user: generate temporary password failed", "error", err)
 			httpx.Internal(w, "internal error")
@@ -171,11 +188,12 @@ func (h Users) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		temporary = true
 	}
-	hash, err := password.Hash(plain)
-	if err != nil {
-		applog.From(r.Context()).Error("create user: hash failed", "error", err)
-		httpx.Internal(w, "internal error")
-		return
+	if hash == "" {
+		if hash, err = password.Hash(plain); err != nil {
+			applog.From(r.Context()).Error("create user: hash failed", "error", err)
+			httpx.Internal(w, "internal error")
+			return
+		}
 	}
 
 	u := &store.User{
@@ -186,7 +204,11 @@ func (h Users) Create(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, r, "create user", err)
 		return
 	}
-	h.audit(r, store.AuthAuditEntry{TenantID: tid, Action: "user_create", TargetUserID: u.ID, Detail: "role=" + u.Role})
+	detail := "role=" + u.Role
+	if req.SSOOnly {
+		detail += " sso_only"
+	}
+	h.audit(r, store.AuthAuditEntry{TenantID: tid, Action: "user_create", TargetUserID: u.ID, Detail: detail})
 
 	resp := createUserResponse{User: newUserView(u)}
 	if temporary {
@@ -289,8 +311,8 @@ func selfActionConflict(w http.ResponseWriter) {
 // deployment's last active platform-admin (409 last_platform_admin), and
 // a patch that gives or touches the platform-admin role needs
 // platform.admin (403). Promoting a tenant's only admin to platform-admin
-// is allowed: it keeps the admin grants. Disabling revokes the user's
-// sessions.
+// is allowed: it keeps the admin grants. Disabling, and promoting to
+// platform-admin, revoke the user's sessions.
 func (h Users) Update(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -362,6 +384,7 @@ func (h Users) Update(w http.ResponseWriter, r *http.Request) {
 		u.DisplayName = strings.TrimSpace(*req.DisplayName)
 		changes = append(changes, "display_name")
 	}
+	promoted := newRole == store.UserRolePlatformAdmin && u.Role != store.UserRolePlatformAdmin
 	if newRole != u.Role {
 		changes = append(changes, "role:"+u.Role+"->"+newRole)
 		u.Role = newRole
@@ -381,6 +404,17 @@ func (h Users) Update(w http.ResponseWriter, r *http.Request) {
 		h.audit(r, store.AuthAuditEntry{TenantID: tid, Action: "user_disable", TargetUserID: u.ID})
 	case wasDisabled && !newDisabled:
 		changes = append(changes, "enabled")
+	}
+	if promoted {
+		// A session started by single sign-on was allowed for the old role;
+		// a provider may refuse platform-admin users (allow_platform_admin),
+		// and that check runs at login. Ending every session of the user
+		// makes it sign in again under the new role, where the check applies.
+		if n, err := h.Store.UserSessions().RevokeAllForUser(r.Context(), u.ID, ""); err != nil {
+			applog.From(r.Context()).Error("update user: revoke sessions on promotion failed", "user_id", u.ID, "error", err)
+		} else if n > 0 {
+			h.audit(r, store.AuthAuditEntry{TenantID: tid, Action: "session_revoke", TargetUserID: u.ID, Detail: "promoted to platform-admin"})
+		}
 	}
 	if len(changes) > 0 {
 		h.audit(r, store.AuthAuditEntry{TenantID: tid, Action: "user_update", TargetUserID: u.ID, Detail: strings.Join(changes, ",")})

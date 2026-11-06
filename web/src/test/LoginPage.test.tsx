@@ -380,8 +380,16 @@ describe('LoginPage', () => {
     const SSO_CONFIG = {
       ...AUTH_CONFIG,
       sso_providers: [
-        { name: 'corp', display_name: 'Corp SSO', start_url: '/api/v1/auth/oidc/corp/start' },
-        { name: 'backup', display_name: 'Backup IdP', start_url: '/api/v1/auth/oidc/backup/start' },
+        {
+          name: 'corp',
+          display_name: 'Corp SSO',
+          start_url: '/api/v1/auth/oidc/corp/start',
+        },
+        {
+          name: 'backup',
+          display_name: 'Backup IdP',
+          start_url: '/api/v1/auth/oidc/backup/start',
+        },
       ],
     }
     const notSignedIn = () => errorResponse(401, 'authentication_error', 'no session')
@@ -396,10 +404,9 @@ describe('LoginPage', () => {
 
       const corp = await screen.findByRole('link', { name: 'Sign in with Corp SSO' })
       expect(corp).toHaveAttribute('href', '/api/v1/auth/oidc/corp/start?return_to=%2F')
-      expect(screen.getByRole('link', { name: 'Sign in with Backup IdP' })).toHaveAttribute(
-        'href',
-        '/api/v1/auth/oidc/backup/start?return_to=%2F',
-      )
+      expect(
+        screen.getByRole('link', { name: 'Sign in with Backup IdP' }),
+      ).toHaveAttribute('href', '/api/v1/auth/oidc/backup/start?return_to=%2F')
       // The password form stays.
       expect(screen.getByLabelText('Password')).toBeInTheDocument()
     })
@@ -429,7 +436,9 @@ describe('LoginPage', () => {
       )
       const [dismiss] = screen.getAllByRole('button', { name: 'Dismiss' })
       await user.click(dismiss!)
-      await waitFor(() => expect(screen.queryByTestId('sso-error')).not.toBeInTheDocument())
+      await waitFor(() =>
+        expect(screen.queryByTestId('sso-error')).not.toBeInTheDocument(),
+      )
       expect(router.state.location.search).toBe('')
     })
 

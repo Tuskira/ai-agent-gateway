@@ -15,6 +15,8 @@ export interface User {
   role: UserRole
   disabled: boolean
   must_change_password?: boolean
+  /** No usable password: signs in through single sign-on only. */
+  sso_only?: boolean
   last_login_at?: string | null
   created_at?: string
 }
@@ -25,6 +27,9 @@ export interface CreateUserInput {
   role: UserRole
   /** Omit to have the server generate a temporary password. */
   password?: string
+  /** No password at all: the user signs in through single sign-on only.
+   * Excludes `password`. */
+  sso_only?: boolean
 }
 
 export interface CreateUserResponse {

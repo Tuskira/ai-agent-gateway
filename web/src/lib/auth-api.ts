@@ -40,14 +40,19 @@ export const SSO_ERROR_MESSAGES: Record<string, string> = {
   no_user: 'No gateway account matches your email. Ask a gateway admin to create one.',
   disabled: 'Your gateway account is disabled. Ask a gateway admin.',
   linked: 'Your gateway account is linked to a different identity. Ask a gateway admin.',
+  link_required:
+    'Your gateway account has a password, so it cannot be linked to this sign-in automatically. Ask a gateway admin.',
   role: 'This account cannot use single sign-on. Sign in with your password.',
-  provider: 'Single sign-on is unavailable right now. Try again, or use another sign-in method.',
+  provider:
+    'Single sign-on is unavailable right now. Try again, or use another sign-in method.',
 }
 
 /** The message for an `sso_error` code; unknown codes get a generic one, so
  * nothing from the URL is ever shown verbatim. */
 export function ssoErrorMessage(code: string): string {
-  const known = Object.hasOwn(SSO_ERROR_MESSAGES, code) ? SSO_ERROR_MESSAGES[code] : undefined
+  const known = Object.hasOwn(SSO_ERROR_MESSAGES, code)
+    ? SSO_ERROR_MESSAGES[code]
+    : undefined
   return known ?? 'Single sign-on failed. Try again.'
 }
 

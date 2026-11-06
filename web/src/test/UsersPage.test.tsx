@@ -125,6 +125,79 @@ describe('UsersPage', () => {
     expect(screen.queryByText('Tmp-Pass-2345-xyz')).not.toBeInTheDocument()
   })
 
+  it('creates a single-sign-on-only user when SSO is configured', async () => {
+    const calls = stubApi({
+      'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
+      'GET /auth/config': () =>
+        jsonResponse({
+          password_login: true,
+          api_key_login: false,
+          single_tenant: true,
+          default_tenant: 'acme',
+          sso_providers: [
+            {
+              name: 'corp',
+              display_name: 'Corp',
+              start_url: '/api/v1/auth/oidc/corp/start',
+            },
+          ],
+        }),
+      'GET /users': () => jsonResponse(USERS),
+      'POST /users': () =>
+        jsonResponse(
+          {
+            user: {
+              id: 'u-sso',
+              username: 'sso.user@example.com',
+              display_name: '',
+              role: 'viewer',
+              disabled: false,
+              sso_only: true,
+            },
+          },
+          201,
+        ),
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await screen.findByText('jane')
+    await user.click(screen.getByRole('button', { name: /create user/i }))
+    await user.type(await screen.findByLabelText('Username'), 'sso.user@example.com')
+    await user.click(await screen.findByRole('switch', { name: /single sign-on only/i }))
+    // No password choice for an SSO-only user.
+    expect(screen.queryByText(/generate a temporary password/i)).not.toBeInTheDocument()
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: /create user/i }),
+    )
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === 'POST' && c.path === '/users')).toBe(true),
+    )
+    const post = calls.find((c) => c.method === 'POST' && c.path === '/users')!
+    expect(JSON.parse(post.body!)).toEqual({
+      username: 'sso.user@example.com',
+      role: 'viewer',
+      sso_only: true,
+    })
+    expect(screen.queryByTestId('temporary-password')).not.toBeInTheDocument()
+  })
+
+  it('offers no single-sign-on-only option without SSO', async () => {
+    stubApi({
+      'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
+      'GET /users': () => jsonResponse(USERS),
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('jane')
+    await user.click(screen.getByRole('button', { name: /create user/i }))
+    await screen.findByLabelText('Username')
+    expect(
+      screen.queryByRole('switch', { name: /single sign-on only/i }),
+    ).not.toBeInTheDocument()
+  })
+
   it('sends the chosen password when the admin sets one, and shows no reveal', async () => {
     const calls = stubApi({
       'GET /auth/me': () => jsonResponse(SESSION_ADMIN),

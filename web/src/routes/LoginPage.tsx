@@ -1,6 +1,22 @@
 import { useState, type FormEvent } from 'react'
-import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Building2, Eye, EyeOff, KeyRound, Loader2, Lock, LogIn, User, X } from 'lucide-react'
+import {
+  Link,
+  Navigate,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from 'react-router-dom'
+import {
+  Building2,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Loader2,
+  Lock,
+  LogIn,
+  User,
+  X,
+} from 'lucide-react'
 import tuskiraLogo from '@/assets/tuskira-logo.svg'
 import { useAuth } from '@/auth/AuthContext'
 import { ApiError } from '@/lib/api'
@@ -411,7 +427,10 @@ export default function LoginPage() {
                 <a
                   key={p.name}
                   href={ssoStartHref(p, returnTo)}
-                  className={buttonVariants({ variant: 'outline', className: 'h-10 w-full gap-2' })}
+                  className={buttonVariants({
+                    variant: 'outline',
+                    className: 'h-10 w-full gap-2',
+                  })}
                 >
                   <LogIn aria-hidden="true" />
                   Sign in with {p.display_name}

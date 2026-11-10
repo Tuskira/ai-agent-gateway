@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-10
+
 ### Added
 
 - **Agent traffic flow can name callers by agent instead of harness.**
@@ -2158,7 +2160,8 @@ First release: phase 1 of the open-source AI gateway.
   `bootstrap-key` transcript.
 - CI badge in `README.md`.
 
-[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.8.2...v0.9.0

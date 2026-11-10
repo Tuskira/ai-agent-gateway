@@ -349,9 +349,9 @@ func TestBuildTrafficFlow_AgentWithoutDirectoryFallsBackToClient(t *testing.T) {
 	if n := flowNodesByID(t, got)["CLIENT:cursor"]; n.Value != 3 || n.Sublabel != "client" {
 		t.Errorf("no directory: node = %+v, want the client family", n)
 	}
-	// An unset GroupBy is the agent grouping.
-	if newFlowSelect(analytics.SankeyQuery{}).groupBy != analytics.SankeyGroupAgent {
-		t.Error("zero GroupBy must default to agent")
+	// An unset GroupBy is the old client grouping.
+	if newFlowSelect(analytics.SankeyQuery{}).groupBy != analytics.SankeyGroupClient {
+		t.Error("zero GroupBy must default to client")
 	}
 }
 

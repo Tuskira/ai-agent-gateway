@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowRight,
@@ -54,7 +53,7 @@ import { WidgetHelp } from '@/components/app/WidgetHelp'
 import { KPI_HELP, WIDGET_HELP } from '@/lib/overview-help'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PeriodFilter } from '@/components/app/PeriodFilter'
-import { useFlowGroupBy } from '@/hooks/use-flow-group-by'
+import { useFlowAgent, useFlowGroupBy } from '@/hooks/use-flow-group-by'
 import { usePeriod } from '@/hooks/use-period'
 import { TrafficFlowCard } from '@/components/app/TrafficFlowCard'
 import {
@@ -116,7 +115,7 @@ interface KpiTile {
 export default function OverviewPage() {
   const [period, setPeriod] = usePeriod('24h')
   const [flowGroupBy, setFlowGroupBy] = useFlowGroupBy()
-  const [flowAgent, setFlowAgent] = useState('')
+  const [flowAgent, setFlowAgent] = useFlowAgent()
 
   const { principal } = useAuth()
   const { data: health, isLoading: healthLoading } = useHealth()
@@ -430,9 +429,9 @@ export default function OverviewPage() {
         data={flowQuery.data}
         period={period}
         groupBy={flowGroupBy}
-        // A node key only means something under the grouping that made it.
+        // A node key only means something under the grouping that made it, so
+        // changing the grouping also drops the picked agent from the URL.
         onGroupByChange={(g) => {
-          setFlowAgent('')
           setFlowGroupBy(g)
         }}
         agent={flowAgent}

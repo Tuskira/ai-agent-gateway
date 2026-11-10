@@ -201,7 +201,7 @@ type flowSelect struct {
 func newFlowSelect(q analytics.SankeyQuery) flowSelect {
 	g := q.GroupBy
 	if g == "" {
-		g = analytics.SankeyGroupAgent
+		g = analytics.SankeyGroupClient
 	}
 	sel := flowSelect{groupBy: g, agent: q.Agent, clientName: q.ClientName}
 	if q.Directory != nil {

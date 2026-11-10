@@ -471,6 +471,19 @@ describe('OverviewPage', () => {
     expect(screen.getByRole('combobox', { name: 'API key' })).toHaveValue('')
   })
 
+  it('restores the picked traffic flow agent from the URL', async () => {
+    installFetchMock({ metrics: METRICS, flow: FLOW })
+    renderOverviewPage('/?flow_by=client&flow_agent=cursor')
+    expect(await screen.findByText('Agent traffic flow')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([u]) => String(u).includes('&group_by=client&agent=cursor')),
+      ).toBe(true),
+    )
+  })
+
   it('shows the traffic flow card\'s "enable ClickHouse" empty state when the endpoint 404s', async () => {
     installFetchMock({ metrics: null, flow: null })
     renderOverviewPage()

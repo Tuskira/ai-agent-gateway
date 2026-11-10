@@ -407,7 +407,8 @@ func (h Analytics) ClientModelSankey(w http.ResponseWriter, r *http.Request) {
 // defaults (7d, calls, limit 10); limit folds the tail of each terminal
 // column separately.
 //
-// group_by picks what the left column is made of and defaults to agent:
+// group_by picks what the left column is made of. It defaults to client, the
+// grouping before the parameter existed; the console asks for agent:
 // each caller named by its agent profile, else its API key's name, else its
 // client family (see analytics.TrafficFlow). agent narrows the graph to one
 // node of that column, by the key the response's agents list gives it;

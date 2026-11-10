@@ -1169,11 +1169,16 @@ func TestAnalytics_TrafficFlow_GroupByAndAgentParams(t *testing.T) {
 		return fake.gotSankeyQ
 	}
 
-	// No group_by: the agent grouping, with this tenant's keys and the
-	// profile a key is bound to resolved to names.
-	q := get("")
+	// No group_by: the old client grouping, no names resolved.
+	if q := get(""); q.GroupBy != analytics.SankeyGroupClient || q.Agent != "" || q.Directory != nil {
+		t.Errorf("default query = %+v, want group_by=client, no agent filter, no directory", q)
+	}
+
+	// group_by=agent: this tenant's keys and the profile a key is bound to
+	// resolved to names.
+	q := get("?group_by=agent")
 	if q.GroupBy != analytics.SankeyGroupAgent || q.Agent != "" {
-		t.Errorf("default query = %+v, want group_by=agent and no agent filter", q)
+		t.Errorf("group_by=agent query = %+v, want agent grouping and no agent filter", q)
 	}
 	if q.Directory == nil {
 		t.Fatal("agent grouping must hand the reader a directory")
@@ -1189,7 +1194,7 @@ func TestAnalytics_TrafficFlow_GroupByAndAgentParams(t *testing.T) {
 		t.Errorf("group_by=key query = %+v", q)
 	}
 	// client_name keeps working next to the new parameters.
-	if q = get("?client_name=cursor"); q.ClientName != "cursor" || q.GroupBy != analytics.SankeyGroupAgent {
+	if q = get("?client_name=cursor"); q.ClientName != "cursor" || q.GroupBy != analytics.SankeyGroupClient {
 		t.Errorf("client_name query = %+v", q)
 	}
 	// Grouping by client needs no names, so the store is not read for them.

@@ -10,9 +10,9 @@ func TestCapProfile(t *testing.T) {
 	cases := map[string]string{
 		"":                       "",
 		"   ":                    "",
-		"SOC Agent":              "SOC Agent",
-		"  SOC Agent \t":         "SOC Agent",
-		"SOC\x00 Ag\x1bent":      "SOC Agent",
+		"Research Agent":         "Research Agent",
+		"  Research Agent \t":    "Research Agent",
+		"Research\x00 Ag\x1bent": "Research Agent",
 		"bad\xffutf8":            "badutf8",
 		strings.Repeat("a", 200): strings.Repeat("a", MaxProfileLen),
 		long:                     strings.Repeat("é", MaxProfileLen/2), // cut on a rune boundary

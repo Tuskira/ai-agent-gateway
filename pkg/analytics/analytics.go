@@ -770,7 +770,8 @@ type SankeyQuery struct {
 	// ignores them.
 
 	// GroupBy picks what the left column of the traffic-flow graph is made
-	// of. The zero value means SankeyGroupAgent.
+	// of. The zero value means SankeyGroupClient, the grouping before
+	// group_by existed; callers wanting agent names ask for SankeyGroupAgent.
 	GroupBy SankeyGroupBy
 	// Agent, when non-empty, restricts the graph to the one node of the
 	// GroupBy column whose Key it names (a key from TrafficFlow.Agents).
@@ -789,21 +790,24 @@ type SankeyGroupBy string
 const (
 	// SankeyGroupAgent names each caller by the first identity it has: the
 	// agent profile, then the API key's name, then the client family (the
-	// harness), then "Unknown". It is the default.
+	// harness), then "Unknown". It is the console's default, and must be
+	// asked for.
 	SankeyGroupAgent SankeyGroupBy = "agent"
 	// SankeyGroupKey groups by API key.
 	SankeyGroupKey SankeyGroupBy = "key"
 	// SankeyGroupClient groups by client family (Claude Code, Cursor, ...)
-	// only -- the behaviour before group_by existed.
+	// only -- the behaviour before group_by existed, and what an absent
+	// group_by still means.
 	SankeyGroupClient SankeyGroupBy = "client"
 )
 
 // ParseSankeyGroupBy validates a "group_by" query parameter. An empty raw
-// value is SankeyGroupAgent; ok is false for anything else unrecognized.
+// value is SankeyGroupClient, so clients written before group_by existed
+// keep their graph; ok is false for anything else unrecognized.
 func ParseSankeyGroupBy(s string) (g SankeyGroupBy, ok bool) {
 	switch SankeyGroupBy(s) {
 	case "":
-		return SankeyGroupAgent, true
+		return SankeyGroupClient, true
 	case SankeyGroupAgent, SankeyGroupKey, SankeyGroupClient:
 		return SankeyGroupBy(s), true
 	}

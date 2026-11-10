@@ -455,7 +455,7 @@ Overview "Agent traffic flow" card.
   node's `label` to the connector's display name (best effort, like
   Overview's `topConnectors`); `key` stays the connector id, and an id whose
   connector was deleted keeps the id as its label.
-- **`group_by`** (default `agent`) picks what the left column is made of:
+- **`group_by`** (default `client`; the console sends `agent`) picks what the left column is made of:
   - `agent` names each caller by the first identity it has, in this order:
     1. the **agent profile** — `profile` as stored on the row (the profile
        the API key is bound to, else the caller's `X-Agent-Profile-Name`
@@ -525,7 +525,7 @@ Overview "Agent traffic flow" card.
 - `sublabel` is omitted (never `""`) on every node that has none, and is
   never set on `/analytics/client-models` nodes, whose wire shape is
   unchanged. A `group_by=client` response is the same as before `group_by`
-  existed; the default `agent` grouping differs only where rows carry a
+  existed, and is what an absent `group_by` returns; the `agent` grouping (the console's default) differs only where rows carry a
   profile or a key name.
 
 ## Discovered skills and MCP servers

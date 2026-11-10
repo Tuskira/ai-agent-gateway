@@ -309,7 +309,7 @@ session timeline, token monitoring) still needs ClickHouse.
 | `GET /analytics/llm-logs/{request_id}` | One LLM-call row, including bodies. Admin-only. |
 | `GET /analytics/sessions/{session_id}/timeline` | Merged MCP+LLM event timeline for one gateway session, `?order=asc|desc` — see [Session timeline ownership](#session-timeline-ownership). |
 | `GET /analytics/client-models?range=24h\|7d\|30d` or `from=&to=`, `metric=calls\|tokens\|cost&limit=&client_name=` (default `7d`, `calls`, limit `10`) | Client → model → provider usage graph — see [Client → model Sankey](#client--model-sankey). |
-| `GET /analytics/traffic-flow?range=24h\|7d\|30d&metric=calls\|tokens\|cost&limit=&client_name=` (same defaults) | Agent traffic flow across both planes — see [Agent traffic flow](#agent-traffic-flow). |
+| `GET /analytics/traffic-flow?range=24h\|7d\|30d&metric=calls\|tokens\|cost&limit=&group_by=agent\|key\|client&agent=&client_name=` (same defaults) | Agent traffic flow across both planes — see [Agent traffic flow](#agent-traffic-flow). |
 | `GET /analytics/token-monitoring?range=24h\|7d\|30d` (default `24h`) or `?from=&to=` | Token usage and cost by model, by caller (API key) and by caller role, with the previous period and a usage series — see [Token monitoring](#token-monitoring). |
 | `GET /analytics/token-monitoring/model?model=&range=&limit=&offset=` | One model's usage by caller and by session (sessions paged). |
 | `GET /analytics/token-monitoring/keys/{id}?range=&limit=&offset=` | One API key's usage by model and by session. |
@@ -414,7 +414,8 @@ uses) — so any dashboard can consume this route directly.
 MODEL | CONNECTOR graph, in the same node/link shape as
 `/analytics/client-models` (so the same renderer draws either), and takes
 the same `range`, `metric`, `limit` and `client_name` parameters with the
-same defaults. It backs the console's Overview "Agent traffic flow" card.
+same defaults, plus `group_by` and `agent` (below). It backs the console's
+Overview "Agent traffic flow" card.
 
 ```json
 {
@@ -441,26 +442,71 @@ same defaults. It backs the console's Overview "Agent traffic flow" card.
 }
 ```
 
-- **Columns.** `CLIENT` is the agent family, exactly as on
-  `/analytics/client-models` — for the LLM branch it is the stored
-  `llm_calls.client_name`; for the MCP branch, `mcp_access_logs` stores
-  only the raw `user_agent`, so each distinct header is classified at query
-  time with the same `sink.ClientFamily` rule (see [Client
-  classification](#client-classification)). One agent is therefore one
-  node whichever plane it called through; `""` folds into `unknown` on
-  both. `PATH` has at most two nodes, `llm` ("LLM calls") and `mcp` ("MCP
-  calls"), always in that order, each present only when its branch has
-  traffic. `MODEL` matches `/analytics/client-models` (requested model,
-  falling back to `model`) and carries the provider that served most of
-  its traffic as `sublabel` (`resolved_vendor`, else `provider`).
-  `CONNECTOR` is `mcp_access_logs.connector_id` over `method =
-  'tools/call'` rows only (list/initialize traffic is not a "call"); a
-  `tools/call` with no `connector_id` — a gateway-native tool such as
-  `gateway__skill` — lands on the key `gateway` ("Gateway tools"). The
-  handler resolves each connector node's `label` to the connector's
-  display name (best effort, like Overview's `topConnectors`); `key` stays
-  the connector id, and an id whose connector was deleted keeps the id as
-  its label.
+- **Columns.** `CLIENT` is whatever `group_by` asks for (below). `PATH`
+  has at most two nodes, `llm` ("LLM calls") and `mcp` ("MCP calls"),
+  always in that order, each present only when its branch has traffic.
+  `MODEL` matches `/analytics/client-models` (requested model, falling back
+  to `model`) and carries the provider that served most of its traffic as
+  `sublabel` (`resolved_vendor`, else `provider`). `CONNECTOR` is
+  `mcp_access_logs.connector_id` over `method = 'tools/call'` rows only
+  (list/initialize traffic is not a "call"); a `tools/call` with no
+  `connector_id` — a gateway-native tool such as `gateway__skill` — lands on
+  the key `gateway` ("Gateway tools"). The handler resolves each connector
+  node's `label` to the connector's display name (best effort, like
+  Overview's `topConnectors`); `key` stays the connector id, and an id whose
+  connector was deleted keeps the id as its label.
+- **`group_by`** (default `agent`) picks what the left column is made of:
+  - `agent` names each caller by the first identity it has, in this order:
+    1. the **agent profile** — `profile` as stored on the row (the profile
+       the API key is bound to, else the caller's `X-Agent-Profile-Name`
+       header), and for rows with none (written before `llm_calls.profile`
+       existed) the profile the key is bound to *now*;
+    2. the **API key's name**;
+    3. the **client family** (the harness: Claude Code, Cursor, …), as in
+       `group_by=client`;
+    4. `unknown`.
+
+    Each node's `sublabel` says which of these named it (`profile`, `key`,
+    `client`; none for `unknown`), so mixed kinds in one column stay clear.
+    Profile and key nodes use the keys `profile:<name>` and `key:<key id>`
+    so a profile called `cursor` is never the Cursor client; a client node
+    keeps its bare family key. Only the top 15 nodes keep their own node; the
+    rest fold into `other-agents` ("Other agents"), which has no `sublabel`
+    and cannot be filtered on.
+  - `key` groups by API key: the node key is the key id, the label its name
+    (a key deleted since shows the first 8 characters of the id), and rows
+    with no key — events ingested from an interceptor — are `unknown`. Same
+    15-node fold.
+  - `client` groups by client family only: the behaviour before `group_by`
+    existed. `CLIENT` is then the agent family exactly as on
+    `/analytics/client-models` — for the LLM branch the stored
+    `llm_calls.client_name`; for the MCP branch, `mcp_access_logs` stores
+    only the raw `user_agent`, so each distinct header is classified at
+    query time with the same `sink.ClientFamily` rule (see [Client
+    classification](#client-classification)). One agent is therefore one
+    node whichever plane it called through; `""` folds into `unknown` on
+    both. Never folded.
+
+  Where the identities come from: `mcp_access_logs.profile` and
+  `llm_calls.profile` hold the bound profile's name when the API key is
+  bound, otherwise the trimmed `X-Agent-Profile-Name` header (capped at 128
+  bytes). A key's binding always wins over the header on the LLM plane, so
+  a bound agent cannot pick its own name; an unbound caller's header is
+  self-reported, which is fine for analytics but not for access control. A
+  bound key whose profile has since been deleted records no profile. The
+  profile and key *names* are resolved by the handler from the store at read
+  time (best effort): a renamed key shows its new name on old rows, and the
+  "bound now" fallback shows today's binding rather than the one at call
+  time. Rows from before `llm_calls.profile` existed, and calls from
+  unbound keys that send no header, fall through to the key's name or the
+  client family. Harness grouping stays available (`group_by=client`)
+  because it is the only identity for tools that send no profile, such as
+  Cursor or Claude Desktop.
+- **`agent`** narrows the graph to one node of the `CLIENT` column, by the
+  `key` the `agents` list gives it (`profile:Research Agent`,
+  `key:<id>`, `claude-code`, …); it must be sent with the same `group_by`
+  that produced the key. `client_name` still narrows to one client family
+  whatever the grouping, and both can be sent.
 - **`limit`** folds each terminal column separately: the top `limit`
   models keep a node and the rest fold into `other-models`; the top `limit`
   connectors keep a node and the rest fold into `other-connectors`. Folded
@@ -469,15 +515,18 @@ same defaults. It backs the console's Overview "Agent traffic flow" card.
   and `tools/call` rows on the MCP branch. `tokens` and `cost` are LLM-only
   measures, so those metrics return the LLM branch alone — no `PATH:mcp`
   node and no `CONNECTOR` column — rather than a zero-width MCP path.
-- **`agents`.** Every client family with traffic in the window, as
-  `{key, label, value}` sorted by `value` desc and summed across both planes
-  (MCP counted only under `metric=calls`). It is computed *before*
-  `client_name` is applied — it is what the console's agent filter offers,
-  so it must not shrink to the selected family — while `nodes`, `links` and
-  `total` honour the filter.
+- **`agents`.** Every node of the `CLIENT` column with traffic in the
+  window, as `{key, label, value, sublabel?}` sorted by `value` desc and
+  summed across both planes (MCP counted only under `metric=calls`). It is
+  computed *before* `agent` and `client_name` are applied and is never
+  folded — it is what the console's agent filter offers, so it must not
+  shrink to the selected node — while `nodes`, `links` and `total` honour
+  the filters.
 - `sublabel` is omitted (never `""`) on every node that has none, and is
   never set on `/analytics/client-models` nodes, whose wire shape is
-  unchanged.
+  unchanged. A `group_by=client` response is the same as before `group_by`
+  existed; the default `agent` grouping differs only where rows carry a
+  profile or a key name.
 
 ## Discovered skills and MCP servers
 

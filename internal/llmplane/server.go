@@ -79,6 +79,12 @@ type Config struct {
 	// The caller owns it: it reads Status for /health and calls Close at
 	// shutdown.
 	DetectionTee *DetectionTee
+
+	// Profiles names the agent profile a bound API key stands for, so each
+	// captured call records which agent made it (llm_calls.profile). Nil =
+	// calls from a bound key record no profile; unbound keys still record
+	// the caller's X-Agent-Profile-Name header.
+	Profiles ProfileNamer
 }
 
 // Handler builds the provider slice, wires the router and middleware chain, and
@@ -130,6 +136,7 @@ func Handler(cfg Config, rec Recorder) (http.Handler, error) {
 		bedrock:        bedrock,
 		limiter:        cfg.Limiter,
 		tee:            cfg.DetectionTee,
+		profiles:       cfg.Profiles,
 	}
 	return chain(rt, cfg), nil
 }

@@ -1136,13 +1136,65 @@ func TestAnalytics_TrafficFlow_CustomDates(t *testing.T) {
 func TestAnalytics_TrafficFlow_InvalidParams400(t *testing.T) {
 	fake := &fakeAnalyticsReader{flow: &analytics.TrafficFlow{}}
 	h := Analytics{Deps: newAnalyticsTestDeps(fake)}
-	for _, qs := range []string{"range=3w", "metric=bytes", "limit=0", "limit=x", "from=2026-01-02&to=2026-01-01"} {
+	for _, qs := range []string{"range=3w", "metric=bytes", "limit=0", "limit=x", "from=2026-01-02&to=2026-01-01", "group_by=harness"} {
 		req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/traffic-flow?"+qs, nil), "tenant-a", "agent")
 		w := serve(http.MethodGet, "/analytics/traffic-flow", h.TrafficFlow, req)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("%s: status = %d, want 400, body = %s", qs, w.Code, w.Body.String())
 		}
 		assertErrorType(t, w, "validation_error")
+	}
+}
+
+func TestAnalytics_TrafficFlow_GroupByAndAgentParams(t *testing.T) {
+	deps := newAnalyticsTestDeps(nil)
+	profileID := seedProfile(t, deps, "tenant-a", "Triage Agent")
+	bound := &store.APIKey{TenantID: "tenant-a", Name: "tenant-llm-key", Role: "agent", KeyHash: "h1", ProfileID: &profileID}
+	unbound := &store.APIKey{TenantID: "tenant-a", Name: "ci-key", Role: "agent", KeyHash: "h2"}
+	foreign := &store.APIKey{TenantID: "tenant-b", Name: "other-tenant-key", Role: "agent", KeyHash: "h3"}
+	for _, k := range []*store.APIKey{bound, unbound, foreign} {
+		if err := deps.Store.APIKeys().Create(context.Background(), k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &fakeAnalyticsReader{flow: &analytics.TrafficFlow{}}
+	deps.Analytics = fake
+	h := Analytics{Deps: deps}
+	get := func(qs string) analytics.SankeyQuery {
+		t.Helper()
+		req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/traffic-flow"+qs, nil), "tenant-a", "agent")
+		if w := serve(http.MethodGet, "/analytics/traffic-flow", h.TrafficFlow, req); w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, body = %s", qs, w.Code, w.Body.String())
+		}
+		return fake.gotSankeyQ
+	}
+
+	// No group_by: the agent grouping, with this tenant's keys and the
+	// profile a key is bound to resolved to names.
+	q := get("")
+	if q.GroupBy != analytics.SankeyGroupAgent || q.Agent != "" {
+		t.Errorf("default query = %+v, want group_by=agent and no agent filter", q)
+	}
+	if q.Directory == nil {
+		t.Fatal("agent grouping must hand the reader a directory")
+	}
+	if got := q.Directory.KeyNames; got[bound.ID] != "tenant-llm-key" || got[unbound.ID] != "ci-key" || len(got) != 2 {
+		t.Errorf("KeyNames = %v, want exactly this tenant's two keys", got)
+	}
+	if got := q.Directory.KeyProfiles; got[bound.ID] != "Triage Agent" || len(got) != 1 {
+		t.Errorf("KeyProfiles = %v, want only the bound key -> Triage Agent", got)
+	}
+
+	if q = get("?group_by=key&agent=" + bound.ID); q.GroupBy != analytics.SankeyGroupKey || q.Agent != bound.ID || q.Directory == nil {
+		t.Errorf("group_by=key query = %+v", q)
+	}
+	// client_name keeps working next to the new parameters.
+	if q = get("?client_name=cursor"); q.ClientName != "cursor" || q.GroupBy != analytics.SankeyGroupAgent {
+		t.Errorf("client_name query = %+v", q)
+	}
+	// Grouping by client needs no names, so the store is not read for them.
+	if q = get("?group_by=client"); q.GroupBy != analytics.SankeyGroupClient || q.Directory != nil {
+		t.Errorf("group_by=client query = %+v, want no directory", q)
 	}
 }
 

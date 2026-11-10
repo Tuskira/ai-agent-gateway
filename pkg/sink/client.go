@@ -1,6 +1,10 @@
 package sink
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
 
 // ClientFamily maps a raw User-Agent header to one of the gateway's named
 // client families. It is the single place the substring rule lives, so the
@@ -63,4 +67,33 @@ func CapUserAgent(ua string) string {
 		return ua
 	}
 	return ua[:MaxUserAgentLen]
+}
+
+// MaxProfileLen bounds sink.LLMCall.Profile when it comes from a caller's
+// X-Agent-Profile-Name header, so a caller cannot bloat a capture row.
+const MaxProfileLen = 128
+
+// CapProfile cleans a caller-supplied agent profile name for storage:
+// surrounding space trimmed, control characters dropped, and the result cut
+// to MaxProfileLen bytes on a character boundary.
+func CapProfile(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	name = strings.ToValidUTF8(name, "")
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name)
+	if len(name) <= MaxProfileLen {
+		return name
+	}
+	cut := MaxProfileLen
+	for cut > 0 && !utf8.RuneStart(name[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(name[:cut])
 }

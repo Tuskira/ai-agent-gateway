@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agent traffic flow can name callers by agent instead of harness.**
+  `GET /api/v1/analytics/traffic-flow` takes `group_by=agent|key|client`
+  (default `agent`) and `agent=` to narrow to one node. Grouped by agent,
+  each caller is named by its agent profile, else its API key's name, else
+  its client family, else `unknown`, and each node's `sublabel` says which
+  (`profile`, `key`, `client`). `group_by=client` is the previous graph;
+  `client_name` still works. `agents` entries gain an optional `sublabel`.
+  The Overview card gets an Agent / API key / Harness toggle, kept in the
+  URL. Details in [docs/observability.md](docs/observability.md#agent-traffic-flow).
+- **`llm_calls.profile`.** LLM calls now record the agent profile that made
+  them, the way `mcp_access_logs.profile` already does: the profile the API
+  key is bound to, else the caller's `X-Agent-Profile-Name` header (trimmed,
+  capped at 128 bytes). The ClickHouse column is added on startup
+  (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`); earlier rows read back
+  empty and fall back to the key's name or the client family in the graph.
+  The header is now also stored unmasked in the captured request headers.
+
 ### Changed
 
 - The console sidebar now lists **Observe** right after **Dashboards**.

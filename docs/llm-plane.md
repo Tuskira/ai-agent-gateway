@@ -621,6 +621,15 @@ right to the first untrusted address, as on the MCP plane) is carried on the ana
 `llm_calls` column and appears in stdout JSON lines. It is not stored in
 the Postgres ledger.
 
+Each call also records the agent `profile` that made it: the profile the
+caller's API key is bound to, else its `X-Agent-Profile-Name` header
+(trimmed, at most 128 bytes). A bound key's profile always wins, so the
+header cannot rename it; an unbound caller's header is self-reported. The
+LLM plane does not enforce profiles (the MCP plane does); the value only
+feeds analytics ([Agent traffic
+flow](observability.md#agent-traffic-flow)), and like `client_ip` it is a
+ClickHouse column and stdout field, not stored in the Postgres ledger.
+
 ### Body offload
 
 By default captured bodies are stored inline: Postgres `llm_calls.request_body`

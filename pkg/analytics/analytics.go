@@ -765,6 +765,59 @@ type SankeyQuery struct {
 	// (sink.LLMCall.ClientName's output, or "unknown" for a caller-supplied
 	// filter matching the "" bucket -- see the handler).
 	ClientName string
+
+	// The fields below only matter to TrafficFlowSankey; ClientModelSankey
+	// ignores them.
+
+	// GroupBy picks what the left column of the traffic-flow graph is made
+	// of. The zero value means SankeyGroupAgent.
+	GroupBy SankeyGroupBy
+	// Agent, when non-empty, restricts the graph to the one node of the
+	// GroupBy column whose Key it names (a key from TrafficFlow.Agents).
+	// With GroupBy client it is the same filter as ClientName.
+	Agent string
+	// Directory names the ids the Reader stores but cannot resolve itself.
+	// Optional (nil is fine): without it the Reader falls back to the next
+	// identity in the SankeyGroupAgent chain.
+	Directory *AgentDirectory
+}
+
+// SankeyGroupBy is one of GET /analytics/traffic-flow's supported "group_by"
+// values: what the left column groups traffic by.
+type SankeyGroupBy string
+
+const (
+	// SankeyGroupAgent names each caller by the first identity it has: the
+	// agent profile, then the API key's name, then the client family (the
+	// harness), then "Unknown". It is the default.
+	SankeyGroupAgent SankeyGroupBy = "agent"
+	// SankeyGroupKey groups by API key.
+	SankeyGroupKey SankeyGroupBy = "key"
+	// SankeyGroupClient groups by client family (Claude Code, Cursor, ...)
+	// only -- the behaviour before group_by existed.
+	SankeyGroupClient SankeyGroupBy = "client"
+)
+
+// ParseSankeyGroupBy validates a "group_by" query parameter. An empty raw
+// value is SankeyGroupAgent; ok is false for anything else unrecognized.
+func ParseSankeyGroupBy(s string) (g SankeyGroupBy, ok bool) {
+	switch SankeyGroupBy(s) {
+	case "":
+		return SankeyGroupAgent, true
+	case SankeyGroupAgent, SankeyGroupKey, SankeyGroupClient:
+		return SankeyGroupBy(s), true
+	}
+	return "", false
+}
+
+// AgentDirectory resolves ids the ClickHouse tables store to names the
+// console shows. Both maps are keyed by api_keys.id and may be nil.
+type AgentDirectory struct {
+	// KeyNames maps an API key id to the key's name.
+	KeyNames map[string]string
+	// KeyProfiles maps an API key id to the name of the profile it is bound
+	// to now (not when the call was made). Unbound keys are absent.
+	KeyProfiles map[string]string
 }
 
 // Sankey node Type values (SankeyNode.Type / SankeyLink.SourceType /
@@ -802,9 +855,10 @@ type SankeyNode struct {
 	Type  string  `json:"type"` // one of the SankeyNode* type constants
 	Value float64 `json:"value"`
 	// Sublabel is a secondary line under Label, set only where a column
-	// has one to offer: the serving provider on a traffic-flow MODEL node.
-	// Omitted (never "") everywhere else, including every client-models
-	// node, so that endpoint's wire shape is unchanged.
+	// has one to offer: the serving provider on a traffic-flow MODEL node,
+	// and the identity kind (SankeyKind*) on a traffic-flow CLIENT node
+	// when grouped by agent. Omitted (never "") everywhere else, including
+	// every client-models node, so that endpoint's wire shape is unchanged.
 	Sublabel string `json:"sublabel,omitempty"`
 }
 
@@ -877,12 +931,39 @@ const (
 	SankeyGatewayToolsLabel = "Gateway tools"
 )
 
-// SankeyAgent is one entry of TrafficFlow.Agents: a client family seen in
-// the window, with its total Value across both planes.
+// SankeyOtherAgentsKey/Label name the synthetic CLIENT node that folds in
+// every agent beyond SankeyAgentLimit when the left column is grouped by
+// agent or key -- the left-column twin of SankeyOtherModelsKey.
+const (
+	SankeyOtherAgentsKey   = "other-agents"
+	SankeyOtherAgentsLabel = "Other agents"
+)
+
+// SankeyAgentLimit caps the CLIENT nodes drawn when the left column is
+// grouped by agent or key (a tenant can have many API keys); the tail
+// folds into one SankeyOtherAgentsKey node. TrafficFlow.Agents is never
+// capped. Grouping by client is not capped: there are only a handful of
+// client families.
+const SankeyAgentLimit = 15
+
+// Identity kinds a traffic-flow CLIENT node carries in its Sublabel when
+// the left column is grouped by agent: which identity the node was named
+// by, so a profile, a key and a harness in one column stay distinguishable.
+const (
+	SankeyKindProfile = "profile"
+	SankeyKindKey     = "key"
+	SankeyKindClient  = "client"
+)
+
+// SankeyAgent is one entry of TrafficFlow.Agents: a node of the left
+// column seen in the window, with its total Value across both planes.
+// Sublabel is the identity kind (SankeyKind*) when grouped by agent, and
+// omitted otherwise.
 type SankeyAgent struct {
-	Key   string  `json:"key"`
-	Label string  `json:"label"`
-	Value float64 `json:"value"`
+	Key      string  `json:"key"`
+	Label    string  `json:"label"`
+	Value    float64 `json:"value"`
+	Sublabel string  `json:"sublabel,omitempty"`
 }
 
 // TrafficFlow is GET /api/v1/analytics/traffic-flow's response body: a
@@ -891,10 +972,20 @@ type SankeyAgent struct {
 // renderer draws either graph; a MODEL node additionally carries its
 // provider in SankeyNode.Sublabel.
 //
-// Agents lists every client family with traffic in the window, Value desc,
-// regardless of SankeyQuery.ClientName -- it is what a console's agent
-// filter offers, so it must not shrink to the one selected family. Nodes,
-// Links and Total honour the filter.
+// The CLIENT column holds whatever SankeyQuery.GroupBy asks for. Grouped by
+// agent (the default) each caller is named by the first identity it has,
+// in this order: the agent profile (stored on the row, else the profile
+// its API key is bound to now), the API key's name, the client family,
+// and finally "Unknown". Profile and key nodes use the keys
+// "profile:<name>" and "key:<id>"; a client-family node keeps the bare
+// family key ("claude-code"), as before group_by existed. Grouped by key
+// the node key is the API key id. Grouped by client it is the client
+// family only.
+//
+// Agents lists every node of the CLIENT column with traffic in the window,
+// Value desc, regardless of SankeyQuery.Agent and ClientName -- it is what
+// a console's agent filter offers, so it must not shrink to the one
+// selected node. Nodes, Links and Total honour the filters.
 //
 // Metric semantics: SankeyMetricCalls counts llm_calls rows on the LLM
 // branch and tools/call mcp_access_logs rows on the MCP branch. Tokens and

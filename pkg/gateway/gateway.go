@@ -673,6 +673,7 @@ func Run(ctx context.Context, opts Options) error {
 		llmCfg.ClientIP = clientIPs.IP
 		llmCfg.Limiter = limiter
 		llmCfg.Registry = modelRegistry
+		llmCfg.Profiles = llmplane.NewProfileNames(st.AgentProfiles(), 0)
 		if d := cfg.LLMProxy.Detection; d.AgentURL != "" {
 			tee := llmplane.NewDetectionTee(llmplane.DetectionTeeConfig{
 				AgentURL: d.AgentURL, AgentToken: d.AgentToken, Timeout: d.Timeout, QueueSize: d.QueueSize,

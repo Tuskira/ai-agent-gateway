@@ -18,7 +18,7 @@ import (
 func (s *Sink) ClientModelSankey(ctx context.Context, tenantID string, q analytics.SankeyQuery) (*analytics.Sankey, error) {
 	from, to := q.Period.Start, q.Period.End
 
-	rows, err := s.sankeyUsage(ctx, tenantID, from, to, q.ClientName)
+	rows, err := s.sankeyUsage(ctx, tenantID, from, to, q.ClientName, false)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: client-model sankey: %w", err)
 	}
@@ -36,11 +36,15 @@ func (s *Sink) ClientModelSankey(ctx context.Context, tenantID string, q analyti
 
 // sankeyRow is one (client, model, provider) grouped row read from
 // llm_calls, carrying every metric buildSankey might need so the caller
-// picks the right one without a second query.
+// picks the right one without a second query. Profile and KeyID are only
+// filled when the query asked for them (sankeyUsage byAgent); the
+// traffic-flow graph names its left column from them.
 type sankeyRow struct {
 	Client   string
 	Model    string
 	Provider string
+	Profile  string
+	KeyID    string
 	Calls    int64
 	Tokens   int64
 	CostUSD  float64
@@ -53,8 +57,9 @@ type sankeyRow struct {
 // modelUsage resolves ModelSummaryRow.Provider). clientName, when
 // non-empty, narrows to one client family; "unknown" maps to the empty
 // client_name bucket (no User-Agent sent at all -- see
-// analytics.SankeyUnknownClientKey).
-func (s *Sink) sankeyUsage(ctx context.Context, tenantID string, from, to time.Time, clientName string) ([]sankeyRow, error) {
+// analytics.SankeyUnknownClientKey). byAgent additionally groups by the
+// row's profile and key_id (see sankeyRow); without it both stay "".
+func (s *Sink) sankeyUsage(ctx context.Context, tenantID string, from, to time.Time, clientName string, byAgent bool) ([]sankeyRow, error) {
 	where := []string{"tenant_id = ?", "timestamp >= ?", "timestamp < ?", "(requested_model != '' OR model != '')"}
 	args := []any{tenantID, from, to}
 	if clientName != "" {
@@ -66,8 +71,13 @@ func (s *Sink) sankeyUsage(ctx context.Context, tenantID string, from, to time.T
 		}
 	}
 
+	agentCols, agentGroup := "'' AS profile, '' AS key_id", ""
+	if byAgent {
+		agentCols, agentGroup = "profile, key_id", ", profile, key_id"
+	}
 	query := fmt.Sprintf(`SELECT client_name,
 			if(requested_model != '', requested_model, model) AS model_name,
+			%s,
 			topKIf(1)(resolved_vendor, resolved_vendor != '') AS vendors,
 			topK(1)(provider) AS dialects,
 			count() AS calls,
@@ -75,8 +85,8 @@ func (s *Sink) sankeyUsage(ctx context.Context, tenantID string, from, to time.T
 			toFloat64(ifNull(sum(cost_usd), 0)) AS cost_sum
 		FROM llm_calls
 		WHERE %s
-		GROUP BY client_name, model_name
-		ORDER BY tokens DESC, model_name`, strings.Join(where, " AND "))
+		GROUP BY client_name, model_name%s
+		ORDER BY tokens DESC, model_name`, agentCols, strings.Join(where, " AND "), agentGroup)
 	rowsRS, err := s.c.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -85,11 +95,11 @@ func (s *Sink) sankeyUsage(ctx context.Context, tenantID string, from, to time.T
 
 	out := []sankeyRow{}
 	for rowsRS.Next() {
-		var client, modelName string
+		var client, modelName, profile, keyID string
 		var vendors, dialects []string
 		var calls, tokens uint64
 		var costSum float64
-		if err := rowsRS.Scan(&client, &modelName, &vendors, &dialects, &calls, &tokens, &costSum); err != nil {
+		if err := rowsRS.Scan(&client, &modelName, &profile, &keyID, &vendors, &dialects, &calls, &tokens, &costSum); err != nil {
 			return nil, err
 		}
 		provider := ""
@@ -102,6 +112,8 @@ func (s *Sink) sankeyUsage(ctx context.Context, tenantID string, from, to time.T
 			Client:   client,
 			Model:    modelName,
 			Provider: provider,
+			Profile:  profile,
+			KeyID:    keyID,
 			Calls:    int64(calls),
 			Tokens:   int64(tokens),
 			CostUSD:  costSum,

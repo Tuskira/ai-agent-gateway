@@ -88,7 +88,7 @@ func (u *userStore) List(_ context.Context, tenantID string, opts store.UserList
 		if e.DeletedAt != nil || (opts.Role != "" && e.Role != opts.Role) {
 			continue
 		}
-		if e.TenantID != tenantID && !(opts.IncludePlatformAdmins && e.Role == store.UserRolePlatformAdmin && !e.Disabled) {
+		if e.TenantID != tenantID && (!opts.IncludePlatformAdmins || e.Role != store.UserRolePlatformAdmin || e.Disabled) {
 			continue
 		}
 		cp := *e

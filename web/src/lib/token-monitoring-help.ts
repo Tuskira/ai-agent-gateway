@@ -120,7 +120,7 @@ export const MONITORING_HELP = {
   },
   callers: {
     short:
-      'One row per API key: its role, input + output tokens and their share, estimated cost, calls, models used and the change against the previous period. Click a row for its models and sessions.',
+      'One row per API key, labelled with its agent: the agent profile the key is bound to, else the profile seen most often on its calls in this period, else "—". The key name is shown under it. Each row has its role, input + output tokens and their share, estimated cost, calls, models used and the change against the previous period. Click a row for its models and sessions.',
   },
   sessions: {
     short:

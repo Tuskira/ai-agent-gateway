@@ -39,6 +39,8 @@
       ],
       "by_key": [
         {
+          "agent": "support-agent",
+          "agent_source": "observed",
           "cache_read_tokens": 0,
           "cache_write_tokens": 0,
           "calls": 40,
@@ -49,6 +51,7 @@
           "models": 2,
           "name": "ci-bot",
           "prev_tokens": 200000,
+          "profile": "support-agent",
           "prompt_tokens": 200000,
           "role": "agent",
           "source": "gateway",
@@ -56,6 +59,8 @@
           "unpriced_calls": 0
         },
         {
+          "agent": "",
+          "agent_source": "",
           "cache_read_tokens": 0,
           "cache_write_tokens": 0,
           "calls": 6,
@@ -73,6 +78,8 @@
           "unpriced_calls": 6
         },
         {
+          "agent": "",
+          "agent_source": "",
           "cache_read_tokens": 0,
           "cache_write_tokens": 0,
           "calls": 2,
@@ -90,6 +97,8 @@
           "unpriced_calls": 0
         },
         {
+          "agent": "",
+          "agent_source": "",
           "cache_read_tokens": 0,
           "cache_write_tokens": 0,
           "calls": 1,
@@ -206,6 +215,8 @@
       ],
       "by_key": [
         {
+          "agent": "",
+          "agent_source": "",
           "cache_read_tokens": 0,
           "cache_write_tokens": 0,
           "calls": 3,
@@ -319,6 +330,8 @@
       ],
       "by_key": [
         {
+          "agent": "",
+          "agent_source": "",
           "cache_read_tokens": 0,
           "cache_write_tokens": 0,
           "calls": 40,
@@ -336,6 +349,8 @@
           "unpriced_calls": 0
         },
         {
+          "agent": "",
+          "agent_source": "",
           "cache_read_tokens": 0,
           "cache_write_tokens": 0,
           "calls": 2,

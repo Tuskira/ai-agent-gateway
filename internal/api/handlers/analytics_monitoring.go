@@ -43,12 +43,23 @@ type tokenModelView struct {
 	DeltaPct *float64 `json:"delta_pct"`
 }
 
+// tokenKeyView is one API key's row. Agent is the agent profile it belongs
+// to: the key's bound profile ("bound"), else the profile most often seen on
+// its calls in the period ("observed"), else "" with AgentSource "".
 type tokenKeyView struct {
 	analytics.KeyTokenUsage
-	Name     string   `json:"name"`
-	Role     string   `json:"role"`
-	DeltaPct *float64 `json:"delta_pct"`
+	Name        string   `json:"name"`
+	Role        string   `json:"role"`
+	Agent       string   `json:"agent"`
+	AgentSource string   `json:"agent_source"`
+	DeltaPct    *float64 `json:"delta_pct"`
 }
+
+// Where a key's Agent comes from.
+const (
+	agentBound    = "bound"
+	agentObserved = "observed"
+)
 
 type tokenSessionView struct {
 	analytics.SessionTokenUsage
@@ -152,7 +163,7 @@ func (h Analytics) serveMonitoring(w http.ResponseWriter, r *http.Request, q ana
 		Range: g.Range, Start: g.Start, End: g.End, Granularity: g.Granularity,
 		Totals:        totalsView(g.Totals),
 		ByModel:       modelViews(g.ByModel),
-		ByKey:         keyViews(g.ByKey, keys),
+		ByKey:         keyViews(g.ByKey, keys, h.profileNames(r, tid)),
 		Burn:          g.Burn,
 		Sessions:      sessions,
 		SessionsTotal: g.SessionsTotal,
@@ -231,11 +242,42 @@ func modelViews(in []analytics.ModelTokenUsage) []tokenModelView {
 	return out
 }
 
-func keyViews(in []analytics.KeyTokenUsage, keys map[string]*store.APIKey) []tokenKeyView {
+func keyViews(in []analytics.KeyTokenUsage, keys map[string]*store.APIKey, profiles map[string]string) []tokenKeyView {
 	out := make([]tokenKeyView, 0, len(in))
 	for _, k := range in {
-		out = append(out, tokenKeyView{KeyTokenUsage: k, Name: nameOf(keys[k.KeyID]), Role: callerRole(k.Source, keys[k.KeyID]),
-			DeltaPct: analytics.DeltaPct(k.Tokens, k.PrevTokens)})
+		v := tokenKeyView{KeyTokenUsage: k, Name: nameOf(keys[k.KeyID]), Role: callerRole(k.Source, keys[k.KeyID]),
+			DeltaPct: analytics.DeltaPct(k.Tokens, k.PrevTokens)}
+		v.Agent, v.AgentSource = agentOf(keys[k.KeyID], profiles, k.Profile)
+		out = append(out, v)
+	}
+	return out
+}
+
+// agentOf resolves a key's agent: its bound profile's name, else the
+// observed profile, else none.
+func agentOf(k *store.APIKey, profiles map[string]string, observed string) (name, source string) {
+	if k != nil && k.ProfileID != nil {
+		if n := profiles[*k.ProfileID]; n != "" {
+			return n, agentBound
+		}
+	}
+	if observed != "" {
+		return observed, agentObserved
+	}
+	return "", ""
+}
+
+// profileNames maps the tenant's agent profile ids to names. A failed read
+// degrades to observed profiles only rather than failing the page.
+func (h Analytics) profileNames(r *http.Request, tid string) map[string]string {
+	out := map[string]string{}
+	profiles, err := h.Store.AgentProfiles().List(r.Context(), tid)
+	if err != nil {
+		applog.From(r.Context()).Warn("token monitoring: list agent profiles failed; bound agents not resolved", "error", err)
+		return out
+	}
+	for _, p := range profiles {
+		out[p.ID] = p.Name
 	}
 	return out
 }

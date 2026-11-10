@@ -100,7 +100,7 @@ func TestTokenMonitoring_ConsoleContract(t *testing.T) {
 			{Model: "local-coder", TokenUsage: tiny},
 		},
 		ByKey: []analytics.KeyTokenUsage{
-			{KeyID: ids["ci-bot"], Source: "gateway", Models: 2, TokenUsage: analytics.TokenUsage{Tokens: 300000, PromptTokens: 200000, CompletionTokens: 100000, CostUSD: f(3.9), Calls: 40, PrevTokens: 200000}},
+			{KeyID: ids["ci-bot"], Source: "gateway", Models: 2, Profile: "support-agent", TokenUsage: analytics.TokenUsage{Tokens: 300000, PromptTokens: 200000, CompletionTokens: 100000, CostUSD: f(3.9), Calls: 40, PrevTokens: 200000}},
 			{KeyID: ids["collector"], Source: "interceptor", Models: 1, TokenUsage: analytics.TokenUsage{Tokens: 24000, PromptTokens: 20000, CompletionTokens: 4000, Calls: 6, UnpricedCalls: 6}},
 			{KeyID: ids["ops"], Source: "gateway", Models: 1, TokenUsage: analytics.TokenUsage{Tokens: 15000, PromptTokens: 10000, CompletionTokens: 5000, CostUSD: f(0.2234), Calls: 2}},
 			{KeyID: "deleted-key", Source: "gateway", Models: 1, TokenUsage: tiny},

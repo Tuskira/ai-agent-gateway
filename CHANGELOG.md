@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`); earlier rows read back
   empty and fall back to the key's name or the client family in the graph.
   The header is now also stored unmasked in the captured request headers.
+- **Token Monitoring shows usage by agent.** The **Callers** table is now
+  **Token usage by agent**, still one row per API key. Each row leads with
+  its agent: the key's bound profile, else the profile seen most often on
+  its calls in the period (`llm_calls.profile`), else `—`; the key name sits
+  beneath. `GET /api/v1/analytics/token-monitoring` `by_key` entries gain
+  `agent`, `agent_source` (`bound`, `observed` or empty) and `profile`; no
+  field is removed and the routes are unchanged. The `llm_usage_canonical`
+  view gains a `profile` column. See [docs/observability.md](docs/observability.md#token-monitoring).
 
 ### Changed
 

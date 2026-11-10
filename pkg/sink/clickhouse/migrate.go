@@ -239,6 +239,7 @@ SELECT
 	key_id,
 	session_id,
 	source,
+	profile,
 	caller_model AS model,
 	pricing_provider AS provider,
 	if(pricing_provider IN ('openai', 'gemini'),
@@ -252,7 +253,7 @@ SELECT
 	toBool(isNotNull(cost_usd)) AS priced
 FROM (
 	SELECT
-		timestamp, request_id, tenant_id, key_id, session_id, source,
+		timestamp, request_id, tenant_id, key_id, session_id, source, profile,
 		if(requested_model != '', requested_model, model) AS caller_model,
 		multiIf(resolved_vendor = '', provider, resolved_vendor = 'openai_compat', 'openai', resolved_vendor) AS pricing_provider,
 		input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd

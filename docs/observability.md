@@ -741,6 +741,7 @@ needs `CREATE VIEW` as well as the table privileges (see
 
 | Column | Definition |
 |---|---|
+| `profile` | The agent profile recorded on the call (`llm_calls.profile`); empty for older rows. |
 | `model` | The name the caller asked for (`requested_model`, else `model`), so a registry alias is one row whatever target answered. |
 | `provider` | The provider the call was costed as: the registry target's vendor (`openai_compat` → `openai`, a label as itself), else the client's dialect. |
 | `prompt_tokens` | Input tokens **excluding cache reads**. `openai` and `gemini` count cached tokens inside input, so they are subtracted back (never below 0), the same rule pricing uses. |
@@ -767,11 +768,18 @@ the period of the same length just before. The change is `null` — shown as
 hourly for windows up to 48 hours and daily otherwise, with empty buckets as
 zeros.
 
-**Callers** are API keys, named from the key table, with a role: `agent`,
+**Token usage by agent** (the page's key table, formerly *Callers*) has one
+row per API key, named from the key table, with a role: `agent`,
 `admin` (admin and platform-admin keys), `interceptor` (an interceptor
 key, or any ingested row), or `other` (viewer keys, keys since deleted,
-and calls with no key). Clicking a model or a caller opens its breakdown
-and its sessions; a session links to the Session Timeline.
+and calls with no key). Each `by_key` entry also carries `agent` and
+`agent_source`: the name of the agent profile the key is bound to
+(`bound`), else the profile recorded most often on the key's calls in the
+period (`observed`, from `llm_calls.profile`; the entry's `profile`), else
+empty with an empty `agent_source`. The console shows the agent as the row's
+label and the key name beneath it, with `—` when there is no agent. The
+routes are unchanged. Clicking a model or a key opens its breakdown and its
+sessions; a session links to the Session Timeline.
 
 Small values are never shown as zero: a cost under one cent keeps two
 significant digits (`$0.0000097`), and a share under 0.1% reads `<0.1%`.

@@ -140,7 +140,8 @@ func (s *Sink) monByModel(ctx context.Context, tenantID string, b analytics.Peri
 }
 
 func (s *Sink) monByKey(ctx context.Context, tenantID string, b analytics.Period, filter string, filterArgs ...any) ([]analytics.KeyTokenUsage, error) {
-	rows, err := s.c.Query(ctx, `SELECT key_id, anyHeavy(source), uniqExactIf(model, cur), `+usageSelect+`
+	rows, err := s.c.Query(ctx, `SELECT key_id, anyHeavy(source), uniqExactIf(model, cur),
+		arrayElement(topKIf(1)(profile, cur AND profile != ''), 1), `+usageSelect+`
 		FROM `+monBase(filter)+`
 		GROUP BY key_id HAVING u_calls > 0
 		ORDER BY u_tokens DESC, key_id`, monArgs(tenantID, b, filterArgs...)...)
@@ -152,7 +153,7 @@ func (s *Sink) monByKey(ctx context.Context, tenantID string, b analytics.Period
 	for rows.Next() {
 		var k analytics.KeyTokenUsage
 		var sc usageScan
-		if err := rows.Scan(append([]any{&k.KeyID, &k.Source, &k.Models}, sc.dest()...)...); err != nil {
+		if err := rows.Scan(append([]any{&k.KeyID, &k.Source, &k.Models, &k.Profile}, sc.dest()...)...); err != nil {
 			return nil, err
 		}
 		k.TokenUsage = sc.usage()

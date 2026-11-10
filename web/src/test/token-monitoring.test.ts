@@ -7,6 +7,7 @@ import {
   fetchTokenMonitoringModel,
   formatShare,
   formatTokenCost,
+  agentLabel,
   callerLabel,
   gridColumnCount,
   tokenSplit,
@@ -60,6 +61,14 @@ describe('gridColumnCount', () => {
     expect(gridColumnCount('repeat(auto-fill, minmax(min(100%, 300px), 1fr))')).toBeNull()
     expect(gridColumnCount('none')).toBeNull()
     expect(gridColumnCount('')).toBeNull()
+  })
+})
+
+describe('agentLabel', () => {
+  it('shows the agent, else a dash', () => {
+    expect(agentLabel({ agent: 'support-agent' })).toBe('support-agent')
+    expect(agentLabel({ agent: '' })).toBe('—')
+    expect(agentLabel({})).toBe('—')
   })
 })
 

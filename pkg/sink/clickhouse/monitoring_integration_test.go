@@ -143,9 +143,9 @@ func monFixture(t *testing.T, s interface{ WriteLLMCall(*sink.LLMCall) }, tenant
 	t.Helper()
 	cost := 0.01
 	rows := []*sink.LLMCall{
-		{KeyID: "key-a", SessionID: "s1", Provider: "anthropic", Model: "claude-sonnet-4-5", InputTokens: 100, OutputTokens: 50, CostUSD: &cost},
-		{KeyID: "key-a", SessionID: "s1", Provider: "anthropic", Model: "claude-sonnet-4-5", InputTokens: 100, OutputTokens: 50, CostUSD: &cost},
-		{KeyID: "key-a", SessionID: "s2", Provider: "openai", Model: "gpt-5", InputTokens: 500, OutputTokens: 40, CacheReadTokens: 300},
+		{KeyID: "key-a", SessionID: "s1", Profile: "triage-agent", Provider: "anthropic", Model: "claude-sonnet-4-5", InputTokens: 100, OutputTokens: 50, CostUSD: &cost},
+		{KeyID: "key-a", SessionID: "s1", Profile: "triage-agent", Provider: "anthropic", Model: "claude-sonnet-4-5", InputTokens: 100, OutputTokens: 50, CostUSD: &cost},
+		{KeyID: "key-a", SessionID: "s2", Profile: "report-agent", Provider: "openai", Model: "gpt-5", InputTokens: 500, OutputTokens: 40, CacheReadTokens: 300},
 		{KeyID: "key-b", Source: "interceptor", Provider: "anthropic", Model: "claude-sonnet-4-5", InputTokens: 10, OutputTokens: 5, CostUSD: &cost},
 		{KeyID: "key-a", SessionID: "s1", Provider: "anthropic", Model: "claude-sonnet-4-5", InputTokens: 100, OutputTokens: 100, CostUSD: &cost, Timestamp: now.Add(-8 * 24 * time.Hour)},
 		{KeyID: "key-a", Provider: "anthropic", Model: "claude-sonnet-4-5", FallbackIndex: -1, StatusCode: 429},
@@ -212,6 +212,9 @@ func TestIntegration_TokenMonitoring(t *testing.T) {
 	if len(g.ByKey) != 2 || g.ByKey[0].KeyID != "key-a" || g.ByKey[0].Tokens != 540 || g.ByKey[0].Models != 2 ||
 		g.ByKey[0].Source != "gateway" || g.ByKey[1].KeyID != "key-b" || g.ByKey[1].Source != "interceptor" || g.ByKey[1].Tokens != 15 {
 		t.Errorf("by_key = %+v, want key-a 540 (2 models, gateway) then key-b 15 (interceptor)", g.ByKey)
+	}
+	if g.ByKey[0].Profile != "triage-agent" || g.ByKey[1].Profile != "" {
+		t.Errorf("by_key profiles = %q / %q, want the most frequent (triage-agent) / empty", g.ByKey[0].Profile, g.ByKey[1].Profile)
 	}
 	var sumModel, sumKey, sumBurn uint64
 	for _, m := range g.ByModel {

@@ -71,6 +71,9 @@ type KeyTokenUsage struct {
 	KeyID  string `json:"key_id"`
 	Source string `json:"source"`
 	Models uint64 `json:"models"`
+	// Profile is the agent profile most often recorded on this key's calls
+	// in the period (llm_calls.profile); empty when none was recorded.
+	Profile string `json:"profile,omitempty"`
 	TokenUsage
 }
 

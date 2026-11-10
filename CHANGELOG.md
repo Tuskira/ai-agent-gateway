@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The console sidebar now lists **Observe** right after **Dashboards**.
+
 ### Fixed
 
 - **A platform-admin user now shows in every tenant's Users page.** The role

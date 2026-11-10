@@ -18,11 +18,16 @@ import (
 // TrafficFlowSankey implements analytics.Reader.
 func (s *Sink) TrafficFlowSankey(ctx context.Context, tenantID string, q analytics.SankeyQuery) (*analytics.TrafficFlow, error) {
 	from, to := q.Period.Start, q.Period.End
+	sel := newFlowSelect(q)
+	// Profile and key id are only read when the left column needs them;
+	// grouping by client keeps the narrower, original queries.
+	byAgent := sel.groupBy != analytics.SankeyGroupClient
 
 	// Both planes are read unfiltered: the response's Agents list has to
-	// cover every family in the window, so the ClientName filter is applied
-	// in buildTrafficFlow (the grouped rows are a handful either way).
-	llm, err := s.sankeyUsage(ctx, tenantID, from, to, "")
+	// cover every node in the window, so the ClientName and Agent filters
+	// are applied in buildTrafficFlow (the grouped rows are a handful
+	// either way).
+	llm, err := s.sankeyUsage(ctx, tenantID, from, to, "", byAgent)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: traffic-flow sankey: %w", err)
 	}
@@ -31,7 +36,7 @@ func (s *Sink) TrafficFlowSankey(ctx context.Context, tenantID string, q analyti
 	// (not just zeroed) for those metrics -- see analytics.TrafficFlow.
 	var mcp []mcpFlowRow
 	if q.Metric == "" || q.Metric == analytics.SankeyMetricCalls {
-		if mcp, err = s.mcpFlowUsage(ctx, tenantID, from, to); err != nil {
+		if mcp, err = s.mcpFlowUsage(ctx, tenantID, from, to, byAgent); err != nil {
 			return nil, fmt.Errorf("clickhouse: traffic-flow sankey: %w", err)
 		}
 	}
@@ -41,18 +46,23 @@ func (s *Sink) TrafficFlowSankey(ctx context.Context, tenantID string, q analyti
 		limit = analytics.SankeyDefaultLimit
 	}
 
-	out := buildTrafficFlow(llm, mcp, limit, q.Metric, q.ClientName)
+	out := buildTrafficFlow(llm, mcp, limit, q.Metric, sel)
 	out.Range = q.Range
 	out.Metric = q.Metric
 	return out, nil
 }
 
-// mcpFlowRow is one (client family, connector) grouped count of tools/call
-// rows read from mcp_access_logs. Client is already classified through
-// sink.ClientFamily ("" for no User-Agent at all, like sankeyRow.Client).
+// mcpFlowRow is one (client family, connector, profile, key) grouped count
+// of tools/call rows read from mcp_access_logs. Client is already
+// classified through sink.ClientFamily ("" for no User-Agent at all, like
+// sankeyRow.Client). Profile is mcp_access_logs.profile and KeyID is
+// mcp_access_logs.key_id; both are "" when the query did not ask for them
+// or the row has none.
 type mcpFlowRow struct {
 	Client    string
 	Connector string
+	Profile   string
+	KeyID     string
 	Calls     int64
 }
 
@@ -66,20 +76,25 @@ func mcpClientKey(userAgent string) string {
 }
 
 // mcpFlowUsage counts tools/call rows in mcp_access_logs grouped by the
-// raw user_agent and connector_id, then classifies each user_agent in Go
-// with sink.ClientFamily. mcp_access_logs stores no client_name column;
-// grouping by the raw header first keeps the row count to the number of
-// distinct agent/version strings (small) and keeps the classification in
-// one place instead of re-expressing it in SQL.
-func (s *Sink) mcpFlowUsage(ctx context.Context, tenantID string, from, to time.Time) ([]mcpFlowRow, error) {
+// raw user_agent and connector_id (plus profile and key_id when byAgent),
+// then classifies each user_agent in Go with sink.ClientFamily.
+// mcp_access_logs stores no client_name column; grouping by the raw header
+// first keeps the row count to the number of distinct agent/version
+// strings (small) and keeps the classification in one place instead of
+// re-expressing it in SQL.
+func (s *Sink) mcpFlowUsage(ctx context.Context, tenantID string, from, to time.Time, byAgent bool) ([]mcpFlowRow, error) {
 	where := []string{"tenant_id = ?", "timestamp >= ?", "timestamp < ?", "method = 'tools/call'"}
 	args := []any{tenantID, from, to}
 
-	query := fmt.Sprintf(`SELECT user_agent, connector_id, count() AS calls
+	agentCols, agentGroup := "'' AS profile, '' AS key_id", ""
+	if byAgent {
+		agentCols, agentGroup = "profile, key_id", ", profile, key_id"
+	}
+	query := fmt.Sprintf(`SELECT user_agent, connector_id, %s, count() AS calls
 		FROM mcp_access_logs
 		WHERE %s
-		GROUP BY user_agent, connector_id
-		ORDER BY calls DESC, connector_id, user_agent`, strings.Join(where, " AND "))
+		GROUP BY user_agent, connector_id%s
+		ORDER BY calls DESC, connector_id, user_agent`, agentCols, strings.Join(where, " AND "), agentGroup)
 	rows, err := s.c.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -87,14 +102,15 @@ func (s *Sink) mcpFlowUsage(ctx context.Context, tenantID string, from, to time.
 	defer rows.Close()
 
 	// Merge every user_agent that classifies to the same family.
-	merged := map[sankeyLinkKey]int64{}
+	type mcpFlowKey struct{ client, connector, profile, keyID string }
+	merged := map[mcpFlowKey]int64{}
 	for rows.Next() {
-		var ua, connector string
+		var ua, connector, profile, keyID string
 		var calls uint64
-		if err := rows.Scan(&ua, &connector, &calls); err != nil {
+		if err := rows.Scan(&ua, &connector, &profile, &keyID, &calls); err != nil {
 			return nil, err
 		}
-		merged[sankeyLinkKey{sink.ClientFamily(ua), connector}] += int64(calls)
+		merged[mcpFlowKey{sink.ClientFamily(ua), connector, profile, keyID}] += int64(calls)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -102,16 +118,23 @@ func (s *Sink) mcpFlowUsage(ctx context.Context, tenantID string, from, to time.
 
 	out := make([]mcpFlowRow, 0, len(merged))
 	for k, calls := range merged {
-		out = append(out, mcpFlowRow{Client: k.source, Connector: k.target, Calls: calls})
+		out = append(out, mcpFlowRow{Client: k.client, Connector: k.connector, Profile: k.profile, KeyID: k.keyID, Calls: calls})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Calls != out[j].Calls {
-			return out[i].Calls > out[j].Calls
+		a, b := out[i], out[j]
+		if a.Calls != b.Calls {
+			return a.Calls > b.Calls
 		}
-		if out[i].Client != out[j].Client {
-			return out[i].Client < out[j].Client
+		if a.Client != b.Client {
+			return a.Client < b.Client
 		}
-		return out[i].Connector < out[j].Connector
+		if a.Connector != b.Connector {
+			return a.Connector < b.Connector
+		}
+		if a.Profile != b.Profile {
+			return a.Profile < b.Profile
+		}
+		return a.KeyID < b.KeyID
 	})
 	return out, nil
 }
@@ -165,6 +188,88 @@ func topKeys(totals map[string]float64, limit int) map[string]bool {
 	return top
 }
 
+// flowSelect is what buildTrafficFlow needs to know about the left column:
+// what it groups by, which node (if any) to narrow to, and the names the
+// Reader cannot resolve itself.
+type flowSelect struct {
+	groupBy    analytics.SankeyGroupBy
+	agent      string
+	clientName string
+	dir        analytics.AgentDirectory
+}
+
+func newFlowSelect(q analytics.SankeyQuery) flowSelect {
+	g := q.GroupBy
+	if g == "" {
+		g = analytics.SankeyGroupClient
+	}
+	sel := flowSelect{groupBy: g, agent: q.Agent, clientName: q.ClientName}
+	if q.Directory != nil {
+		sel.dir = *q.Directory
+	}
+	return sel
+}
+
+// flowAgent is one node of the CLIENT column: its key, display label and,
+// when grouped by agent, the identity kind that named it.
+type flowAgent struct{ key, label, kind string }
+
+const (
+	flowProfilePrefix = "profile:"
+	flowKeyPrefix     = "key:"
+)
+
+// shortKeyID labels an API key whose name the directory cannot supply (a
+// key deleted since the call), without printing a whole uuid.
+func shortKeyID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// identify names the CLIENT node one grouped row belongs to.
+//
+// Grouped by client it is the client family. Grouped by key it is the API
+// key id (rows with none -- ingested interceptor rows -- are "unknown").
+// Grouped by agent it is the first of: the profile stored on the row (the
+// key's bound profile at call time, else the caller's X-Agent-Profile-Name
+// header), the profile the key is bound to now (for rows written before
+// the profile was recorded), the API key's name, the client family, and
+// finally "unknown". Profile and key nodes get a kind prefix so a profile
+// called "cursor" never collides with the Cursor client; a client node
+// keeps its bare family key, the same key group_by=client gives it.
+func (s flowSelect) identify(client, profile, keyID string) flowAgent {
+	switch s.groupBy {
+	case analytics.SankeyGroupClient:
+		return flowAgent{key: clientKey(client), label: clientLabel(clientKey(client))}
+	case analytics.SankeyGroupKey:
+		if keyID == "" {
+			return flowAgent{key: analytics.SankeyUnknownClientKey, label: analytics.SankeyUnknownClientLabel}
+		}
+		if name := s.dir.KeyNames[keyID]; name != "" {
+			return flowAgent{key: keyID, label: name}
+		}
+		return flowAgent{key: keyID, label: shortKeyID(keyID)}
+	}
+
+	if profile = strings.TrimSpace(profile); profile != "" {
+		return flowAgent{key: flowProfilePrefix + profile, label: profile, kind: analytics.SankeyKindProfile}
+	}
+	if keyID != "" {
+		if bound := s.dir.KeyProfiles[keyID]; bound != "" {
+			return flowAgent{key: flowProfilePrefix + bound, label: bound, kind: analytics.SankeyKindProfile}
+		}
+		if name := s.dir.KeyNames[keyID]; name != "" {
+			return flowAgent{key: flowKeyPrefix + keyID, label: name, kind: analytics.SankeyKindKey}
+		}
+	}
+	if ck := clientKey(client); ck != analytics.SankeyUnknownClientKey {
+		return flowAgent{key: ck, label: clientLabel(ck), kind: analytics.SankeyKindClient}
+	}
+	return flowAgent{key: analytics.SankeyUnknownClientKey, label: analytics.SankeyUnknownClientLabel}
+}
+
 // buildTrafficFlow turns the two planes' grouped rows into the CLIENT ->
 // PATH -> MODEL | CONNECTOR graph GET /api/v1/analytics/traffic-flow
 // returns. Each LLM row contributes its metric Value to one CLIENT->PATH:llm
@@ -175,6 +280,10 @@ func topKeys(totals map[string]float64, limit int) map[string]bool {
 // node exists only when its branch has traffic, so a tokens/cost graph has
 // a single LLM path with no empty MCP stub beside it.
 //
+// The CLIENT node of each row comes from sel.identify (see there); when
+// the column is grouped by agent or key, the top analytics.SankeyAgentLimit
+// nodes keep their own node and the rest fold into "other-agents".
+//
 // Folding mirrors buildSankey per terminal column: the top `limit` models
 // keep their own MODEL node (the rest fold into "other-models") and,
 // separately, the top `limit` connectors keep their own CONNECTOR node
@@ -182,11 +291,11 @@ func topKeys(totals map[string]float64, limit int) map[string]bool {
 // provider that served most of that model's traffic; folded and CONNECTOR
 // nodes carry none.
 //
-// Agents is computed from every row before clientName is applied; when
-// clientName is non-empty only that family's rows build the graph (and
-// the fold ranking), so the graph is exactly what a filtered query of each
-// plane would have produced.
-func buildTrafficFlow(llm []sankeyRow, mcp []mcpFlowRow, limit int, metric analytics.SankeyMetric, clientName string) *analytics.TrafficFlow {
+// Agents is computed from every row before the filters are applied; when
+// sel.clientName or sel.agent is set only the matching rows build the
+// graph (and the fold ranking), so the graph is exactly what a filtered
+// query of each plane would have produced.
+func buildTrafficFlow(llm []sankeyRow, mcp []mcpFlowRow, limit int, metric analytics.SankeyMetric, sel flowSelect) *analytics.TrafficFlow {
 	out := &analytics.TrafficFlow{
 		Sankey: analytics.Sankey{Nodes: []analytics.SankeyNode{}, Links: []analytics.SankeyLink{}},
 		Agents: []analytics.SankeyAgent{},
@@ -196,24 +305,57 @@ func buildTrafficFlow(llm []sankeyRow, mcp []mcpFlowRow, limit int, metric analy
 		mcp = nil
 	}
 
-	// Every family in the window, before filtering.
+	llmAgent := func(r sankeyRow) flowAgent { return sel.identify(r.Client, r.Profile, r.KeyID) }
+	mcpAgent := func(r mcpFlowRow) flowAgent { return sel.identify(r.Client, r.Profile, r.KeyID) }
+
+	// Every node in the window, before filtering.
 	agentTotals := map[string]float64{}
+	agents := map[string]flowAgent{}
 	for _, r := range llm {
-		agentTotals[clientKey(r.Client)] += r.value(metric)
+		a := llmAgent(r)
+		agentTotals[a.key] += r.value(metric)
+		agents[a.key] = a
 	}
 	for _, r := range mcp {
-		agentTotals[clientKey(r.Client)] += float64(r.Calls)
+		a := mcpAgent(r)
+		agentTotals[a.key] += float64(r.Calls)
+		agents[a.key] = a
 	}
 	for _, n := range sortedNodes(agentTotals, analytics.SankeyNodeClient, nil) {
 		if n.Value == 0 {
 			continue
 		}
-		out.Agents = append(out.Agents, analytics.SankeyAgent{Key: n.Key, Label: clientLabel(n.Key), Value: n.Value})
+		a := agents[n.Key]
+		out.Agents = append(out.Agents, analytics.SankeyAgent{Key: a.key, Label: a.label, Value: n.Value, Sublabel: a.kind})
 	}
 
-	if clientName != "" {
-		llm = filterRows(llm, func(r sankeyRow) bool { return clientKey(r.Client) == clientName })
-		mcp = filterRows(mcp, func(r mcpFlowRow) bool { return clientKey(r.Client) == clientName })
+	if sel.clientName != "" {
+		llm = filterRows(llm, func(r sankeyRow) bool { return clientKey(r.Client) == sel.clientName })
+		mcp = filterRows(mcp, func(r mcpFlowRow) bool { return clientKey(r.Client) == sel.clientName })
+	}
+	if sel.agent != "" {
+		llm = filterRows(llm, func(r sankeyRow) bool { return llmAgent(r).key == sel.agent })
+		mcp = filterRows(mcp, func(r mcpFlowRow) bool { return mcpAgent(r).key == sel.agent })
+	}
+
+	// The left column folds its tail unless it is the handful of client
+	// families.
+	agentNode := func(a flowAgent) string { return a.key }
+	if sel.groupBy != analytics.SankeyGroupClient {
+		kept := map[string]float64{}
+		for _, r := range llm {
+			kept[llmAgent(r).key] += r.value(metric)
+		}
+		for _, r := range mcp {
+			kept[mcpAgent(r).key] += float64(r.Calls)
+		}
+		topAgents := topKeys(kept, analytics.SankeyAgentLimit)
+		agentNode = func(a flowAgent) string {
+			if topAgents[a.key] {
+				return a.key
+			}
+			return analytics.SankeyOtherAgentsKey
+		}
 	}
 
 	// Rank the terminal columns to decide who keeps their own node.
@@ -244,7 +386,7 @@ func buildTrafficFlow(llm []sankeyRow, mcp []mcpFlowRow, limit int, metric analy
 			continue
 		}
 		out.Total += v
-		ck := clientKey(r.Client)
+		ck := agentNode(llmAgent(r))
 		mk := r.Model
 		if !topModels[mk] {
 			mk = analytics.SankeyOtherModelsKey
@@ -268,7 +410,7 @@ func buildTrafficFlow(llm []sankeyRow, mcp []mcpFlowRow, limit int, metric analy
 			continue
 		}
 		out.Total += v
-		ck := clientKey(r.Client)
+		ck := agentNode(mcpAgent(r))
 		nk := connectorKey(r.Connector)
 		if !topConnectors[nk] {
 			nk = analytics.SankeyOtherConnectorsKey
@@ -287,9 +429,17 @@ func buildTrafficFlow(llm []sankeyRow, mcp []mcpFlowRow, limit int, metric analy
 	// Nodes, one column at a time.
 	clientLabels_ := map[string]string{}
 	for k := range clientValue {
-		clientLabels_[k] = clientLabel(k)
+		if k == analytics.SankeyOtherAgentsKey {
+			clientLabels_[k] = analytics.SankeyOtherAgentsLabel
+		} else {
+			clientLabels_[k] = agents[k].label
+		}
 	}
-	out.Nodes = append(out.Nodes, sortedNodes(clientValue, analytics.SankeyNodeClient, clientLabels_)...)
+	clientNodes := sortedNodes(clientValue, analytics.SankeyNodeClient, clientLabels_)
+	for i := range clientNodes {
+		clientNodes[i].Sublabel = agents[clientNodes[i].Key].kind
+	}
+	out.Nodes = append(out.Nodes, clientNodes...)
 
 	// PATH keeps a fixed LLM-then-MCP order regardless of volume so the
 	// two planes never swap places between ranges.

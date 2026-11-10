@@ -63,7 +63,7 @@ const insertLLMCallsSQL = "INSERT INTO llm_calls (" + `
 	status_code, duration_ms, stream, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
 	stop_reason, provider_request_id, headers, request_body, response_body, messages, system, tools, truncated, error, cost_usd,
 	body_ref, client_ip, client_name, user_agent, requested_model, resolved_vendor, resolved_model, translated, fallback_index, source, ` + "`user`" + `,
-	skills_used, mcp_tools_used
+	skills_used, mcp_tools_used, profile
 )`
 
 func (w *chWriter) InsertLLM(ctx context.Context, rows []*sink.LLMCall) error {
@@ -82,7 +82,7 @@ func (w *chWriter) InsertLLM(ctx context.Context, rows []*sink.LLMCall) error {
 			boolUint8(r.Truncated), r.Error, decCost(r.CostUSD),
 			r.BodyRef, r.ClientIP, r.ClientName, r.UserAgent, r.RequestedModel, r.ResolvedVendor, r.ResolvedModel, boolUint8(r.Translated), int32(r.FallbackIndex),
 			sourceOrDefault(r.Source), r.User,
-			nonNilStrings(r.SkillsUsed), nonNilStrings(r.MCPToolsUsed),
+			nonNilStrings(r.SkillsUsed), nonNilStrings(r.MCPToolsUsed), r.Profile,
 		); err != nil {
 			return err
 		}

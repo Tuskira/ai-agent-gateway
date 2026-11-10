@@ -10,16 +10,20 @@ import {
   type SankeyLink as BalancedLink,
   type SankeyNode as BalancedNode,
 } from '@/components/app/sankey'
+import { SegmentedControl } from '@/components/app/SegmentedControl'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { formatCompactNumber, periodLabel, type Period } from '@/lib/overview'
-import { toBalancedData } from '@/lib/traffic-flow'
+import { toBalancedData, TRAFFIC_FLOW_GROUP_LABELS } from '@/lib/traffic-flow'
 import {
+  agentKindLabel,
   providerLabel,
   SANKEY_GATEWAY_TOOLS_KEY,
+  SANKEY_OTHER_AGENTS_KEY,
   SANKEY_OTHER_CONNECTORS_KEY,
   SANKEY_OTHER_MODELS_KEY,
   type SankeyNode,
   type TrafficFlow,
+  type TrafficFlowGroupBy,
   type TrafficPath,
 } from '@/lib/sankey'
 import { colors } from '@/styles/tokens'
@@ -28,9 +32,12 @@ import { cn } from '@/lib/utils'
 interface TrafficFlowCardProps {
   data: TrafficFlow | null | undefined
   period: Period
-  /** The selected agent (`client_name`), `''` for all. */
-  clientName: string
-  onClientNameChange: (clientName: string) => void
+  /** What the left column groups by. */
+  groupBy: TrafficFlowGroupBy
+  onGroupByChange: (groupBy: TrafficFlowGroupBy) => void
+  /** The selected left-column node (`agent`), `''` for all. */
+  agent: string
+  onAgentChange: (agent: string) => void
   /** Shown when the request has settled and `data` came back `null` (analytics
    * off / endpoint 404s). */
   emptyLabel?: string
@@ -54,6 +61,18 @@ const PATH_LEGEND: { key: TrafficPath; label: string }[] = [
   { key: 'llm', label: 'LLM path' },
   { key: 'mcp', label: 'MCP path' },
 ]
+
+/** The grouping toggle's options, in the order they are offered. */
+const GROUP_OPTIONS = (
+  Object.entries(TRAFFIC_FLOW_GROUP_LABELS) as [TrafficFlowGroupBy, string][]
+).map(([value, label]) => ({ value, label }))
+
+/** What the "all" option of the select is called per grouping. */
+const ALL_LABEL: Record<TrafficFlowGroupBy, string> = {
+  agent: 'All agents',
+  key: 'All API keys',
+  client: 'All harnesses',
+}
 
 /** Neutral bar fill that follows the theme (light: mid grey, dark: light grey). */
 const NODE_FILL = 'var(--text-muted)'
@@ -89,7 +108,7 @@ function nodeTarget(
 ): 'agent' | 'model' | 'connector' | null {
   switch (node?.type) {
     case 'CLIENT':
-      return 'agent'
+      return node.key === SANKEY_OTHER_AGENTS_KEY ? null : 'agent'
     case 'MODEL':
       return node.key === SANKEY_OTHER_MODELS_KEY ? null : 'model'
     case 'CONNECTOR':
@@ -114,7 +133,11 @@ function NodeLabel({
 }) {
   const type = meta?.type
   const left = type === 'CLIENT'
+  // A MODEL node names the provider that served it; a CLIENT node (grouped
+  // by agent) says what named it -- a profile, an API key or a harness --
+  // as a badge, so a mixed column reads at a glance.
   const sublabel = type === 'MODEL' ? providerLabel(meta?.sublabel) : ''
+  const kind = left ? agentKindLabel(meta?.sublabel) : ''
   return (
     <div className="relative h-4" style={{ width: node.labelWidth }}>
       <div
@@ -143,6 +166,14 @@ function NodeLabel({
             {sublabel}
           </span>
         ) : null}
+        {kind ? (
+          <span
+            className="mt-0.5 rounded-[4px] border border-border px-1 text-[10px] leading-[14px] text-text-subtle"
+            data-testid="agent-kind"
+          >
+            {kind}
+          </span>
+        ) : null}
       </div>
     </div>
   )
@@ -153,13 +184,16 @@ function NodeLabel({
  * /api/v1/analytics/traffic-flow` as a balanced CLIENT -> PATH -> MODEL |
  * CONNECTOR Sankey (see `@/components/app/sankey` and
  * docs/observability.md#agent-traffic-flow). Follows the page's period
- * filter; the agent select narrows the graph to one client family.
+ * filter. The toggle picks what the left column groups by (agent, API key
+ * or harness); the select narrows the graph to one node of it.
  */
 export function TrafficFlowCard({
   data,
   period,
-  clientName,
-  onClientNameChange,
+  groupBy,
+  onGroupByChange,
+  agent,
+  onAgentChange,
   emptyLabel = 'No data yet · enable the ClickHouse sink',
   loading = false,
   help,
@@ -169,26 +203,29 @@ export function TrafficFlowCard({
   const rangeLabel =
     period.range === 'custom' ? periodLabel(period) : periodLabel(period).toLowerCase()
 
-  const chart = useMemo(() => (hasData ? toBalancedData(data!) : null), [hasData, data])
+  const chart = useMemo(
+    () => (hasData ? toBalancedData(data!, groupBy) : null),
+    [hasData, data, groupBy],
+  )
   const meta = chart?.meta
 
-  // The select lists the agents the window actually saw (`agents` is
+  // The select lists the nodes the window actually saw (`agents` is
   // computed server-side before the filter, so it stays complete while one
-  // is picked). A selected agent that has since dropped out of the window
-  // is kept as an option so the select never shows a value it lacks.
+  // is picked). A selected one that has since dropped out of the window is
+  // kept as an option so the select never shows a value it lacks.
   const agentOptions = useMemo(() => {
     const agents = data?.agents ?? []
-    if (clientName && !agents.some((a) => a.key === clientName)) {
-      return [...agents, { key: clientName, label: clientName, value: 0 }]
+    if (agent && !agents.some((a) => a.key === agent)) {
+      return [...agents, { key: agent, label: agent, value: 0, sublabel: undefined }]
     }
     return agents
-  }, [data, clientName])
+  }, [data, agent])
 
   const open = useCallback(
     (node: SankeyNode | undefined) => {
       switch (nodeTarget(node)) {
         case 'agent':
-          onClientNameChange(clientName === node!.key ? '' : node!.key)
+          onAgentChange(agent === node!.key ? '' : node!.key)
           break
         case 'model':
           navigate(`/llm-logs?model=${encodeURIComponent(node!.key)}`)
@@ -198,7 +235,7 @@ export function TrafficFlowCard({
           break
       }
     },
-    [clientName, navigate, onClientNameChange],
+    [agent, navigate, onAgentChange],
   )
 
   const handleNodeClick = useCallback(
@@ -268,20 +305,29 @@ export function TrafficFlowCard({
               </li>
             ))}
           </ul>
+          <SegmentedControl
+            label="Group traffic by"
+            options={GROUP_OPTIONS}
+            value={groupBy}
+            onChange={onGroupByChange}
+          />
           <label className="flex items-center gap-2 text-[12px] text-text-muted">
-            Agent
+            {TRAFFIC_FLOW_GROUP_LABELS[groupBy]}
             <NativeSelect
               size="sm"
-              aria-label="Agent"
-              value={clientName}
-              onChange={(e) => onClientNameChange(e.target.value)}
+              aria-label={TRAFFIC_FLOW_GROUP_LABELS[groupBy]}
+              value={agent}
+              onChange={(e) => onAgentChange(e.target.value)}
             >
-              <NativeSelectOption value="">All agents</NativeSelectOption>
-              {agentOptions.map((a) => (
-                <NativeSelectOption key={a.key} value={a.key}>
-                  {a.label}
-                </NativeSelectOption>
-              ))}
+              <NativeSelectOption value="">{ALL_LABEL[groupBy]}</NativeSelectOption>
+              {agentOptions.map((a) => {
+                const kind = agentKindLabel(a.sublabel)
+                return (
+                  <NativeSelectOption key={a.key} value={a.key}>
+                    {kind ? `${a.label} · ${kind}` : a.label}
+                  </NativeSelectOption>
+                )
+              })}
             </NativeSelect>
           </label>
         </div>
@@ -315,7 +361,7 @@ export function TrafficFlowCard({
           <EmptyState
             label={
               data
-                ? clientName
+                ? agent
                   ? 'No traffic from this agent in this range'
                   : 'No traffic in this range yet'
                 : emptyLabel

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { TrafficFlow } from '@/lib/sankey'
-import { toBalancedData, TRAFFIC_FLOW_COLUMNS } from '@/lib/traffic-flow'
+import {
+  toBalancedData,
+  TRAFFIC_FLOW_COLUMNS,
+  trafficFlowColumns,
+} from '@/lib/traffic-flow'
 
 const FLOW: TrafficFlow = {
   range: '24h',
@@ -96,5 +100,64 @@ describe('toBalancedData', () => {
       links: [],
     })
     expect(empty.sankey.nodes[0]!.percent).toBe(0)
+  })
+})
+
+describe('trafficFlowColumns', () => {
+  it('names the left column after the grouping and keeps the other two', () => {
+    expect(trafficFlowColumns('agent')[0]!.label).toBe('Agent')
+    expect(trafficFlowColumns('key')[0]!.label).toBe('API key')
+    expect(trafficFlowColumns('client')[0]!.label).toBe('Harness')
+    for (const g of ['agent', 'key', 'client'] as const) {
+      const cols = trafficFlowColumns(g)
+      expect(cols.map((c) => c.id)).toEqual(['CLIENT', 'PATH', 'TARGET'])
+      expect(cols[0]!.labelSide).toBe('left')
+    }
+  })
+
+  it('toBalancedData takes its column label from the grouping', () => {
+    expect(toBalancedData(FLOW).sankey.columns[0]!.label).toBe('Agent')
+    expect(toBalancedData(FLOW, 'key').sankey.columns[0]!.label).toBe('API key')
+    expect(toBalancedData(FLOW, 'client').sankey.columns[0]!.label).toBe('Harness')
+  })
+
+  it('links a kind-prefixed agent key to its node', () => {
+    const { sankey } = toBalancedData({
+      ...FLOW,
+      nodes: [
+        {
+          id: 'CLIENT:profile:Research Agent',
+          key: 'profile:Research Agent',
+          label: 'Research Agent',
+          type: 'CLIENT',
+          value: 500,
+          sublabel: 'profile',
+        },
+        ...FLOW.nodes.slice(1),
+      ],
+      links: [
+        {
+          source: 'profile:Research Agent',
+          sourceType: 'CLIENT',
+          target: 'llm',
+          targetType: 'PATH',
+          value: 400,
+        },
+        {
+          source: 'profile:Research Agent',
+          sourceType: 'CLIENT',
+          target: 'mcp',
+          targetType: 'PATH',
+          value: 100,
+        },
+        ...FLOW.links.slice(2),
+      ],
+    })
+    const ids = new Set(sankey.nodes.map((n) => n.key))
+    expect(sankey.links[0]!.source).toBe('CLIENT:profile:Research Agent')
+    for (const l of sankey.links) {
+      expect(ids.has(l.source)).toBe(true)
+      expect(ids.has(l.target)).toBe(true)
+    }
   })
 })

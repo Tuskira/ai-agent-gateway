@@ -401,11 +401,20 @@ func (h Analytics) ClientModelSankey(w http.ResponseWriter, r *http.Request) {
 }
 
 // TrafficFlow handles GET
-// /api/v1/analytics/traffic-flow?range=24h|7d|30d&metric=calls|tokens|cost&limit=&client_name=:
+// /api/v1/analytics/traffic-flow?range=24h|7d|30d&metric=calls|tokens|cost&limit=&group_by=agent|key|client&agent=&client_name=:
 // the CLIENT -> PATH -> MODEL | CONNECTOR graph joining both planes, in
 // the same node/link shape as ClientModelSankey. Same parameters and
 // defaults (7d, calls, limit 10); limit folds the tail of each terminal
 // column separately.
+//
+// group_by picks what the left column is made of. It defaults to client, the
+// grouping before the parameter existed; the console asks for agent:
+// each caller named by its agent profile, else its API key's name, else its
+// client family (see analytics.TrafficFlow). agent narrows the graph to one
+// node of that column, by the key the response's agents list gives it;
+// client_name narrows to one client family whatever the grouping. The
+// profile and key names are resolved here, from the store, because the
+// ClickHouse tables only hold ids.
 func (h Analytics) TrafficFlow(w http.ResponseWriter, r *http.Request) {
 	if h.Analytics == nil {
 		httpx.NotFound(w, analyticsUnavailableMessage)
@@ -419,6 +428,17 @@ func (h Analytics) TrafficFlow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	groupBy, ok := analytics.ParseSankeyGroupBy(r.URL.Query().Get("group_by"))
+	if !ok {
+		httpx.ValidationError(w, `group_by must be one of "agent", "key", "client"`)
+		return
+	}
+	q.GroupBy = groupBy
+	q.Agent = r.URL.Query().Get("agent")
+	if groupBy != analytics.SankeyGroupClient {
+		dir := h.agentDirectory(r, tid)
+		q.Directory = &dir
+	}
 	flow, err := h.Analytics.TrafficFlowSankey(r.Context(), tid, q)
 	if err != nil {
 		writeAnalyticsErr(w, r, "compute traffic-flow sankey", err)
@@ -426,6 +446,39 @@ func (h Analytics) TrafficFlow(w http.ResponseWriter, r *http.Request) {
 	}
 	h.resolveFlowConnectorLabels(r, tid, flow)
 	httpx.WriteJSON(w, http.StatusOK, flow)
+}
+
+// agentDirectory names the tenant's API keys and the profiles they are
+// bound to, for the traffic-flow left column. Best effort: a store error
+// leaves the directory (or part of it) empty and the graph falls back to
+// the next identity -- the client family -- rather than failing.
+func (h Analytics) agentDirectory(r *http.Request, tenantID string) analytics.AgentDirectory {
+	dir := analytics.AgentDirectory{KeyNames: map[string]string{}, KeyProfiles: map[string]string{}}
+	if h.Store == nil {
+		return dir
+	}
+	keys, err := h.Store.APIKeys().List(r.Context(), tenantID)
+	if err != nil {
+		applog.From(r.Context()).Warn("traffic flow: list api keys failed; agents shown by client", "error", err)
+		return dir
+	}
+	profileNames := map[string]string{}
+	if profiles, err := h.Store.AgentProfiles().List(r.Context(), tenantID); err != nil {
+		applog.From(r.Context()).Warn("traffic flow: list agent profiles failed; bound profiles not resolved", "error", err)
+	} else {
+		for _, p := range profiles {
+			profileNames[p.ID] = p.Name
+		}
+	}
+	for _, k := range keys {
+		dir.KeyNames[k.ID] = k.Name
+		if k.ProfileID != nil {
+			if name := profileNames[*k.ProfileID]; name != "" {
+				dir.KeyProfiles[k.ID] = name
+			}
+		}
+	}
+	return dir
 }
 
 // resolveFlowConnectorLabels swaps each CONNECTOR node's Label from the

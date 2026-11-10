@@ -1639,3 +1639,73 @@ func TestIntegration_ReaderFiltersBySourceAndUser(t *testing.T) {
 		t.Errorf("ListAccessLogs(unfiltered) = %d rows (total=%d), want 2", len(all), allTotal)
 	}
 }
+
+// TestIntegration_TrafficFlowByAgent round-trips llm_calls.profile and
+// mcp_access_logs.profile/key_id through the writer and the traffic-flow
+// reader: the agent grouping names each caller by profile, then key, then
+// client, the key grouping by key id, and the client grouping is unchanged.
+func TestIntegration_TrafficFlowByAgent(t *testing.T) {
+	cfg := testConfig(t)
+	s, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer s.Close()
+	reader := s.(analytics.Reader)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	now := time.Now().UTC()
+	tenantID := uniqueTenantID(t)
+
+	llm := func(id, key, profile, client string) *sink.LLMCall {
+		return &sink.LLMCall{Timestamp: now, TenantID: tenantID, RequestID: tenantID + id, KeyID: key, Profile: profile,
+			ClientName: client, Provider: "anthropic", Model: "m", RequestedModel: "m", StatusCode: 200, InputTokens: 10}
+	}
+	s.WriteLLMCall(llm("-1", "k-triage", "Triage Agent", "other"))
+	s.WriteLLMCall(llm("-2", "k-triage", "Triage Agent", "other"))
+	s.WriteLLMCall(llm("-3", "k-ci", "", "other"))
+	s.WriteLLMCall(llm("-4", "", "", "cursor"))
+	s.WriteAccess(&sink.AccessLog{Timestamp: now, TenantID: tenantID, RequestID: tenantID + "-5", KeyID: "k-triage", Profile: "Triage Agent",
+		Method: "tools/call", ConnectorID: "mesh", StatusCode: 200, UserAgent: "python-httpx/0.27"})
+	waitForRowCounts(t, ctx, reader, tenantID, 1, 4)
+
+	dir := &analytics.AgentDirectory{KeyNames: map[string]string{"k-triage": "triage-key", "k-ci": "ci-key"}}
+	flow := func(g analytics.SankeyGroupBy) *analytics.TrafficFlow {
+		t.Helper()
+		got, err := reader.TrafficFlowSankey(ctx, tenantID, analytics.SankeyQuery{
+			Range: analytics.Range24h, Period: analytics.Range24h.Period(time.Now()),
+			Metric: analytics.SankeyMetricCalls, GroupBy: g, Directory: dir,
+		})
+		if err != nil {
+			t.Fatalf("TrafficFlowSankey(%s): %v", g, err)
+		}
+		return got
+	}
+	values := func(f *analytics.TrafficFlow) map[string]float64 {
+		out := map[string]float64{}
+		for _, n := range f.Nodes {
+			if n.Type == analytics.SankeyNodeClient {
+				out[n.Key] = n.Value
+			}
+		}
+		return out
+	}
+
+	// Profile calls from both planes join one node; the unbound key is named
+	// by its key; the keyless row falls back to its client.
+	got := values(flow(analytics.SankeyGroupAgent))
+	want := map[string]float64{"profile:Triage Agent": 3, "key:k-ci": 1, "cursor": 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("agent grouping = %v, want %v", got, want)
+	}
+	got = values(flow(analytics.SankeyGroupKey))
+	want = map[string]float64{"k-triage": 3, "k-ci": 1, "unknown": 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("key grouping = %v, want %v", got, want)
+	}
+	got = values(flow(analytics.SankeyGroupClient))
+	want = map[string]float64{"other": 4, "cursor": 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("client grouping = %v, want %v", got, want)
+	}
+}

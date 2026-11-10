@@ -160,6 +160,15 @@ var alterLLMCallsClientInfo = []string{
 	`ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS user_agent String`,
 }
 
+// alterLLMCallsProfile upgrades an existing llm_calls table to carry
+// sink.LLMCall.Profile: the agent profile that made the call (the API
+// key's bound profile, else the caller's X-Agent-Profile-Name header), the
+// LLM-plane twin of mcp_access_logs.profile. Idempotent; rows written
+// before carry "".
+var alterLLMCallsProfile = []string{
+	`ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS profile String`,
+}
+
 // alterMCPAccessLogsClientSessionID upgrades an existing mcp_access_logs
 // table to carry the caller-supplied session tag (sink.AccessLog.
 // ClientSessionID) alongside the gateway-negotiated session_id -- see the
@@ -275,6 +284,7 @@ func applyMigrations(ctx context.Context, c conn) error {
 	stmts = append(stmts, alterLLMCallsModelRegistry...)
 	stmts = append(stmts, alterLLMCallsClientInfo...)
 	stmts = append(stmts, alterLLMCallsDiscovery...)
+	stmts = append(stmts, alterLLMCallsProfile...)
 	stmts = append(stmts, alterMCPAccessLogsClientSessionID...)
 	stmts = append(stmts, alterMCPAccessLogsSkillName...)
 	stmts = append(stmts, alterMCPAccessLogsIngest...)

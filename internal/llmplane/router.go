@@ -48,6 +48,9 @@ type router struct {
 	limiter *Limiter // per-key limits; nil = none enforced
 	// tee hands each relayed call to a detection agent; nil = off.
 	tee *DetectionTee
+	// profiles names a bound API key's profile for capture; nil = bound
+	// keys are attributed to no profile.
+	profiles ProfileNamer
 }
 
 // callInfo is what the router learned about a call for capture: the
@@ -445,6 +448,7 @@ func (rt *router) emit(r *http.Request, info callInfo, reqBody []byte, start tim
 		ClientIP:            rt.callerIP(r),
 		ClientName:          clientName,
 		UserAgent:           userAgent,
+		Profile:             rt.callProfile(r),
 		Provider:            info.provider,
 		Model:               info.model(),
 		RequestedModel:      info.requestedModel,
@@ -538,6 +542,7 @@ func (rt *router) emitError(r *http.Request, info callInfo, reqBody []byte, star
 		ClientIP:       rt.callerIP(r),
 		ClientName:     clientName,
 		UserAgent:      userAgent,
+		Profile:        rt.callProfile(r),
 		Provider:       info.provider,
 		Model:          info.model(),
 		RequestedModel: info.requestedModel,

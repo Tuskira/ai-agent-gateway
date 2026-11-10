@@ -113,6 +113,12 @@ type LLMCall struct {
 	// UserAgent is the raw User-Agent header the LLM-plane caller sent,
 	// capped at MaxUserAgentLen bytes (CapUserAgent). "" when absent.
 	UserAgent string `json:"user_agent,omitempty"`
+	// Profile is the agent profile that made the call: the profile the API
+	// key is bound to, else the caller's X-Agent-Profile-Name header
+	// (CapProfile). Mirrors AccessLog.Profile so both planes name an agent
+	// the same way. "" when the key is unbound and no header was sent.
+	// Analytics only; the LLM plane does not enforce profiles.
+	Profile string `json:"profile,omitempty"`
 
 	// Source and User mirror AccessLog's fields of the same name (see
 	// AccessLog's doc comments): Source tells a gateway-proxied row

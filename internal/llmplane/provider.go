@@ -127,6 +127,7 @@ var headerAllowlist = map[string]bool{
 	"date":                          true,
 	"connection":                    true,
 	"x-bedrock-region":              true,
+	"x-agent-profile-name":          true,
 	"retry-after":                   true,
 	"server":                        true,
 	"via":                           true,

@@ -22,7 +22,13 @@ import {
   useUpdateUser,
   useUsersList,
 } from '@/lib/queries'
-import { describeUserError, type AuditEntry, type User } from '@/lib/users'
+import {
+  describeUserError,
+  isFullUser,
+  type AuditEntry,
+  type User,
+  type UserRow,
+} from '@/lib/users'
 import { formatDateTime } from '@/lib/utils'
 import {
   DataTable,
@@ -82,6 +88,9 @@ export default function UsersPage() {
   const isForbidden =
     usersQuery.error instanceof ApiError && usersQuery.error.status === 403
   const items = usersQuery.data?.items ?? []
+  // Rows with no id (a foreign platform admin seen by a tenant admin) are
+  // keyed by position.
+  const rowIndex = new Map(items.map((u, i) => [u, i]))
   // Signed in with an API key and no admin user exists: turning API-key
   // sign-in off would lock everyone out.
   const noAdminUser =
@@ -158,7 +167,7 @@ export default function UsersPage() {
     })
   }
 
-  const columns: ColumnDef<User>[] = [
+  const columns: ColumnDef<UserRow>[] = [
     {
       id: 'username',
       accessorKey: 'username',
@@ -169,10 +178,12 @@ export default function UsersPage() {
         const home = u.home_tenant_id ? tenantNameById.get(u.home_tenant_id) : undefined
         return (
           <span className="flex min-w-0 flex-col">
-            <span className="truncate font-medium text-foreground">{u.username}</span>
+            <span className="truncate font-medium text-foreground">
+              {isFullUser(u) ? u.username : u.display_name}
+            </span>
             {u.role === 'platform-admin' ? (
               <span
-                data-testid={`platform-hint-${u.username}`}
+                data-testid={`platform-hint-${isFullUser(u) ? u.username : 'other-tenant'}`}
                 className="truncate text-[11.5px] text-text-subtle"
               >
                 {u.other_tenant
@@ -231,38 +242,43 @@ export default function UsersPage() {
   // A platform-admin row the server marks read_only (another tenant's, or
   // the caller lacks platform.admin) has no actions: the server refuses
   // them anyway.
-  const readOnly = (u: User) => u.read_only === true
+  const readOnly = (u: UserRow) => !isFullUser(u) || u.read_only === true
 
-  const rowActions: RowAction<User>[] = [
+  // Every action is hidden for a row without an id, so the handlers only
+  // ever receive full users.
+  const full = (fn: (u: User) => void) => (u: UserRow) => {
+    if (isFullUser(u)) fn(u)
+  }
+  const rowActions: RowAction<UserRow>[] = [
     {
       label: 'Edit',
       icon: <Pencil aria-hidden="true" />,
       hidden: readOnly,
-      onClick: setEditTarget,
+      onClick: full(setEditTarget),
     },
     {
       label: 'Disable',
       icon: <Ban aria-hidden="true" />,
-      hidden: (u) => readOnly(u) || u.disabled,
-      onClick: (u) => setDisabled(u, true),
+      hidden: (u) => readOnly(u) || u.disabled === true,
+      onClick: full((u) => setDisabled(u, true)),
     },
     {
       label: 'Enable',
       icon: <CircleCheck aria-hidden="true" />,
       hidden: (u) => readOnly(u) || !u.disabled,
-      onClick: (u) => setDisabled(u, false),
+      onClick: full((u) => setDisabled(u, false)),
     },
     {
       label: 'Reset password',
       icon: <RotateCcw aria-hidden="true" />,
       hidden: readOnly,
-      onClick: setResetTarget,
+      onClick: full(setResetTarget),
     },
     {
       label: 'Revoke sessions',
       icon: <LogOut aria-hidden="true" />,
       hidden: readOnly,
-      onClick: setRevokeTarget,
+      onClick: full(setRevokeTarget),
     },
     {
       label: 'Delete',
@@ -270,7 +286,7 @@ export default function UsersPage() {
       variant: 'destructive',
       separatorBefore: true,
       hidden: readOnly,
-      onClick: setDeleteTarget,
+      onClick: full(setDeleteTarget),
     },
   ]
 
@@ -344,8 +360,8 @@ export default function UsersPage() {
               storageKey="users"
               columns={columns}
               data={items}
-              getRowId={(u) => u.id}
-              getRowLabel={(u) => u.username}
+              getRowId={(u) => (isFullUser(u) ? u.id : `other-tenant-${rowIndex.get(u)}`)}
+              getRowLabel={(u) => (isFullUser(u) ? u.username : u.display_name)}
               getRowClassName={(u) => (u.disabled ? 'opacity-55' : undefined)}
               rowActions={rowActions}
               loading={usersQuery.isLoading}
@@ -355,7 +371,7 @@ export default function UsersPage() {
             />
           </TabsContent>
           <TabsContent value="audit" className="flex min-h-0 flex-1 flex-col">
-            <AuditPanel users={items} />
+            <AuditPanel users={items.filter(isFullUser)} />
           </TabsContent>
         </Tabs>
       )}

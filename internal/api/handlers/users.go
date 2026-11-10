@@ -100,7 +100,8 @@ type userView struct {
 	ReadOnly bool `json:"read_only"`
 	// OtherTenant marks a platform-admin row that belongs to a different
 	// tenant than the one being listed (it is shown because the role is
-	// platform-wide). Such a row is always read_only.
+	// platform-wide). Such a row is always read_only. Callers without
+	// platform.admin get foreignAdminView for it instead of this struct.
 	OtherTenant bool `json:"other_tenant,omitempty"`
 	// HomeTenantID is the tenant a platform-admin row really belongs to.
 	// Only callers holding platform.admin get it, and only on a row from
@@ -122,19 +123,44 @@ func newUserView(u *store.User) userView {
 	}
 }
 
+// foreignAdminView is what a caller WITHOUT platform.admin sees of a
+// platform-admin user from another tenant: a label and the role, nothing
+// that identifies or describes the account (no id, username, status,
+// timestamps or home tenant). It is its own struct so the omitted fields
+// cannot leak through a zero value.
+type foreignAdminView struct {
+	DisplayName string `json:"display_name"`
+	Role        string `json:"role"`
+	ReadOnly    bool   `json:"read_only"`
+	OtherTenant bool   `json:"other_tenant"`
+}
+
+// foreignAdminLabel stands in for a foreign platform admin's empty
+// display name.
+const foreignAdminLabel = "Platform admin"
+
 // listView is newUserView for a row of the List response. A platform-admin
 // row is read-only unless the caller holds platform.admin and the row lives
-// in the tenant being acted in; the home tenant id of a foreign row is
-// shown to platform callers only.
-func listView(u *store.User, actingTenant string, callerIsPlatform bool) userView {
-	v := newUserView(u)
-	if isPlatformAdmin(u) {
-		foreign := u.TenantID != actingTenant
-		v.ReadOnly = foreign || !callerIsPlatform
-		v.OtherTenant = foreign
-		if foreign && callerIsPlatform {
-			v.HomeTenantID = u.TenantID
+// in the tenant being acted in. A platform-admin row from another tenant is
+// shown in full (with its home tenant id) to callers holding platform.admin
+// and as a bare name and role to everyone else.
+func listView(u *store.User, actingTenant string, callerIsPlatform bool) any {
+	if !isPlatformAdmin(u) {
+		return newUserView(u)
+	}
+	foreign := u.TenantID != actingTenant
+	if foreign && !callerIsPlatform {
+		name := u.DisplayName
+		if name == "" {
+			name = foreignAdminLabel
 		}
+		return foreignAdminView{DisplayName: name, Role: u.Role, ReadOnly: true, OtherTenant: true}
+	}
+	v := newUserView(u)
+	v.ReadOnly = foreign || !callerIsPlatform
+	v.OtherTenant = foreign
+	if foreign {
+		v.HomeTenantID = u.TenantID
 	}
 	return v
 }
@@ -273,7 +299,7 @@ func (h Users) List(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := pkgauth.PrincipalFrom(r.Context())
 	callerIsPlatform := h.Authorizer != nil && h.Authorizer.Allow(r.Context(), p, pkgauth.PermPlatformAdmin)
-	views := make([]userView, 0, len(users))
+	views := make([]any, 0, len(users))
 	for _, u := range users {
 		views = append(views, listView(u, tid, callerIsPlatform))
 	}

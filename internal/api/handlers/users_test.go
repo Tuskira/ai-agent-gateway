@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -316,6 +317,15 @@ func (p usersPage) find(username string) *userView {
 	return nil
 }
 
+func (p usersPage) findName(displayName string) *userView {
+	for i := range p.Items {
+		if p.Items[i].DisplayName == displayName {
+			return &p.Items[i]
+		}
+	}
+	return nil
+}
+
 // A platform-admin lives in one tenant but the role is platform-wide, so it
 // shows in every tenant's list -- read-only, and only that role crosses.
 func TestUsers_List_ShowsPlatformAdminsOfOtherTenants(t *testing.T) {
@@ -331,11 +341,13 @@ func TestUsers_List_ShowsPlatformAdminsOfOtherTenants(t *testing.T) {
 	// A tenant admin of B sees its own users plus the foreign platform
 	// admin -- and nothing of tenant A's admin or viewer.
 	page := e.listAs(t, "/users", asGary)
-	if page.Total != 2 || page.find("gary") == nil || page.find("root") == nil || page.find("alice") != nil || page.find("bob") != nil {
+	if page.Total != 2 || page.find("gary") == nil || page.findName("Root") == nil || page.find("alice") != nil || page.find("bob") != nil {
 		t.Fatalf("tenant B admin list = %+v, want gary and root only", page)
 	}
-	if v := page.find("root"); !v.ReadOnly || !v.OtherTenant || v.HomeTenantID != "" || v.Role != store.UserRolePlatformAdmin {
-		t.Errorf("root as seen by a tenant admin = %+v, want read_only and no home_tenant_id", v)
+	// ... but only as a name and role: nothing that identifies the account.
+	if v := page.findName("Root"); !v.ReadOnly || !v.OtherTenant || v.Role != store.UserRolePlatformAdmin ||
+		v.ID != "" || v.Username != "" || v.HomeTenantID != "" || v.CreatedAt != "" || v.UpdatedAt != "" || v.PasswordChangedAt != "" {
+		t.Errorf("root as seen by a tenant admin = %+v, want only display_name, role, read_only, other_tenant", v)
 	}
 	if v := page.find("gary"); v.ReadOnly {
 		t.Errorf("gary (own tenant, not platform) read_only = true")
@@ -345,7 +357,7 @@ func TestUsers_List_ShowsPlatformAdminsOfOtherTenants(t *testing.T) {
 	if page = e.listAs(t, "/users?role=admin", asGary); page.Total != 1 || page.find("gary") == nil {
 		t.Errorf("?role=admin = %+v, want only gary", page)
 	}
-	if page = e.listAs(t, "/users?role=platform-admin", asGary); page.Total != 1 || page.find("root") == nil {
+	if page = e.listAs(t, "/users?role=platform-admin", asGary); page.Total != 1 || page.findName("Root") == nil {
 		t.Errorf("?role=platform-admin = %+v, want only root", page)
 	}
 
@@ -366,6 +378,66 @@ func TestUsers_List_ShowsPlatformAdminsOfOtherTenants(t *testing.T) {
 	}
 }
 
+// The exact JSON a tenant admin gets for a platform admin of another tenant:
+// four keys, no identifiers, no state, no timestamps, no home tenant.
+func TestUsers_List_ForeignPlatformAdminJSONIsRedacted(t *testing.T) {
+	e := newUsersEnv(t)
+	root, _ := e.platformAdmin(t, e.tenantA.ID, "root")
+	gary := e.user(t, e.tenantB.ID, "gary", store.UserRoleAdmin, pwBob, false)
+	_, garySess := e.session(t, gary)
+	asGary := func(r *http.Request) *http.Request { return asUser(r, gary, garySess) }
+
+	w := e.do(http.MethodGet, "/users", "/users?role=platform-admin", "", e.h.List, asGary)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var raw struct {
+		Items []map[string]any `json:"items"`
+	}
+	decodeInto(t, w, &raw)
+	if len(raw.Items) != 1 {
+		t.Fatalf("items = %v, want the one foreign platform admin", raw.Items)
+	}
+	want := map[string]any{"display_name": "Root", "role": "platform-admin", "read_only": true, "other_tenant": true}
+	if !reflect.DeepEqual(raw.Items[0], want) {
+		t.Errorf("foreign platform-admin row = %v, want exactly %v", raw.Items[0], want)
+	}
+	t.Logf("foreign platform-admin row: %s", strings.TrimSpace(w.Body.String()))
+
+	// A platform admin without a display name falls back to a generic label.
+	root.DisplayName = ""
+	if err := e.fs.Users().Update(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	w = e.do(http.MethodGet, "/users", "/users?role=platform-admin", "", e.h.List, asGary)
+	raw.Items = nil
+	decodeInto(t, w, &raw)
+	if len(raw.Items) != 1 || raw.Items[0]["display_name"] != "Platform admin" {
+		t.Errorf("row without a display name = %v, want the generic label", raw.Items)
+	}
+}
+
+// A disabled platform admin of another tenant is not listed; in its own
+// tenant it still is.
+func TestUsers_List_DisabledForeignPlatformAdminNotListed(t *testing.T) {
+	e := newUsersEnv(t)
+	root, _ := e.platformAdmin(t, e.tenantA.ID, "root")
+	gary := e.user(t, e.tenantB.ID, "gary", store.UserRoleAdmin, pwBob, false)
+	_, garySess := e.session(t, gary)
+	asGary := func(r *http.Request) *http.Request { return asUser(r, gary, garySess) }
+
+	root.Disabled = true
+	if err := e.fs.Users().Update(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	if page := e.listAs(t, "/users", asGary); page.Total != 1 || page.find("gary") == nil || page.findName("Root") != nil {
+		t.Errorf("tenant B list with root disabled = %+v, want gary only", page)
+	}
+	if page := e.listAs(t, "/users", e.asAdmin); page.find("root") == nil {
+		t.Errorf("tenant A list = %+v, want its own disabled root still listed", page)
+	}
+}
+
 // Seeing a foreign platform admin grants no way to touch it: every per-user
 // route stays tenant-scoped (404), so a tenant admin of B cannot edit,
 // disable, demote, delete, reset or log out a platform admin of A.
@@ -373,6 +445,7 @@ func TestUsers_ForeignPlatformAdmin_CannotBeChanged(t *testing.T) {
 	e := newUsersEnv(t)
 	root, _ := e.platformAdmin(t, e.tenantA.ID, "root")
 	_, rootSess := e.session(t, root)
+	hashBefore := root.PasswordHash
 	gary := e.user(t, e.tenantB.ID, "gary", store.UserRoleAdmin, pwBob, false)
 	_, garySess := e.session(t, gary)
 	asGary := func(r *http.Request) *http.Request { return asUser(r, gary, garySess) }
@@ -407,10 +480,14 @@ func TestUsers_ForeignPlatformAdmin_CannotBeChanged(t *testing.T) {
 			}
 		}
 	}
-	// And nothing changed.
+	// And nothing changed: the same role, name and password hash, and
+	// root's session was not revoked by the refused reset/revoke calls.
 	got, err := e.fs.Users().Get(context.Background(), e.tenantA.ID, root.ID)
-	if err != nil || got.Role != store.UserRolePlatformAdmin || got.Disabled || got.DisplayName == "pwned" {
+	if err != nil || got.Role != store.UserRolePlatformAdmin || got.Disabled || got.DisplayName == "pwned" || got.PasswordHash != hashBefore || got.MustChangePassword {
 		t.Errorf("root after the attempts = %+v, %v; want untouched", got, err)
+	}
+	if sess, err := e.fs.UserSessions().Get(context.Background(), rootSess.ID); err != nil || sess.RevokedAt != nil {
+		t.Errorf("root's session after the attempts = %+v, %v; want not revoked", sess, err)
 	}
 	// A tenant admin cannot mint one either (existing rule, kept).
 	if w := e.do(http.MethodPatch, "/users/{id}", "/users/"+gary.ID, `{"role":"platform-admin"}`, e.h.Update, e.asAdmin); w.Code != http.StatusNotFound {

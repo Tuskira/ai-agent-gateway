@@ -581,6 +581,39 @@ describe('UsersPage', () => {
       ).not.toBeInTheDocument()
     })
 
+    it('renders a foreign platform admin that has no id or username', async () => {
+      stubApi({
+        'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
+        'GET /users': () =>
+          jsonResponse({
+            items: [
+              USERS.items[0],
+              {
+                display_name: 'Root',
+                role: 'platform-admin',
+                read_only: true,
+                other_tenant: true,
+              },
+              {
+                display_name: 'Platform admin',
+                role: 'platform-admin',
+                read_only: true,
+                other_tenant: true,
+              },
+            ],
+            total: 3,
+          }),
+      })
+      renderPage()
+
+      // The name shows in both the first and the display-name column.
+      expect((await screen.findAllByText('Root')).length).toBeGreaterThan(0)
+      expect(screen.getAllByText('Platform admin').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('Platform admin from another tenant')).toHaveLength(2)
+      expect(screen.getByRole('button', { name: 'Actions for jane' })).toBeInTheDocument()
+      expect(screen.getAllByRole('button', { name: /^Actions for/ })).toHaveLength(1)
+    })
+
     it('names the home tenant for a platform admin and still hides the actions', async () => {
       stubApi({
         'GET /auth/me': () => jsonResponse(SESSION_PLATFORM_ADMIN),

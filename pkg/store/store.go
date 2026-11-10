@@ -1129,8 +1129,8 @@ type SkillStore interface {
 type UserListOptions struct {
 	// Role, when non-empty, restricts the list to one role.
 	Role string
-	// IncludePlatformAdmins also returns the platform-admin users of every
-	// other tenant (read-only context for the Users page: the role is
+	// IncludePlatformAdmins also returns the enabled platform-admin users
+	// of every other tenant (read-only context for the Users page: the role is
 	// platform-wide, its rows are not). Nothing else crosses tenants, and
 	// Role still narrows the result.
 	IncludePlatformAdmins bool
@@ -1155,8 +1155,8 @@ type UserStore interface {
 	// empty list, not an error.
 	FindByUsername(ctx context.Context, username string) ([]*User, error)
 	// List returns the tenant's live users ordered by username, plus --
-	// when opts.IncludePlatformAdmins is set -- the live platform-admin
-	// users of other tenants. Every other method stays tenant-scoped.
+	// when opts.IncludePlatformAdmins is set -- the live, enabled
+	// platform-admin users of other tenants. Every other method stays tenant-scoped.
 	List(ctx context.Context, tenantID string, opts UserListOptions) ([]*User, error)
 	// Update rewrites DisplayName, Role and Disabled only (Username is
 	// immutable; password state has its own methods). ErrNotFound when

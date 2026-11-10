@@ -76,7 +76,7 @@ func (s *userStore) FindByUsername(ctx context.Context, username string) ([]*sto
 
 func (s *userStore) List(ctx context.Context, tenantID string, opts store.UserListOptions) ([]*store.User, error) {
 	q := `SELECT ` + userColumns + ` FROM users WHERE deleted_at IS NULL
-		AND (tenant_id = $1 OR ($2::boolean AND role = '` + store.UserRolePlatformAdmin + `'))`
+		AND (tenant_id = $1 OR ($2::boolean AND role = '` + store.UserRolePlatformAdmin + `' AND NOT disabled))`
 	args := []any{tenantID, opts.IncludePlatformAdmins}
 	if opts.Role != "" {
 		q += ` AND role = $3`

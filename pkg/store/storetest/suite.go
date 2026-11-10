@@ -2378,6 +2378,14 @@ func testUsers(t *testing.T, s store.Store) {
 	if n, _ := users.CountActivePlatformAdmins(ctx); n != 1 {
 		t.Errorf("CountActivePlatformAdmins after disabling one = %d, want 1", n)
 	}
+	// A disabled platform admin no longer crosses tenants, but its own
+	// tenant still lists it.
+	if list, err := users.List(ctx, tenantA.ID, store.UserListOptions{IncludePlatformAdmins: true}); err != nil || idsOf(list)[rootB.ID] || !idsOf(list)[root.ID] {
+		t.Errorf("List(tenant A, IncludePlatformAdmins) with rootB disabled = %v, %v; want root, never the disabled rootB", list, err)
+	}
+	if list, err := users.List(ctx, tenantB.ID, store.UserListOptions{IncludePlatformAdmins: true}); err != nil || !idsOf(list)[rootB.ID] {
+		t.Errorf("List(tenant B, IncludePlatformAdmins) = %v, %v; want the tenant's own disabled rootB still listed", list, err)
+	}
 	// Update may move a user into and out of the role.
 	bob.Role = store.UserRolePlatformAdmin
 	if err := users.Update(ctx, bob); err != nil {

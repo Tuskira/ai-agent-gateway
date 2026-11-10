@@ -13,9 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is platform-wide, but the list was strictly per tenant, so a platform
   admin appeared only in its home tenant and looked missing in every other
   one. `GET /api/v1/users` now also returns the platform-admin users of other
-  tenants, flagged `read_only` (and `other_tenant`; callers with
-  `platform.admin` also get `home_tenant_id`), and the console shows them with
-  a platform-admin hint and no row actions. Only that role crosses tenants:
+  tenants, flagged `read_only` and `other_tenant`. Callers with
+  `platform.admin` see those rows in full, with `home_tenant_id`; everyone
+  else gets only `display_name` (or `Platform admin`), `role` and the two
+  flags, no id, username or status. Disabled platform admins of other tenants
+  are not listed. The console shows them with a platform-admin hint and no
+  row actions. Only that role crosses tenants:
   other tenants' admins and viewers stay hidden, and every per-user route
   (get, edit, disable, delete, reset password, revoke sessions) is still
   tenant-scoped, so a tenant admin cannot touch a platform admin. In the

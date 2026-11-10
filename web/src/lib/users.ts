@@ -28,6 +28,30 @@ export interface User {
   home_tenant_id?: string
 }
 
+/** A platform-admin row from another tenant as a caller without
+ * platform.admin sees it: a name and the role only. There is no id,
+ * username or status, and the row never has actions. */
+export interface ForeignAdminRow {
+  id?: undefined
+  username?: undefined
+  display_name: string
+  role: UserRole
+  disabled?: undefined
+  last_login_at?: undefined
+  read_only: true
+  other_tenant: true
+  home_tenant_id?: undefined
+}
+
+/** One row of the Users list. */
+export type UserRow = User | ForeignAdminRow
+
+/** A row that carries an id and username (everything but a foreign admin
+ * seen without platform.admin). */
+export function isFullUser(u: UserRow): u is User {
+  return typeof u.id === 'string'
+}
+
 export interface CreateUserInput {
   username: string
   display_name?: string
@@ -67,8 +91,8 @@ function userPath(id: string): string {
   return `/users/${encodeURIComponent(id)}`
 }
 
-export function listUsers(): Promise<Page<User>> {
-  return apiFetch<Page<User>>('/users')
+export function listUsers(): Promise<Page<UserRow>> {
+  return apiFetch<Page<UserRow>>('/users')
 }
 
 export function getUser(id: string): Promise<User> {

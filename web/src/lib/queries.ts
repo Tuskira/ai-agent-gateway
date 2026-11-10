@@ -100,7 +100,7 @@ import { fetchAccessLogDetail, fetchAccessLogs, type AccessLogFilters } from '@/
 import { fetchLlmLogDetail, fetchLlmLogs, type LlmLogFilters } from '@/lib/llm-logs'
 import { fetchSessionTimeline, type TimelineOrder } from '@/lib/session-timeline'
 import { fetchSkillsSummary } from '@/lib/analytics'
-import { fetchTrafficFlow } from '@/lib/sankey'
+import { fetchTrafficFlow, type TrafficFlowGroupBy } from '@/lib/sankey'
 import {
   fetchTokenMonitoring,
   fetchTokenMonitoringKey,
@@ -206,13 +206,17 @@ export function useOverviewMetrics(period: Period) {
   })
 }
 
-/** `GET /api/v1/analytics/traffic-flow?range=…&client_name=…` — resolves
+/** `GET /api/v1/analytics/traffic-flow?range=…&group_by=…&agent=…` — resolves
  * to `null` on any failure (404 because ClickHouse isn't enabled, or a
  * network error), same convention as `useOverviewMetrics`. */
-export function useTrafficFlow(period: Period, clientName: string) {
+export function useTrafficFlow(
+  period: Period,
+  groupBy: TrafficFlowGroupBy,
+  agent: string,
+) {
   return useQuery({
-    queryKey: ['traffic-flow', period, clientName],
-    queryFn: () => fetchTrafficFlow(period, clientName),
+    queryKey: ['traffic-flow', period, groupBy, agent],
+    queryFn: () => fetchTrafficFlow(period, groupBy, agent),
     staleTime: 30_000,
     // Keep showing the current range while the next one loads (no flash).
     placeholderData: (prev) => prev,

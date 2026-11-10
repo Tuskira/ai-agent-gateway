@@ -54,6 +54,7 @@ import { WidgetHelp } from '@/components/app/WidgetHelp'
 import { KPI_HELP, WIDGET_HELP } from '@/lib/overview-help'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PeriodFilter } from '@/components/app/PeriodFilter'
+import { useFlowGroupBy } from '@/hooks/use-flow-group-by'
 import { usePeriod } from '@/hooks/use-period'
 import { TrafficFlowCard } from '@/components/app/TrafficFlowCard'
 import {
@@ -114,14 +115,15 @@ interface KpiTile {
 
 export default function OverviewPage() {
   const [period, setPeriod] = usePeriod('24h')
-  const [flowClientName, setFlowClientName] = useState('')
+  const [flowGroupBy, setFlowGroupBy] = useFlowGroupBy()
+  const [flowAgent, setFlowAgent] = useState('')
 
   const { principal } = useAuth()
   const { data: health, isLoading: healthLoading } = useHealth()
   const metricsQuery = useOverviewMetrics(period)
   const metrics = metricsQuery.data ?? null
   const metricsLoading = metricsQuery.isLoading
-  const flowQuery = useTrafficFlow(period, flowClientName)
+  const flowQuery = useTrafficFlow(period, flowGroupBy, flowAgent)
 
   const connectorsQuery = useConnectors()
   const profilesQuery = useProfiles()
@@ -133,7 +135,9 @@ export default function OverviewPage() {
   const healthLabel = health ? (health.status === 'ok' ? 'healthy' : health.status) : null
   const tenantShort = principal ? principal.tenant_id.slice(0, 8) : '—'
   const vsPrevious =
-    period.range === 'custom' ? 'vs previous period' : `vs previous ${periodLabel(period).replace('Last ', '')}`
+    period.range === 'custom'
+      ? 'vs previous period'
+      : `vs previous ${periodLabel(period).replace('Last ', '')}`
   const showSetupStrip =
     connectorsQuery.data !== undefined && connectorsQuery.data.total === 0
 
@@ -425,8 +429,14 @@ export default function OverviewPage() {
       <TrafficFlowCard
         data={flowQuery.data}
         period={period}
-        clientName={flowClientName}
-        onClientNameChange={setFlowClientName}
+        groupBy={flowGroupBy}
+        // A node key only means something under the grouping that made it.
+        onGroupByChange={(g) => {
+          setFlowAgent('')
+          setFlowGroupBy(g)
+        }}
+        agent={flowAgent}
+        onAgentChange={setFlowAgent}
         emptyLabel={CLICKHOUSE_EMPTY_LABEL}
         loading={flowQuery.isLoading}
         help={<WidgetHelp title="Agent traffic flow" content={WIDGET_HELP.trafficFlow} />}

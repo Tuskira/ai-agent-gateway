@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { TrafficFlowCard } from '@/components/app/TrafficFlowCard'
 import type { TrafficFlow } from '@/lib/sankey'
@@ -71,8 +71,10 @@ function renderCard(props: Partial<React.ComponentProps<typeof TrafficFlowCard>>
               <TrafficFlowCard
                 data={SAMPLE}
                 period={{ range: '24h' }}
-                clientName=""
-                onClientNameChange={() => {}}
+                groupBy="agent"
+                onGroupByChange={() => {}}
+                agent=""
+                onAgentChange={() => {}}
                 {...props}
               />
               <LocationProbe />
@@ -100,7 +102,7 @@ describe('TrafficFlowCard', () => {
   })
 
   it('keeps a selected agent in the select even when it is missing from the agents list', () => {
-    renderCard({ clientName: 'codex', data: { ...SAMPLE, agents: [] } })
+    renderCard({ agent: 'codex', data: { ...SAMPLE, agents: [] } })
     expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveValue('codex')
     expect(screen.getByRole('option', { name: 'codex' })).toBeInTheDocument()
   })
@@ -115,13 +117,13 @@ describe('TrafficFlowCard', () => {
     expect(screen.getByText('who called what · Jan 1 – Jan 3, 2026')).toBeInTheDocument()
   })
 
-  it('calls onClientNameChange when an agent is picked from the select', () => {
-    const onClientNameChange = vi.fn()
-    renderCard({ onClientNameChange })
+  it('calls onAgentChange when an agent is picked from the select', () => {
+    const onAgentChange = vi.fn()
+    renderCard({ onAgentChange })
     fireEvent.change(screen.getByRole('combobox', { name: 'Agent' }), {
       target: { value: 'cursor' },
     })
-    expect(onClientNameChange).toHaveBeenCalledWith('cursor')
+    expect(onAgentChange).toHaveBeenCalledWith('cursor')
   })
 
   it('shows the "enable ClickHouse" empty state when data is null', () => {
@@ -145,7 +147,7 @@ describe('TrafficFlowCard', () => {
   it('names the selected agent in the empty state when a filter is active', () => {
     renderCard({
       data: { ...SAMPLE, total: 0, nodes: [], links: [] },
-      clientName: 'codex',
+      agent: 'codex',
     })
     expect(
       screen.getByText('No traffic from this agent in this range'),
@@ -156,5 +158,119 @@ describe('TrafficFlowCard', () => {
     renderCard({ data: undefined, loading: true })
     expect(screen.getByRole('status')).toBeInTheDocument()
     expect(screen.queryByText('No data yet · enable the ClickHouse sink')).toBeNull()
+  })
+
+  describe('grouping', () => {
+    const MIXED: TrafficFlow = {
+      ...SAMPLE,
+      agents: [
+        {
+          key: 'profile:Research Agent',
+          label: 'Research Agent',
+          value: 300,
+          sublabel: 'profile',
+        },
+        { key: 'key:k1', label: 'ci-key', value: 150, sublabel: 'key' },
+        { key: 'cursor', label: 'Cursor', value: 50, sublabel: 'client' },
+      ],
+      nodes: [
+        {
+          id: 'CLIENT:profile:Research Agent',
+          key: 'profile:Research Agent',
+          label: 'Research Agent',
+          type: 'CLIENT',
+          value: 300,
+          sublabel: 'profile',
+        },
+        {
+          id: 'CLIENT:key:k1',
+          key: 'key:k1',
+          label: 'ci-key',
+          type: 'CLIENT',
+          value: 150,
+          sublabel: 'key',
+        },
+        {
+          id: 'CLIENT:cursor',
+          key: 'cursor',
+          label: 'Cursor',
+          type: 'CLIENT',
+          value: 50,
+          sublabel: 'client',
+        },
+        ...SAMPLE.nodes.slice(1),
+      ],
+      links: [
+        {
+          source: 'profile:Research Agent',
+          sourceType: 'CLIENT',
+          target: 'llm',
+          targetType: 'PATH',
+          value: 300,
+        },
+        {
+          source: 'key:k1',
+          sourceType: 'CLIENT',
+          target: 'llm',
+          targetType: 'PATH',
+          value: 100,
+        },
+        {
+          source: 'key:k1',
+          sourceType: 'CLIENT',
+          target: 'mcp',
+          targetType: 'PATH',
+          value: 50,
+        },
+        {
+          source: 'cursor',
+          sourceType: 'CLIENT',
+          target: 'mcp',
+          targetType: 'PATH',
+          value: 50,
+        },
+        ...SAMPLE.links.slice(2),
+      ],
+    }
+
+    it('offers Agent, API key and Harness, with the current grouping pressed', () => {
+      renderCard({ groupBy: 'key' })
+      const group = screen.getByRole('group', { name: 'Group traffic by' })
+      expect(within(group).getByRole('button', { name: 'Agent' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
+      expect(within(group).getByRole('button', { name: 'API key' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+      expect(within(group).getByRole('button', { name: 'Harness' })).toBeInTheDocument()
+    })
+
+    it('reports a picked grouping', () => {
+      const onGroupByChange = vi.fn()
+      renderCard({ onGroupByChange })
+      fireEvent.click(screen.getByRole('button', { name: 'Harness' }))
+      expect(onGroupByChange).toHaveBeenCalledWith('client')
+    })
+
+    it.each([
+      ['agent', 'Agent', 'All agents'],
+      ['key', 'API key', 'All API keys'],
+      ['client', 'Harness', 'All harnesses'],
+    ] as const)('names the select after the %s grouping', (groupBy, name, all) => {
+      renderCard({ groupBy })
+      expect(screen.getByRole('combobox', { name })).toHaveValue('')
+      expect(screen.getByRole('option', { name: all })).toBeInTheDocument()
+    })
+
+    it('says in the select which identity named each agent', () => {
+      renderCard({ data: MIXED })
+      expect(
+        screen.getByRole('option', { name: 'Research Agent · profile' }),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'ci-key · API key' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'Cursor · harness' })).toBeInTheDocument()
+    })
   })
 })

@@ -407,6 +407,70 @@ describe('OverviewPage', () => {
     })
   })
 
+  it('groups the traffic flow by agent by default and switches to API key or harness, keeping the choice in the URL', async () => {
+    installFetchMock({ metrics: METRICS, flow: FLOW })
+    renderOverviewPage()
+    const flowUrls = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.map(([u]) => String(u))
+        .filter((u) => u.includes('/analytics/traffic-flow'))
+
+    expect(await screen.findByText('Agent traffic flow')).toBeInTheDocument()
+    const group = screen.getByRole('group', { name: 'Group traffic by' })
+    expect(within(group).getByRole('button', { name: 'Agent' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await waitFor(() =>
+      expect(flowUrls().some((u) => u.includes('&group_by=agent'))).toBe(true),
+    )
+    expect(flowUrls().every((u) => !u.includes('&agent='))).toBe(true)
+
+    await userEvent.click(within(group).getByRole('button', { name: 'API key' }))
+    await waitFor(() =>
+      expect(flowUrls().some((u) => u.includes('&group_by=key'))).toBe(true),
+    )
+    expect(within(group).getByRole('button', { name: 'API key' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByRole('combobox', { name: 'API key' })).toHaveValue('')
+
+    await userEvent.click(within(group).getByRole('button', { name: 'Harness' }))
+    await waitFor(() =>
+      expect(flowUrls().some((u) => u.includes('&group_by=client'))).toBe(true),
+    )
+  })
+
+  it('reads the traffic flow grouping from the URL and sends the picked agent with it', async () => {
+    installFetchMock({ metrics: METRICS, flow: FLOW })
+    renderOverviewPage('/?flow_by=client')
+    expect(await screen.findByText('Agent traffic flow')).toBeInTheDocument()
+    const group = screen.getByRole('group', { name: 'Group traffic by' })
+    expect(within(group).getByRole('button', { name: 'Harness' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    await screen.findByRole('option', { name: 'Cursor' })
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Harness' }),
+      'cursor',
+    )
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([u]) => String(u).includes('&group_by=client&agent=cursor')),
+      ).toBe(true),
+    )
+
+    // Changing the grouping drops the agent: its key belongs to the old one.
+    await userEvent.click(within(group).getByRole('button', { name: 'API key' }))
+    expect(screen.getByRole('combobox', { name: 'API key' })).toHaveValue('')
+  })
+
   it('shows the traffic flow card\'s "enable ClickHouse" empty state when the endpoint 404s', async () => {
     installFetchMock({ metrics: null, flow: null })
     renderOverviewPage()

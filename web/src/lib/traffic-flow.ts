@@ -3,17 +3,30 @@ import type {
   SankeyLink as BalancedLink,
   SankeyNode as BalancedNode,
 } from '@/components/app/sankey'
-import type { SankeyNode, TrafficFlow } from '@/lib/sankey'
+import type { SankeyNode, TrafficFlow, TrafficFlowGroupBy } from '@/lib/sankey'
+
+/** What the left column is called per grouping: the agent (a profile, else
+ * an API key, else a harness), the API key, or the harness. */
+export const TRAFFIC_FLOW_GROUP_LABELS: Record<TrafficFlowGroupBy, string> = {
+  agent: 'Agent',
+  key: 'API key',
+  client: 'Harness',
+}
 
 /** The three drawn columns. MODEL and CONNECTOR nodes share the last one:
  * they are alternatives (an LLM call ends at a model, an MCP call at a
  * connector), so together they sum to the same total as the other two
  * columns and the balanced layout draws all three edge to edge. */
-export const TRAFFIC_FLOW_COLUMNS: SankeyData['columns'] = [
-  { id: 'CLIENT', label: 'Agent', labelSide: 'left' },
-  { id: 'PATH', label: 'Path' },
-  { id: 'TARGET', label: 'Model / MCP' },
-]
+export function trafficFlowColumns(groupBy: TrafficFlowGroupBy): SankeyData['columns'] {
+  return [
+    { id: 'CLIENT', label: TRAFFIC_FLOW_GROUP_LABELS[groupBy], labelSide: 'left' },
+    { id: 'PATH', label: 'Path' },
+    { id: 'TARGET', label: 'Model / MCP' },
+  ]
+}
+
+/** The columns for the default (agent) grouping. */
+export const TRAFFIC_FLOW_COLUMNS: SankeyData['columns'] = trafficFlowColumns('agent')
 
 function columnOf(type: SankeyNode['type']): string {
   return type === 'MODEL' || type === 'CONNECTOR' ? 'TARGET' : type
@@ -23,7 +36,10 @@ function columnOf(type: SankeyNode['type']): string {
  * response's globally unique `id` ("TYPE:key"), links reference those ids,
  * and every node's percent is its share of the whole window. `meta` maps a
  * drawn key back to its response node for labels and clicks. */
-export function toBalancedData(data: TrafficFlow): {
+export function toBalancedData(
+  data: TrafficFlow,
+  groupBy: TrafficFlowGroupBy = 'agent',
+): {
   sankey: SankeyData
   meta: Map<string, SankeyNode>
 } {
@@ -49,7 +65,12 @@ export function toBalancedData(data: TrafficFlow): {
     }
   })
   return {
-    sankey: { columns: TRAFFIC_FLOW_COLUMNS, nodes, links, total: data.total },
+    sankey: {
+      columns: groupBy === 'agent' ? TRAFFIC_FLOW_COLUMNS : trafficFlowColumns(groupBy),
+      nodes,
+      links,
+      total: data.total,
+    },
     meta,
   }
 }

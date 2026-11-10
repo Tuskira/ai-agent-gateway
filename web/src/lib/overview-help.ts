@@ -307,7 +307,14 @@ export const WIDGET_HELP = {
         title: 'Agent',
         icon: IdCard,
         tone: 'info',
-        body: 'The calling client family, from the User-Agent header on either plane (e.g. Claude Code, Cursor, VS Code). Pick one in the top-right to focus the flow.',
+        body: "Who made the calls, named by the first identity each caller has: its agent profile, else its API key's name, else its harness (Claude Code, Cursor, VS Code, read from the User-Agent header). The small tag on each agent says which one. Pick one in the top-right to focus the flow.",
+      },
+      {
+        kind: 'card',
+        title: 'Agent / API key / Harness',
+        icon: Sigma,
+        tone: 'info',
+        body: 'Switch what the left column groups by. Agent is the default. API key splits traffic per key. Harness groups by the tool that made the call, the only identity for tools that send no profile. Calls from before profiles were recorded fall back to the key or the harness.',
       },
       {
         kind: 'card',

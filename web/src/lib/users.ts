@@ -19,6 +19,13 @@ export interface User {
   sso_only?: boolean
   last_login_at?: string | null
   created_at?: string
+  /** A platform-admin row the caller cannot change from this tenant (it
+   * lives in another tenant, or the caller lacks platform.admin). */
+  read_only?: boolean
+  /** A platform-admin row listed here from another tenant. */
+  other_tenant?: boolean
+  /** Which tenant the row belongs to; sent to platform admins only. */
+  home_tenant_id?: string
 }
 
 export interface CreateUserInput {

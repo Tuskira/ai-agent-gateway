@@ -91,7 +91,21 @@ type userView struct {
 	// was discarded at its first SSO login).
 	SSOOnly bool `json:"sso_only"`
 	// Locked reports an active per-user login lockout.
-	Locked            bool   `json:"locked"`
+	Locked bool `json:"locked"`
+	// ReadOnly marks a platform-admin row the caller cannot change from
+	// this tenant: it lives in another tenant, or the caller itself lacks
+	// platform.admin. Every write route refuses it regardless (404 for a
+	// foreign row, 403 without platform.admin); the flag only lets the UI
+	// hide the actions.
+	ReadOnly bool `json:"read_only"`
+	// OtherTenant marks a platform-admin row that belongs to a different
+	// tenant than the one being listed (it is shown because the role is
+	// platform-wide). Such a row is always read_only.
+	OtherTenant bool `json:"other_tenant,omitempty"`
+	// HomeTenantID is the tenant a platform-admin row really belongs to.
+	// Only callers holding platform.admin get it, and only on a row from
+	// another tenant, so a tenant admin never learns another tenant's id.
+	HomeTenantID      string `json:"home_tenant_id,omitempty"`
 	LastLoginAt       string `json:"last_login_at,omitempty"`
 	PasswordChangedAt string `json:"password_changed_at"`
 	CreatedAt         string `json:"created_at"`
@@ -106,6 +120,23 @@ func newUserView(u *store.User) userView {
 		LastLoginAt: formatTimePtr(u.LastLoginAt), PasswordChangedAt: formatTime(u.PasswordChangedAt),
 		CreatedAt: formatTime(u.CreatedAt), UpdatedAt: formatTime(u.UpdatedAt),
 	}
+}
+
+// listView is newUserView for a row of the List response. A platform-admin
+// row is read-only unless the caller holds platform.admin and the row lives
+// in the tenant being acted in; the home tenant id of a foreign row is
+// shown to platform callers only.
+func listView(u *store.User, actingTenant string, callerIsPlatform bool) userView {
+	v := newUserView(u)
+	if isPlatformAdmin(u) {
+		foreign := u.TenantID != actingTenant
+		v.ReadOnly = foreign || !callerIsPlatform
+		v.OtherTenant = foreign
+		if foreign && callerIsPlatform {
+			v.HomeTenantID = u.TenantID
+		}
+	}
+	return v
 }
 
 // selfID is the caller's own user id, or "" when the caller is not a
@@ -218,12 +249,17 @@ func (h Users) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // List handles GET /api/v1/users (optional ?role=admin|viewer|platform-admin).
+// Besides the tenant's own users it lists the platform-admin users of other
+// tenants, flagged read_only: GET/PATCH/DELETE and the other per-user routes
+// stay tenant-scoped, so those rows answer 404 there.
 func (h Users) List(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
 		return
 	}
-	opts := store.UserListOptions{Role: r.URL.Query().Get("role")}
+	// Platform-admin users of other tenants are listed too (read-only):
+	// the role is platform-wide, so the admin must show wherever it can act.
+	opts := store.UserListOptions{Role: r.URL.Query().Get("role"), IncludePlatformAdmins: true}
 	if opts.Role != "" {
 		if err := validateUserRole(opts.Role); err != nil {
 			httpx.ValidationError(w, err.Error())
@@ -235,9 +271,11 @@ func (h Users) List(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, r, "list users", err)
 		return
 	}
+	p, _ := pkgauth.PrincipalFrom(r.Context())
+	callerIsPlatform := h.Authorizer != nil && h.Authorizer.Allow(r.Context(), p, pkgauth.PermPlatformAdmin)
 	views := make([]userView, 0, len(users))
 	for _, u := range users {
-		views = append(views, newUserView(u))
+		views = append(views, listView(u, tid, callerIsPlatform))
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page{Items: paginate(views, httpx.ParsePagination(r)), Total: len(views)})
 }

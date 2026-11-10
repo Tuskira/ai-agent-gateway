@@ -653,8 +653,9 @@ func TestConsole_PlatformAdminUser_ListsTenantsAndActsInAnother(t *testing.T) {
 		t.Error("gina was also created in acme")
 	}
 
-	// Reads are scoped the same way: with the header the list is Globex's,
-	// without it the home tenant's.
+	// Reads are scoped the same way: with the header the list is Globex's
+	// (plus the platform-admin itself, listed read-only because the role is
+	// platform-wide), without it the home tenant's.
 	names := func(w *httptest.ResponseRecorder) string {
 		var out []string
 		for _, u := range page(t, w) {
@@ -662,8 +663,8 @@ func TestConsole_PlatformAdminUser_ListsTenantsAndActsInAnother(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	if w := c.do(http.MethodGet, "/api/v1/users", "", acting(e.tenantB.ID)); w.Code != http.StatusOK || names(w) != "gina" {
-		t.Errorf("GET /users acting in globex = %d %s, want gina only", w.Code, w.Body.String())
+	if w := c.do(http.MethodGet, "/api/v1/users", "", acting(e.tenantB.ID)); w.Code != http.StatusOK || names(w) != "gina,root" {
+		t.Errorf("GET /users acting in globex = %d %s, want gina and the read-only root", w.Code, w.Body.String())
 	}
 	if w := c.do(http.MethodGet, "/api/v1/users", "", nil); w.Code != http.StatusOK || names(w) != "root" {
 		t.Errorf("GET /users at home = %d %s, want root only", w.Code, w.Body.String())
@@ -703,8 +704,8 @@ func TestConsole_PlatformAdminUser_ListsTenantsAndActsInAnother(t *testing.T) {
 	}
 
 	// A platform-admin API key is honoured the same way.
-	if w := e.browser().do(http.MethodGet, "/api/v1/users", "", mergeHeaders(key("platform-key"), acting(e.tenantB.ID))); w.Code != http.StatusOK || names(w) != "gina" {
-		t.Errorf("platform key GET /users acting in globex = %d %s, want gina only", w.Code, w.Body.String())
+	if w := e.browser().do(http.MethodGet, "/api/v1/users", "", mergeHeaders(key("platform-key"), acting(e.tenantB.ID))); w.Code != http.StatusOK || names(w) != "gina,root" {
+		t.Errorf("platform key GET /users acting in globex = %d %s, want gina and the read-only root", w.Code, w.Body.String())
 	}
 }
 

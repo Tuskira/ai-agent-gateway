@@ -75,13 +75,14 @@ func (s *userStore) FindByUsername(ctx context.Context, username string) ([]*sto
 }
 
 func (s *userStore) List(ctx context.Context, tenantID string, opts store.UserListOptions) ([]*store.User, error) {
-	q := `SELECT ` + userColumns + ` FROM users WHERE tenant_id = $1 AND deleted_at IS NULL`
-	args := []any{tenantID}
+	q := `SELECT ` + userColumns + ` FROM users WHERE deleted_at IS NULL
+		AND (tenant_id = $1 OR ($2::boolean AND role = '` + store.UserRolePlatformAdmin + `'))`
+	args := []any{tenantID, opts.IncludePlatformAdmins}
 	if opts.Role != "" {
-		q += ` AND role = $2`
+		q += ` AND role = $3`
 		args = append(args, opts.Role)
 	}
-	q += ` ORDER BY username`
+	q += ` ORDER BY username, tenant_id`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list users: %w", err)

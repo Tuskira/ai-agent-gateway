@@ -2333,6 +2333,44 @@ func testUsers(t *testing.T, s store.Store) {
 	if n, err := users.CountActivePlatformAdmins(ctx); err != nil || n != 2 {
 		t.Errorf("CountActivePlatformAdmins across tenants = %d, %v; want 2", n, err)
 	}
+	// IncludePlatformAdmins adds the other tenants' platform-admin users to
+	// a list and nothing else; the per-user reads stay tenant-scoped.
+	// (tenant B holds a viewer, a recreated "alice", plus rootB.)
+	idsOf := func(list []*store.User) map[string]bool {
+		m := map[string]bool{}
+		for _, u := range list {
+			m[u.ID] = true
+		}
+		return m
+	}
+	if list, err := users.List(ctx, tenantB.ID, store.UserListOptions{}); err != nil || len(list) != 2 || idsOf(list)[root.ID] {
+		t.Errorf("List(tenant B, default) = %v, %v; want tenant B's own two users, not tenant A's platform-admin", list, err)
+	}
+	if list, err := users.List(ctx, tenantB.ID, store.UserListOptions{IncludePlatformAdmins: true}); err != nil || len(list) != 3 {
+		t.Errorf("List(tenant B, IncludePlatformAdmins) = %v, %v; want tenant B's two users and root", list, err)
+	} else if ids := idsOf(list); !ids[rootB.ID] || !ids[root.ID] || ids[alice.ID] || ids[bob.ID] {
+		t.Errorf("List(tenant B, IncludePlatformAdmins) ids = %v; want rootB and root, never tenant A's admin or viewer", ids)
+	}
+	if list, err := users.List(ctx, tenantB.ID, store.UserListOptions{Role: store.UserRoleAdmin, IncludePlatformAdmins: true}); err != nil || len(list) != 0 {
+		t.Errorf("List(tenant B, role=admin, IncludePlatformAdmins) = %v, %v; want none (Role still narrows)", list, err)
+	}
+	if list, err := users.List(ctx, tenantB.ID, store.UserListOptions{Role: store.UserRolePlatformAdmin, IncludePlatformAdmins: true}); err != nil || len(list) != 2 {
+		t.Errorf("List(tenant B, role=platform-admin, IncludePlatformAdmins) = %v, %v; want root and rootB", list, err)
+	}
+	if _, err := users.Get(ctx, tenantB.ID, root.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Get(tenant B, tenant A's platform-admin) err = %v, want ErrNotFound", err)
+	}
+	if err := users.SoftDelete(ctx, tenantB.ID, root.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SoftDelete(tenant B, tenant A's platform-admin) err = %v, want ErrNotFound", err)
+	}
+	probe := *root
+	probe.TenantID, probe.Role = tenantB.ID, store.UserRoleViewer
+	if err := users.Update(ctx, &probe); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Update(tenant B scope, tenant A's platform-admin) err = %v, want ErrNotFound", err)
+	}
+	if g, err := users.Get(ctx, tenantA.ID, root.ID); err != nil || g.Role != store.UserRolePlatformAdmin {
+		t.Errorf("root after cross-tenant attempts = %+v, %v; want untouched", g, err)
+	}
 	rootB.Disabled = true
 	if err := users.Update(ctx, rootB); err != nil {
 		t.Fatalf("Update disable rootB: %v", err)

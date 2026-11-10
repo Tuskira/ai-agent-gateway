@@ -546,4 +546,108 @@ describe('UsersPage', () => {
       expect(screen.queryByTestId('no-admin-warning')).not.toBeInTheDocument()
     })
   })
+  describe('platform admins of other tenants', () => {
+    const FOREIGN_ROOT = {
+      id: 'u-root',
+      username: 'root',
+      display_name: 'Root',
+      role: 'platform-admin',
+      disabled: false,
+      last_login_at: null,
+      read_only: true,
+      other_tenant: true,
+    }
+    const LIST = {
+      items: [USERS.items[0], FOREIGN_ROOT],
+      total: 2,
+    }
+
+    it('shows the foreign platform admin with no row actions', async () => {
+      stubApi({
+        'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
+        'GET /users': () => jsonResponse(LIST),
+      })
+      renderPage()
+
+      expect(await screen.findByText('root')).toBeInTheDocument()
+      expect(screen.getByText('platform-admin')).toBeInTheDocument()
+      expect(screen.getByTestId('platform-hint-root')).toHaveTextContent(
+        'Platform admin from another tenant',
+      )
+      // The tenant's own admin keeps its menu; the read-only row has none.
+      expect(screen.getByRole('button', { name: 'Actions for jane' })).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Actions for root' }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('names the home tenant for a platform admin and still hides the actions', async () => {
+      stubApi({
+        'GET /auth/me': () => jsonResponse(SESSION_PLATFORM_ADMIN),
+        'GET /tenants?limit=200': () =>
+          jsonResponse({
+            items: [
+              { id: 'tenant-home', slug: 'acme', name: 'Acme Corp', created_at: '' },
+            ],
+            total: 1,
+          }),
+        'GET /users': () =>
+          jsonResponse({
+            items: [USERS.items[0], { ...FOREIGN_ROOT, home_tenant_id: 'tenant-home' }],
+            total: 2,
+          }),
+      })
+      renderPage()
+
+      await screen.findByText('root')
+      await waitFor(() =>
+        expect(screen.getByTestId('platform-hint-root')).toHaveTextContent(
+          'Platform admin, home: Acme Corp',
+        ),
+      )
+      expect(
+        screen.queryByRole('button', { name: 'Actions for root' }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('hides the actions of a platform admin in its home tenant from a plain admin', async () => {
+      stubApi({
+        'GET /auth/me': () => jsonResponse(SESSION_ADMIN),
+        'GET /users': () =>
+          jsonResponse({
+            items: [USERS.items[0], { ...FOREIGN_ROOT, other_tenant: false }],
+            total: 2,
+          }),
+      })
+      renderPage()
+
+      await screen.findByText('root')
+      expect(screen.getByTestId('platform-hint-root')).toHaveTextContent(
+        'Platform admin, all tenants',
+      )
+      expect(
+        screen.queryByRole('button', { name: 'Actions for root' }),
+      ).not.toBeInTheDocument()
+    })
+
+    it("does not count a foreign platform admin as this tenant's admin", async () => {
+      sessionStorage.setItem('gateway.api_key', 'gk_test')
+      stubApi({
+        'GET /auth/me': () =>
+          jsonResponse({
+            subject: 'key-1',
+            tenant_id: 'tenant-uuid-1',
+            roles: ['admin'],
+            auth_method: 'apikey',
+            key_id: 'key-1',
+            kind: 'api_key',
+          }),
+        'GET /users': () => jsonResponse({ items: [FOREIGN_ROOT], total: 1 }),
+      })
+      renderPage()
+
+      expect(await screen.findByTestId('no-admin-warning')).toBeInTheDocument()
+      sessionStorage.clear()
+    })
+  })
 })

@@ -18,6 +18,7 @@ import {
   useDeleteUser,
   useResetUserPassword,
   useRevokeUserSessions,
+  useTenants,
   useUpdateUser,
   useUsersList,
 } from '@/lib/queries'
@@ -59,6 +60,12 @@ function RoleBadge({ role }: { role: string }) {
 export default function UsersPage() {
   const { mode, isPlatformAdmin } = useAuth()
   const usersQuery = useUsersList()
+  // Tenant names for the "home" hint on platform-admin rows; the list is a
+  // platform.admin read, so other sessions skip it.
+  const tenantsQuery = useTenants(isPlatformAdmin)
+  const tenantNameById = new Map(
+    (tenantsQuery.data?.items ?? []).map((t) => [t.id, t.name || t.slug]),
+  )
   const updateUser = useUpdateUser()
   const deleteUser = useDeleteUser()
   const resetPassword = useResetUserPassword()
@@ -80,7 +87,14 @@ export default function UsersPage() {
   const noAdminUser =
     mode === 'api_key' &&
     usersQuery.isSuccess &&
-    !items.some((u) => (u.role === 'admin' || u.role === 'platform-admin') && !u.disabled)
+    !items.some(
+      (u) =>
+        (u.role === 'admin' || u.role === 'platform-admin') &&
+        !u.disabled &&
+        // A platform admin of another tenant is listed for context; it
+        // does not count as one of this tenant's admins.
+        !u.other_tenant,
+    )
 
   function fail(err: unknown, fallback: string) {
     setActionError(describeUserError(err, fallback))
@@ -150,9 +164,27 @@ export default function UsersPage() {
       accessorKey: 'username',
       header: 'Username',
       size: 220,
-      cell: ({ row }) => (
-        <span className="font-medium text-foreground">{row.original.username}</span>
-      ),
+      cell: ({ row }) => {
+        const u = row.original
+        const home = u.home_tenant_id ? tenantNameById.get(u.home_tenant_id) : undefined
+        return (
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate font-medium text-foreground">{u.username}</span>
+            {u.role === 'platform-admin' ? (
+              <span
+                data-testid={`platform-hint-${u.username}`}
+                className="truncate text-[11.5px] text-text-subtle"
+              >
+                {u.other_tenant
+                  ? home
+                    ? `Platform admin, home: ${home}`
+                    : 'Platform admin from another tenant'
+                  : 'Platform admin, all tenants'}
+              </span>
+            ) : null}
+          </span>
+        )
+      },
     },
     {
       id: 'display_name',
@@ -196,32 +228,40 @@ export default function UsersPage() {
     },
   ]
 
+  // A platform-admin row the server marks read_only (another tenant's, or
+  // the caller lacks platform.admin) has no actions: the server refuses
+  // them anyway.
+  const readOnly = (u: User) => u.read_only === true
+
   const rowActions: RowAction<User>[] = [
     {
       label: 'Edit',
       icon: <Pencil aria-hidden="true" />,
+      hidden: readOnly,
       onClick: setEditTarget,
     },
     {
       label: 'Disable',
       icon: <Ban aria-hidden="true" />,
-      hidden: (u) => u.disabled,
+      hidden: (u) => readOnly(u) || u.disabled,
       onClick: (u) => setDisabled(u, true),
     },
     {
       label: 'Enable',
       icon: <CircleCheck aria-hidden="true" />,
-      hidden: (u) => !u.disabled,
+      hidden: (u) => readOnly(u) || !u.disabled,
       onClick: (u) => setDisabled(u, false),
     },
     {
       label: 'Reset password',
       icon: <RotateCcw aria-hidden="true" />,
+      hidden: readOnly,
       onClick: setResetTarget,
     },
     {
       label: 'Revoke sessions',
       icon: <LogOut aria-hidden="true" />,
+      hidden: readOnly,
       onClick: setRevokeTarget,
     },
     {
@@ -229,6 +269,7 @@ export default function UsersPage() {
       icon: <Trash2 aria-hidden="true" />,
       variant: 'destructive',
       separatorBefore: true,
+      hidden: readOnly,
       onClick: setDeleteTarget,
     },
   ]

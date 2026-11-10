@@ -85,13 +85,21 @@ func (u *userStore) List(_ context.Context, tenantID string, opts store.UserList
 	defer s.mu.Unlock()
 	out := []*store.User{}
 	for _, e := range s.users {
-		if e.DeletedAt != nil || e.TenantID != tenantID || (opts.Role != "" && e.Role != opts.Role) {
+		if e.DeletedAt != nil || (opts.Role != "" && e.Role != opts.Role) {
+			continue
+		}
+		if e.TenantID != tenantID && !(opts.IncludePlatformAdmins && e.Role == store.UserRolePlatformAdmin) {
 			continue
 		}
 		cp := *e
 		out = append(out, &cp)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Username != out[j].Username {
+			return out[i].Username < out[j].Username
+		}
+		return out[i].TenantID < out[j].TenantID
+	})
 	return out, nil
 }
 

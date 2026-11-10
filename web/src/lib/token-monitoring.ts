@@ -71,6 +71,11 @@ export interface CallerTokens extends TokenTotals {
   /** API key name; '' when the key is unknown (deleted, or no key). */
   name: string
   role: CallerRole
+  /** Agent profile of the key: its bound profile, else the one most seen
+   * on its calls in the period; '' when neither. Absent on older servers. */
+  agent?: string
+  /** Where `agent` comes from. */
+  agent_source?: 'bound' | 'observed' | ''
 }
 
 export interface RoleTokens {
@@ -170,6 +175,11 @@ export function gridColumnCount(template: string): number | null {
 /** A caller's display name: its key's name, else why it has none. */
 export function callerLabel(c: Pick<CallerTokens, 'name' | 'key_id'>): string {
   return c.name || (c.key_id ? 'Unknown key' : 'No key')
+}
+
+/** The agent a key belongs to, or "—" when it has none. */
+export function agentLabel(c: Pick<CallerTokens, 'agent'>): string {
+  return c.agent || '—'
 }
 
 /** RankedBarList rows by tokens, for models and for callers. */

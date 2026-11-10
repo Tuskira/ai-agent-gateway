@@ -41,6 +41,7 @@ import { MONITORING_HELP } from '@/lib/token-monitoring-help'
 import { PeriodFilter } from '@/components/app/PeriodFilter'
 import { useTokenMonitoring } from '@/lib/queries'
 import {
+  agentLabel,
   callerBars,
   callerLabel,
   formatShare,
@@ -168,19 +169,20 @@ export default function TokenMonitoringPage() {
   const columns = useMemo<ColumnDef<CallerTokens>[]>(
     () => [
       {
-        id: 'caller',
-        header: 'Caller',
-        accessorFn: callerLabel,
+        id: 'agent',
+        header: 'Agent',
+        accessorFn: agentLabel,
         cell: ({ row }) => (
           <span className="flex flex-col">
             <span className="font-medium text-foreground">
+              {agentLabel(row.original)}
+            </span>
+            <span
+              className="text-[11px] text-text-subtle"
+              title={row.original.key_id || undefined}
+            >
               {callerLabel(row.original)}
             </span>
-            {row.original.key_id ? (
-              <span className="font-mono text-[11px] text-text-subtle">
-                {row.original.key_id}
-              </span>
-            ) : null}
           </span>
         ),
       },
@@ -509,11 +511,13 @@ export default function TokenMonitoringPage() {
           </Section>
 
           <Section
-            title="Callers"
-            help={<WidgetHelp title="Callers" content={MONITORING_HELP.callers} />}
+            title="Token usage by agent"
+            help={
+              <WidgetHelp title="Token usage by agent" content={MONITORING_HELP.callers} />
+            }
           >
             <DataTable
-              storageKey="token-monitoring-callers"
+              storageKey="token-monitoring-agents"
               height="420px"
               columns={columns}
               data={data?.by_key ?? []}

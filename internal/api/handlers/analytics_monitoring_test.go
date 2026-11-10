@@ -261,3 +261,50 @@ func TestTokenMonitoringKey(t *testing.T) {
 		t.Errorf("other tenant's key = %+v (%v), want unnamed/other", got.Key, err)
 	}
 }
+
+// A key's agent is its bound profile, else the profile seen on its calls,
+// else empty; both are tenant-scoped.
+func TestTokenMonitoring_AgentPerKey(t *testing.T) {
+	r := &fakeMonReader{fakeAnalyticsReader: &fakeAnalyticsReader{}}
+	d, ids := monDeps(t, r)
+	bound := seedProfile(t, d, "tenant-a", "Billing Agent")
+	foreign := seedProfile(t, d, "tenant-b", "Foreign Agent")
+	ctx := context.Background()
+	if err := d.Store.APIKeys().SetProfile(ctx, "tenant-a", ids["ci-bot"], &bound); err != nil {
+		t.Fatal(err)
+	}
+	// Another tenant's profile id on a tenant-a key must not resolve.
+	if err := d.Store.APIKeys().SetProfile(ctx, "tenant-a", ids["ops"], &foreign); err != nil {
+		t.Logf("cross-tenant bind refused by store: %v", err)
+	}
+	r.mon = &analytics.TokenMonitoring{
+		Range: analytics.Range7d,
+		ByKey: []analytics.KeyTokenUsage{
+			{KeyID: ids["ci-bot"], Source: "gateway", Profile: "Seen Agent", TokenUsage: usage(500, 0)},
+			{KeyID: ids["ops"], Source: "gateway", Profile: "Support Agent", TokenUsage: usage(200, 0)},
+			{KeyID: ids["root"], Source: "gateway", TokenUsage: usage(100, 0)},
+		},
+	}
+	h := Analytics{Deps: d}
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/token-monitoring?range=7d", nil), "tenant-a", "viewer")
+	w := serve(http.MethodGet, "/analytics/token-monitoring", h.TokenMonitoring, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var got tokenMonitoringView
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ agent, source string }{
+		{"Billing Agent", "bound"}, {"Support Agent", "observed"}, {"", ""},
+	}
+	for i, w := range want {
+		if got.ByKey[i].Agent != w.agent || got.ByKey[i].AgentSource != w.source {
+			t.Errorf("by_key[%d] agent = %q/%q, want %q/%q", i, got.ByKey[i].Agent, got.ByKey[i].AgentSource, w.agent, w.source)
+		}
+	}
+	// Existing fields are untouched.
+	if got.ByKey[0].Name != "ci-bot" || got.ByKey[0].Role != "agent" {
+		t.Errorf("by_key[0] = %s/%s, want ci-bot/agent", got.ByKey[0].Name, got.ByKey[0].Role)
+	}
+}

@@ -122,10 +122,14 @@ describe('TokenMonitoringPage', () => {
     expect(within(cards).getByText('$0.0000097')).toBeInTheDocument() // a tiny cost, not "$0.00"
     expect(within(cards).getAllByText('<0.1%').length).toBeGreaterThan(0)
 
-    const callers = screen.getByRole('region', { name: 'Callers' })
+    const callers = screen.getByRole('region', { name: 'Token usage by agent' })
     expect(within(callers).getByText('ci-bot')).toBeInTheDocument()
     expect(within(callers).getByText('collector')).toBeInTheDocument()
     expect(within(callers).getByText('Unknown key')).toBeInTheDocument()
+    // The agent leads each row; a key with no agent shows a dash.
+    expect(within(callers).getByRole('columnheader', { name: /Agent/ })).toBeInTheDocument()
+    expect(within(callers).getByText('support-agent')).toBeInTheDocument()
+    expect(within(callers).getAllByText('—').length).toBeGreaterThan(0)
     const roles = screen.getByRole('region', { name: 'By caller role' })
     expect(within(roles).getByText('Interceptor')).toBeInTheDocument()
 
@@ -185,7 +189,7 @@ describe('TokenMonitoringPage', () => {
       'By caller',
       'Usage over time (UTC)',
       'Cost by model',
-      'Callers',
+      'Token usage by agent',
     ]) {
       expect(screen.getByRole('button', { name: `About ${title}` })).toBeInTheDocument()
     }
@@ -212,7 +216,7 @@ describe('TokenMonitoringPage', () => {
     stubMonitoring()
     renderAt('/token-monitoring?range=7d')
     await screen.findByTestId('total-tokens')
-    const callers = screen.getByRole('region', { name: 'Callers' })
+    const callers = screen.getByRole('region', { name: 'Token usage by agent' })
     await user.click(within(callers).getByText('ci-bot'))
     expect(currentLocation()).toBe(`/token-monitoring/keys/${agentKeyId}?range=7d`)
   })
@@ -270,7 +274,7 @@ describe('TokenMonitoringPage', () => {
     const region = await screen.findByRole('region', { name: 'Cost by model' })
     const card = (await within(region).findAllByRole('button', { name: /^Open / }))[0]!
     expect(card).toHaveClass('cursor-pointer')
-    const callers = screen.getByRole('region', { name: 'Callers' })
+    const callers = screen.getByRole('region', { name: 'Token usage by agent' })
     const scroller = within(callers).getByRole('region', { name: /table/i })
     expect(scroller.style.maxHeight).not.toBe('')
   })

@@ -63,6 +63,29 @@ export const coreNavGroups: NavGroup[] = [
     ],
   },
   {
+    label: 'Observe',
+    items: [
+      {
+        label: 'Access Logs',
+        path: '/access-logs',
+        icon: ScrollText,
+        description: 'Inspect requests handled by the gateway.',
+      },
+      {
+        label: 'LLM Logs',
+        path: '/llm-logs',
+        icon: MessagesSquare,
+        description: 'Inspect prompts and completions proxied by the gateway.',
+      },
+      {
+        label: 'Session Timeline',
+        path: '/session-timeline',
+        icon: Clock,
+        description: 'Follow the LLM and MCP calls of one session in order.',
+      },
+    ],
+  },
+  {
     label: 'Configure',
     items: [
       {
@@ -103,29 +126,6 @@ export const coreNavGroups: NavGroup[] = [
         description:
           'Manage who can sign in to the console, and review the auth audit log.',
         adminOnly: true,
-      },
-    ],
-  },
-  {
-    label: 'Observe',
-    items: [
-      {
-        label: 'Access Logs',
-        path: '/access-logs',
-        icon: ScrollText,
-        description: 'Inspect requests handled by the gateway.',
-      },
-      {
-        label: 'LLM Logs',
-        path: '/llm-logs',
-        icon: MessagesSquare,
-        description: 'Inspect prompts and completions proxied by the gateway.',
-      },
-      {
-        label: 'Session Timeline',
-        path: '/session-timeline',
-        icon: Clock,
-        description: 'Follow the LLM and MCP calls of one session in order.',
       },
     ],
   },

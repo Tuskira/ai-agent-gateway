@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { findNavItem, mergeNavGroups, type NavGroup, type NavItem } from '@/lib/nav'
+import {
+  coreNavGroups,
+  findNavItem,
+  mergeNavGroups,
+  type NavGroup,
+  type NavItem,
+} from '@/lib/nav'
 
 describe('findNavItem', () => {
   it('finds a page by its exact path', () => {
@@ -51,5 +57,18 @@ describe('mergeNavGroups', () => {
     const out = mergeNavGroups(core, [{ label: 'X', items: [item('/x')] }])
     expect(findNavItem('/x/deep', out)?.path).toBe('/x')
     expect(findNavItem('/x/deep')).toBeUndefined()
+  })
+})
+
+describe('coreNavGroups', () => {
+  it('puts Observe right after Dashboards', () => {
+    expect(coreNavGroups.map((g) => g.label)).toEqual([
+      'Dashboards',
+      'Observe',
+      'Configure',
+      'Operations',
+      'Access',
+      'Platform',
+    ])
   })
 })

@@ -224,9 +224,11 @@ Tier 1 passed: ...
 Tier 2, once you export real keys, adds a "tokens" line per provider and
 the last few LLM Logs rows.
 
-Within a few seconds of a real call (the ClickHouse sink flushes every 5 s
-or 100 records, `sinks.clickhouse.flush_interval`/`batch_size`; LLM Logs
-from Postgres is immediate), it also shows up in the console:
+Within about ten seconds of a real call (the ClickHouse sink flushes every
+2 s or 100 records, `sinks.clickhouse.flush_interval`/`batch_size`, and
+ClickHouse then buffers the async insert for up to
+`sinks.clickhouse.async_insert_busy_timeout`, 10 s; LLM Logs from Postgres
+is immediate), it also shows up in the console:
 
 - **LLM Logs** (`/llm-logs`) -- one row per call: provider, model, tokens,
   cost, status.

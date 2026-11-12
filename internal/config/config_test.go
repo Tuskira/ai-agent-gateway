@@ -48,7 +48,8 @@ func TestDefault(t *testing.T) {
 		t.Errorf("Sinks.Otel defaults = %+v", cfg.Sinks.Otel)
 	}
 	if cfg.Sinks.ClickHouse.Enabled || cfg.Sinks.ClickHouse.Port != 9000 || cfg.Sinks.ClickHouse.BatchSize != 100 ||
-		cfg.Sinks.ClickHouse.FlushInterval != 5*time.Second || cfg.Sinks.ClickHouse.BufferSize != 1000 {
+		cfg.Sinks.ClickHouse.FlushInterval != 2*time.Second || cfg.Sinks.ClickHouse.BufferSize != 1000 ||
+		!cfg.Sinks.ClickHouse.AsyncInsert || cfg.Sinks.ClickHouse.AsyncInsertBusyTimeout != 10*time.Second {
 		t.Errorf("Sinks.ClickHouse defaults = %+v", cfg.Sinks.ClickHouse)
 	}
 	if cfg.Ingest.Enabled || cfg.Ingest.MaxBodyBytes != 32<<20 || cfg.Ingest.MaxRecords != 1000 || cfg.Ingest.RatePerMinute != 120 {
@@ -258,6 +259,37 @@ func TestLoad_EnvOverlay_Ingest(t *testing.T) {
 	}
 	if !cfg.Ingest.Enabled || cfg.Ingest.MaxBodyBytes != 1048576 || cfg.Ingest.MaxRecords != 50 || cfg.Ingest.RatePerMinute != 30 {
 		t.Errorf("Ingest = %+v", cfg.Ingest)
+	}
+}
+
+func TestLoad_EnvOverlay_ClickHouseAsyncInsert(t *testing.T) {
+	t.Setenv("GATEWAY_SINKS_CLICKHOUSE_ASYNC_INSERT", "false")
+	t.Setenv("GATEWAY_SINKS_CLICKHOUSE_ASYNC_INSERT_BUSY_TIMEOUT", "4s")
+	t.Setenv("GATEWAY_SINKS_CLICKHOUSE_FLUSH_INTERVAL", "2s")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	ch := cfg.Sinks.ClickHouse
+	if ch.AsyncInsert || ch.AsyncInsertBusyTimeout != 4*time.Second || ch.FlushInterval != 2*time.Second {
+		t.Errorf("Sinks.ClickHouse = %+v", ch)
+	}
+}
+
+func TestLoad_ClickHouseAsyncInsertYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gw.yml")
+	yml := "sinks:\n  clickhouse:\n    enabled: true\n    host: ch\n    async_insert_busy_timeout: 3s\n"
+	if err := os.WriteFile(path, []byte(yml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	// async_insert left out of the file keeps its default (on).
+	if !cfg.Sinks.ClickHouse.AsyncInsert || cfg.Sinks.ClickHouse.AsyncInsertBusyTimeout != 3*time.Second {
+		t.Errorf("Sinks.ClickHouse = %+v", cfg.Sinks.ClickHouse)
 	}
 }
 
@@ -578,6 +610,43 @@ func TestValidate(t *testing.T) {
 			mutate: func(c *Config) {
 				c.Sinks.ClickHouse.Enabled = true
 				c.Sinks.ClickHouse.Host = "localhost"
+			},
+			wantErr: false,
+		},
+		{
+			name: "clickhouse async insert busy timeout zero",
+			mutate: func(c *Config) {
+				c.Sinks.ClickHouse.Enabled = true
+				c.Sinks.ClickHouse.Host = "localhost"
+				c.Sinks.ClickHouse.AsyncInsertBusyTimeout = 0
+			},
+			wantErr: true,
+		},
+		{
+			name: "clickhouse async insert busy timeout above the cap",
+			mutate: func(c *Config) {
+				c.Sinks.ClickHouse.Enabled = true
+				c.Sinks.ClickHouse.Host = "localhost"
+				c.Sinks.ClickHouse.AsyncInsertBusyTimeout = 16 * time.Second
+			},
+			wantErr: true,
+		},
+		{
+			name: "clickhouse async insert busy timeout at the cap",
+			mutate: func(c *Config) {
+				c.Sinks.ClickHouse.Enabled = true
+				c.Sinks.ClickHouse.Host = "localhost"
+				c.Sinks.ClickHouse.AsyncInsertBusyTimeout = 15 * time.Second
+			},
+			wantErr: false,
+		},
+		{
+			name: "clickhouse async insert off ignores the busy timeout",
+			mutate: func(c *Config) {
+				c.Sinks.ClickHouse.Enabled = true
+				c.Sinks.ClickHouse.Host = "localhost"
+				c.Sinks.ClickHouse.AsyncInsert = false
+				c.Sinks.ClickHouse.AsyncInsertBusyTimeout = 0
 			},
 			wantErr: false,
 		},

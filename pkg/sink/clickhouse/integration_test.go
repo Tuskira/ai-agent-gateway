@@ -46,6 +46,9 @@ func testConfig(t *testing.T) Config {
 	return Config{
 		Host: host, Port: port, Database: "default",
 		BatchSize: 5, FlushInterval: 200 * time.Millisecond, BufferSize: 100,
+		// Async inserts stay on (the default), with a short busy timeout so
+		// the tests don't each wait out the 10s production default.
+		AsyncInsertBusyTimeout: 200 * time.Millisecond,
 	}
 }
 

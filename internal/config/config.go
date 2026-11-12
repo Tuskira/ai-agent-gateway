@@ -888,6 +888,12 @@ type OtelSink struct {
 	ServiceName string `yaml:"service_name"`
 }
 
+// maxAsyncInsertBusyTimeout caps sinks.clickhouse.async_insert_busy_timeout:
+// a background flush waits up to that long for ClickHouse, and shutdown
+// waits for in-flight flushes, which has to fit in a pod's termination
+// grace period.
+const maxAsyncInsertBusyTimeout = 15 * time.Second
+
 // ClickHouseSink configures pkg/sink/clickhouse: batched inserts into
 // mcp_access_logs/llm_calls, and the read side backing GET
 // /api/v1/analytics/*.
@@ -909,6 +915,16 @@ type ClickHouseSink struct {
 	// it is full is dropped (see the sink's Dropped()) rather than
 	// blocking the caller.
 	BufferSize int `yaml:"buffer_size"`
+	// AsyncInsert has ClickHouse buffer the sink's inserts (from every
+	// replica) server-side and write them as one part per
+	// AsyncInsertBusyTimeout, instead of one part per flush. false sends
+	// plain synchronous inserts with no async-insert settings.
+	AsyncInsert bool `yaml:"async_insert"`
+	// AsyncInsertBusyTimeout is how long ClickHouse buffers async inserts
+	// before writing them out; a flush returns once its rows are written,
+	// so it adds up to this much to a record's delay before it is
+	// queryable.
+	AsyncInsertBusyTimeout time.Duration `yaml:"async_insert_busy_timeout"`
 }
 
 // Logging configures the process-wide logger.
@@ -1070,12 +1086,14 @@ func Default() *Config {
 				Protocol: "http",
 			},
 			ClickHouse: ClickHouseSink{
-				Enabled:       false,
-				Port:          9000,
-				Database:      "default",
-				BatchSize:     100,
-				FlushInterval: 5 * time.Second,
-				BufferSize:    1000,
+				Enabled:                false,
+				Port:                   9000,
+				Database:               "default",
+				BatchSize:              100,
+				FlushInterval:          2 * time.Second,
+				BufferSize:             1000,
+				AsyncInsert:            true,
+				AsyncInsertBusyTimeout: 10 * time.Second,
 			},
 		},
 		Logging: Logging{
@@ -1579,6 +1597,11 @@ func (c *Config) Validate() error {
 		}
 		if c.Sinks.ClickHouse.BufferSize <= 0 {
 			return fmt.Errorf("sinks.clickhouse: buffer_size must be positive when enabled")
+		}
+		if c.Sinks.ClickHouse.AsyncInsert {
+			if bt := c.Sinks.ClickHouse.AsyncInsertBusyTimeout; bt < time.Millisecond || bt > maxAsyncInsertBusyTimeout {
+				return fmt.Errorf("sinks.clickhouse: async_insert_busy_timeout must be between 1ms and %s when async_insert is on, got %s", maxAsyncInsertBusyTimeout, bt)
+			}
 		}
 	}
 

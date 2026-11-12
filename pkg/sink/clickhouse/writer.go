@@ -3,6 +3,10 @@ package clickhouse
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/sink"
 	"github.com/shopspring/decimal"
@@ -39,7 +43,7 @@ const insertAccessLogsSQL = "INSERT INTO mcp_access_logs (" + `
 func (w *chWriter) InsertAccess(ctx context.Context, rows []*sink.AccessLog) error {
 	batch, err := w.c.PrepareBatch(ctx, insertAccessLogsSQL)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errNotSent, err)
 	}
 	defer batch.Close()
 
@@ -69,7 +73,7 @@ const insertLLMCallsSQL = "INSERT INTO llm_calls (" + `
 func (w *chWriter) InsertLLM(ctx context.Context, rows []*sink.LLMCall) error {
 	batch, err := w.c.PrepareBatch(ctx, insertLLMCallsSQL)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errNotSent, err)
 	}
 	defer batch.Close()
 
@@ -88,6 +92,50 @@ func (w *chWriter) InsertLLM(ctx context.Context, rows []*sink.LLMCall) error {
 		}
 	}
 	return batch.Send()
+}
+
+// errNotSent marks an insert that failed before any row was sent:
+// PrepareBatch (taking a connection, sending the INSERT statement,
+// reading the table's structure back) failed, so nothing can have been
+// written and the insert is safe to repeat.
+var errNotSent = errors.New("insert not sent")
+
+// transientInsertCodes are ClickHouse server error codes for which the
+// server rejected an insert as a whole (no row written, the data is not
+// left queued) and a later attempt can succeed.
+var transientInsertCodes = map[int32]bool{
+	202: true, // TOO_MANY_SIMULTANEOUS_QUERIES
+	203: true, // NO_FREE_CONNECTION
+	241: true, // MEMORY_LIMIT_EXCEEDED
+	242: true, // TABLE_IS_READ_ONLY
+	252: true, // TOO_MANY_PARTS
+}
+
+// retryable reports whether a failed insert is safe and worth repeating
+// once. The rule is "never risk a duplicate": the tables are plain
+// MergeTree and async inserts don't deduplicate by default, so repeating
+// an insert that may have been written would store its rows twice.
+//
+//   - Context cancellation or deadline: no. The attempt was abandoned
+//     mid-flight, so the rows may yet be written (an async insert stays in
+//     the server's buffer), and the time budget is spent anyway.
+//   - A server exception: only for transientInsertCodes, where the server
+//     reports the whole insert rejected. Anything else (a schema or type
+//     error, a wait_for_async_insert timeout, which leaves the rows queued
+//     on the server) is either permanent or ambiguous.
+//   - Any other error before the rows were sent (errNotSent: dial,
+//     connection pool, network error on the INSERT statement): yes.
+//   - Any other error while sending (the connection broke after the rows
+//     went out, so the server may have written them): no.
+func retryable(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var ex *clickhouse.Exception
+	if errors.As(err, &ex) {
+		return transientInsertCodes[ex.Code]
+	}
+	return errors.Is(err, errNotSent)
 }
 
 // nonNilStrings gives Array columns an empty, never nil, slice.

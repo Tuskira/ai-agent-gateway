@@ -110,7 +110,7 @@ Duration values use Go's duration syntax (`30s`, `5m`, `1h`).
 | `database.password` | string | `gateway` | `GATEWAY_DATABASE_PASSWORD` | Postgres password. The default is for the local compose stack only: the gateway logs a `WARN` at startup when it is still `gateway` and the host is not loopback / a bare service name or `ssl_mode` is not `disable`. Set a strong value for any real deployment. |
 | `database.database` | string | `gateway` | `GATEWAY_DATABASE_DATABASE` | Database name. |
 | `database.ssl_mode` | string | `require` | `GATEWAY_DATABASE_SSL_MODE` | `require` \| `disable` \| `verify-ca` \| `verify-full`. The local compose stack overrides this to `disable`; use `require` or stronger anywhere shared. |
-| `database.migrate` | bool | `true` | `GATEWAY_DATABASE_MIGRATE` | Applies pending migrations at startup. Also runnable standalone via `gateway migrate`. |
+| `database.migrate` | bool | `true` | `GATEWAY_DATABASE_MIGRATE` | Applies pending migrations at startup. Also runnable standalone via `gateway migrate`, which also applies the ClickHouse sink's schema when `sinks.clickhouse.enabled` is true (see `sinks.clickhouse.username`). |
 
 ## auth
 
@@ -284,7 +284,7 @@ plane's access-log body capture, not the LLM plane's.
 | `sinks.clickhouse.host` | string | `""` (required when enabled) | `GATEWAY_SINKS_CLICKHOUSE_HOST` | ClickHouse host. |
 | `sinks.clickhouse.port` | int | `9000` | `GATEWAY_SINKS_CLICKHOUSE_PORT` | ClickHouse native port. |
 | `sinks.clickhouse.database` | string | `default` | `GATEWAY_SINKS_CLICKHOUSE_DATABASE` | Database name. |
-| `sinks.clickhouse.username` | string | `""` | `GATEWAY_SINKS_CLICKHOUSE_USERNAME` | On startup the gateway creates and upgrades its tables and the `llm_usage_canonical` view in `database`, so this user needs `CREATE TABLE`, `ALTER TABLE` and `CREATE VIEW` there, plus `INSERT` and `SELECT`. If any of these fails, the gateway does not start. |
+| `sinks.clickhouse.username` | string | `""` | `GATEWAY_SINKS_CLICKHOUSE_USERNAME` | The gateway creates and upgrades its tables and the `llm_usage_canonical` view in `database`, and records each applied schema version (a SHA-256 of its statements) in a `gateway_schema_migrations` table there. `gateway migrate` applies and records the schema; a gateway that starts and finds the current version recorded issues no DDL, otherwise it applies the schema itself first (each statement retried on ClickHouse's "please retry" errors, e.g. code 517 when several replicas alter at once). So this user needs `CREATE TABLE`, `ALTER TABLE` and `CREATE VIEW` there, plus `INSERT` and `SELECT`; a gateway whose schema is already recorded needs only `INSERT` and `SELECT`. If the schema step fails, the gateway does not start. With several replicas, run `gateway migrate` once per release before rolling them. |
 | `sinks.clickhouse.password` | string | `""` | `GATEWAY_SINKS_CLICKHOUSE_PASSWORD` | — |
 | `sinks.clickhouse.secure` | bool | `false` | `GATEWAY_SINKS_CLICKHOUSE_SECURE` | TLS to ClickHouse. |
 | `sinks.clickhouse.batch_size` | int | `100` | `GATEWAY_SINKS_CLICKHOUSE_BATCH_SIZE` | Buffered record count that triggers an immediate flush. |

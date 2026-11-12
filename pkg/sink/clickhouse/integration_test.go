@@ -10,6 +10,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"strconv"
@@ -969,7 +970,7 @@ func TestIntegration_SessionTimeline_LinksMCPByToolCall(t *testing.T) {
 
 // TestIntegration_MigrationAddsClientSessionIDToExistingTable simulates a
 // deployment upgrading from before this column existed: mcp_access_logs is
-// recreated with the pre-fix schema, then New (which runs applyMigrations)
+// recreated with the pre-fix schema, then New (which applies the schema)
 // must add client_session_id via ADD COLUMN IF NOT EXISTS without losing
 // or failing on the rest of the table, and the column must round-trip
 // afterwards through the writer and both readers (list + detail).
@@ -1021,6 +1022,12 @@ TTL toDateTime(timestamp) + INTERVAL 90 DAY
 `
 	if err := raw.Exec(ctx, "DROP TABLE IF EXISTS mcp_access_logs"); err != nil {
 		t.Fatalf("drop mcp_access_logs: %v", err)
+	}
+	// A deployment from before this column also predates the schema
+	// ledger; without this, New would find an earlier test's apply
+	// recorded and (correctly) skip the migrations under test.
+	if err := raw.Exec(ctx, "DROP TABLE IF EXISTS "+ledgerTable); err != nil {
+		t.Fatalf("drop %s: %v", ledgerTable, err)
 	}
 	if err := raw.Exec(ctx, preFixSchema); err != nil {
 		t.Fatalf("create pre-fix mcp_access_logs: %v", err)
@@ -1241,7 +1248,7 @@ func TestIntegration_DiscoveryUsage(t *testing.T) {
 // HEAD~N's migrate.go, i.e. "main"): no source/`user` columns.
 // TestIntegration_MigrationIdempotency uses these to build a database as
 // it would have looked right before this change, so the test proves the
-// NEW applyMigrations upgrades an old table in place, twice, without error.
+// NEW schema (applySchema) upgrades an old table in place, twice, without error.
 const oldMigrationMCPAccessLogs = `
 CREATE TABLE IF NOT EXISTS mcp_access_logs (
 	timestamp DateTime64(3),
@@ -1325,7 +1332,7 @@ TTL toDateTime(timestamp) + INTERVAL 90 DAY
 `
 
 // openRawConn opens a bare clickhouse-go connection (bypassing New, which
-// would immediately run the CURRENT applyMigrations) so a test can control
+// would immediately apply the CURRENT schema) so a test can control
 // migration ordering itself.
 func openRawConn(t *testing.T, cfg Config) conn {
 	t.Helper()
@@ -1344,7 +1351,7 @@ func openRawConn(t *testing.T, cfg Config) conn {
 
 // TestIntegration_MigrationIdempotency builds mcp_access_logs/llm_calls
 // with the pre-interceptor-ingest ("main") schema, inserts one row into
-// each with the OLD column set, then runs the CURRENT applyMigrations
+// each with the OLD column set, then applies the CURRENT schema
 // TWICE against that database. It asserts: no error either time (an ALTER
 // TABLE ... ADD COLUMN IF NOT EXISTS is idempotent), the old row reads
 // back with source='gateway' and `user`=” (the columns' DEFAULTs, applied
@@ -1394,12 +1401,12 @@ func TestIntegration_MigrationIdempotency(t *testing.T) {
 		t.Fatalf("insert old llm row: %v", err)
 	}
 
-	// 3. Run the CURRENT applyMigrations TWICE.
-	if err := applyMigrations(ctx, c); err != nil {
-		t.Fatalf("applyMigrations() (1st run) error = %v", err)
-	}
-	if err := applyMigrations(ctx, c); err != nil {
-		t.Fatalf("applyMigrations() (2nd run) error = %v", err)
+	// 3. Run the CURRENT schema TWICE.
+	stmts := schemaStatements()
+	for run := 1; run <= 2; run++ {
+		if err := applySchema(ctx, c, stmts, schemaFingerprint(stmts), "test", slog.Default()); err != nil {
+			t.Fatalf("applySchema() (run %d) error = %v", run, err)
+		}
 	}
 
 	// 4. The old row reads back with the new columns' defaults.

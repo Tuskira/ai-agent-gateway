@@ -327,6 +327,7 @@ func buildSinks(cfg *config.Config, gwMetrics *metrics.Metrics, extra []sink.Log
 			BatchSize:     cfg.Sinks.ClickHouse.BatchSize,
 			FlushInterval: cfg.Sinks.ClickHouse.FlushInterval,
 			BufferSize:    cfg.Sinks.ClickHouse.BufferSize,
+			Version:       cfg.Service.Version,
 		}, logger)
 		if err != nil {
 			return nil, fmt.Errorf("build clickhouse sink: %w", err)

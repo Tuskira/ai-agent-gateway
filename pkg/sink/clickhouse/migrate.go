@@ -2,14 +2,23 @@ package clickhouse
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math/rand/v2"
 	"strings"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/pricing"
 )
 
 // migrationMCPAccessLogs and migrationLLMCalls are the sink's one baseline
 // migration: two idempotent CREATE TABLE IF NOT EXISTS statements, applied
-// at startup (see applyMigrations). Column order here is the contract
+// by ensureSchema / Migrate (see below). Column order here is the contract
 // insertAccessLogs/insertLLMCalls (writer.go) append values in -- keep
 // them in sync.
 //
@@ -228,8 +237,9 @@ var alterLLMCallsDiscovery = []string{
 //     are excluded -- the same list the LLM plane leaves unpriced
 //     (pricing.UnpricedPath), so the two cannot drift.
 //
-// CREATE OR REPLACE keeps it current on every startup; it reads columns
-// added by the ALTERs above, so it runs after them.
+// CREATE OR REPLACE keeps it current whenever the schema is applied (see
+// ensureSchema); it reads columns added by the ALTERs above, so it runs
+// after them.
 var migrationUsageCanonical = `
 CREATE OR REPLACE VIEW llm_usage_canonical AS
 SELECT
@@ -275,10 +285,32 @@ func unpricedPathSQL() string {
 	return strings.Join(append(conds, "position(path, '"+pricing.UnpricedPathSegment+"') > 0"), " OR ")
 }
 
-// applyMigrations creates both tables if they don't already exist, then
-// applies in-place column upgrades. Idempotent: safe to run on every startup.
-func applyMigrations(ctx context.Context, c conn) error {
-	stmts := []string{migrationMCPAccessLogs, migrationLLMCalls}
+// ledgerTable records which schema versions have been applied to this
+// database, so a gateway start can skip DDL entirely once the schema is in
+// place (see ensureSchema). A version is a fingerprint of the statements
+// themselves (schemaFingerprint), so adding or changing a migration changes
+// it with no version number to bump. Plain MergeTree like the sink's other
+// tables, so it works unchanged on single-node and replicated or managed
+// ClickHouse with no ON CLUSTER. One row per apply; duplicates (several
+// pods applying a fresh schema at once, or one per release) are harmless.
+const ledgerTable = "gateway_schema_migrations"
+
+const migrationLedger = `
+CREATE TABLE IF NOT EXISTS ` + ledgerTable + ` (
+	fingerprint String,
+	gateway_version String,
+	statements UInt32,
+	applied_at DateTime64(3)
+)
+ENGINE = MergeTree
+ORDER BY (fingerprint, applied_at)
+`
+
+// schemaStatements is the sink's whole schema, in apply order: the ledger,
+// both tables, the in-place column upgrades, then the view (which reads
+// columns the ALTERs add). Every statement is idempotent.
+func schemaStatements() []string {
+	stmts := []string{migrationLedger, migrationMCPAccessLogs, migrationLLMCalls}
 	stmts = append(stmts, alterLLMCallsCostUSD...)
 	stmts = append(stmts, alterLLMCallsBodyRef...)
 	stmts = append(stmts, alterLLMCallsClientIP...)
@@ -290,11 +322,166 @@ func applyMigrations(ctx context.Context, c conn) error {
 	stmts = append(stmts, alterMCPAccessLogsSkillName...)
 	stmts = append(stmts, alterMCPAccessLogsIngest...)
 	stmts = append(stmts, alterLLMCallsIngest...)
-	stmts = append(stmts, migrationUsageCanonical)
+	return append(stmts, migrationUsageCanonical)
+}
+
+// schemaFingerprint is the hex sha256 of stmts in order, each terminated by
+// a NUL byte so statement boundaries are part of the hash.
+func schemaFingerprint(stmts []string) string {
+	h := sha256.New()
+	for _, s := range stmts {
+		h.Write([]byte(s))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ensureSchema is the gateway-start path (New). It first asks the ledger
+// whether the current schema fingerprint is already recorded; if so it
+// issues no DDL at all, which is what keeps many replicas starting at once
+// from racing each other's ALTERs on replicated ClickHouse. Otherwise
+// (fresh install, or `gateway migrate` did not run for this release) it
+// applies the schema itself, with retry, and records it.
+func ensureSchema(ctx context.Context, c conn, version string, logger *slog.Logger) error {
+	stmts := schemaStatements()
+	fp := schemaFingerprint(stmts)
+	applied, err := schemaApplied(ctx, c, fp, logger)
+	if err != nil {
+		return fmt.Errorf("check schema ledger: %w", err)
+	}
+	if applied {
+		logger.Info("clickhouse sink: schema already applied, skipping migrations", "fingerprint", fp)
+		return nil
+	}
+	logger.Info("clickhouse sink: schema not recorded, applying migrations", "fingerprint", fp)
+	return applySchema(ctx, c, stmts, fp, version, logger)
+}
+
+// schemaApplied reports whether fp is recorded in the ledger. A missing
+// ledger table (code 60, UNKNOWN_TABLE) means nothing has been recorded.
+func schemaApplied(ctx context.Context, c conn, fp string, logger *slog.Logger) (bool, error) {
+	var n uint64
+	err := withRetry(ctx, logger, "SELECT FROM "+ledgerTable, func(ctx context.Context) error {
+		return c.QueryRow(ctx, "SELECT count() FROM "+ledgerTable+" WHERE fingerprint = ?", fp).Scan(&n)
+	})
+	if err != nil {
+		var ex *clickhouse.Exception
+		if errors.As(err, &ex) && ex.Code == codeUnknownTable {
+			return false, nil
+		}
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// applySchema runs stmts in order, each with withRetry, then records fp in
+// the ledger. Used both by ensureSchema and, unconditionally, by Migrate.
+func applySchema(ctx context.Context, c conn, stmts []string, fp, version string, logger *slog.Logger) error {
 	for _, stmt := range stmts {
-		if err := c.Exec(ctx, stmt); err != nil {
-			return err
+		if err := withRetry(ctx, logger, summarize(stmt), func(ctx context.Context) error {
+			return c.Exec(ctx, stmt)
+		}); err != nil {
+			return fmt.Errorf("%s: %w", summarize(stmt), err)
 		}
 	}
+	err := withRetry(ctx, logger, "INSERT INTO "+ledgerTable, func(ctx context.Context) error {
+		return c.Exec(ctx, "INSERT INTO "+ledgerTable+" (fingerprint, gateway_version, statements, applied_at) SELECT ?, ?, ?, now64(3)",
+			fp, version, uint32(len(stmts)))
+	})
+	if err != nil {
+		return fmt.Errorf("record schema in %s: %w", ledgerTable, err)
+	}
+	logger.Info("clickhouse sink: schema applied", "fingerprint", fp, "statements", len(stmts))
 	return nil
+}
+
+// summarize returns a statement's first words, for logs and errors.
+func summarize(stmt string) string {
+	f := strings.Fields(stmt)
+	if len(f) > 9 {
+		f = f[:9]
+	}
+	return strings.Join(f, " ")
+}
+
+const codeUnknownTable = 60
+
+// retryableCodes are ClickHouse error codes after which the same schema
+// statement can succeed if simply sent again:
+//
+//   - 517 CANNOT_ASSIGN_ALTER: on replicated tables, the replica serving
+//     the ALTER has not caught up with an ALTER another client just made;
+//     the server's message itself says "Please retry this query". This is
+//     what several replicas starting at once hit.
+//   - 473 DEADLOCK_AVOIDED: a table lock wait timed out while another DDL
+//     held it ("Possible deadlock avoided. Client should retry").
+//   - 242 TABLE_IS_READ_ONLY: a replicated table is read-only while its
+//     replica re-establishes its coordination (Keeper) session.
+//   - 999 KEEPER_EXCEPTION: the coordination session was lost or timed out
+//     mid-DDL; bounded retries cover reconnects, a persistent fault still
+//     fails after the last attempt.
+var retryableCodes = map[int32]string{
+	517: "CANNOT_ASSIGN_ALTER",
+	473: "DEADLOCK_AVOIDED",
+	242: "TABLE_IS_READ_ONLY",
+	999: "KEEPER_EXCEPTION",
+}
+
+// retryPolicy bounds withRetry. The defaults sum to at most ~16s of
+// waiting per statement, inside New's 30s budget; ctx cuts it shorter.
+type retryPolicy struct {
+	attempts  int
+	baseDelay time.Duration
+	maxDelay  time.Duration
+}
+
+var schemaRetry = retryPolicy{attempts: 8, baseDelay: 250 * time.Millisecond, maxDelay: 4 * time.Second}
+
+// withRetry calls fn until it succeeds, fails with an error that is not a
+// retryable ClickHouse exception, runs out of attempts, or ctx is done.
+// Each retry is logged with the error code and attempt number.
+func withRetry(ctx context.Context, logger *slog.Logger, what string, fn func(context.Context) error) error {
+	return schemaRetry.do(ctx, logger, what, fn)
+}
+
+func (p retryPolicy) do(ctx context.Context, logger *slog.Logger, what string, fn func(context.Context) error) error {
+	for attempt := 1; ; attempt++ {
+		err := fn(ctx)
+		if err == nil {
+			return nil
+		}
+		var ex *clickhouse.Exception
+		if !errors.As(err, &ex) {
+			return err
+		}
+		name, ok := retryableCodes[ex.Code]
+		if !ok || attempt >= p.attempts {
+			return err
+		}
+		delay := p.backoff(attempt)
+		logger.Warn("clickhouse sink: schema statement failed with a retryable error, retrying",
+			"statement", what, "code", ex.Code, "code_name", name,
+			"attempt", attempt, "max_attempts", p.attempts, "retry_in", delay, "error", err)
+		t := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return fmt.Errorf("%w (retry stopped: %w)", err, ctx.Err())
+		case <-t.C:
+		}
+	}
+}
+
+// backoff doubles from baseDelay per attempt up to maxDelay, then picks a
+// random point in its upper half so replicas retrying together spread out.
+func (p retryPolicy) backoff(attempt int) time.Duration {
+	d := p.baseDelay << (attempt - 1)
+	if d <= 0 || d > p.maxDelay {
+		d = p.maxDelay
+	}
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + rand.N(half+1)
 }

@@ -29,6 +29,11 @@ type Config struct {
 	// it is full is dropped (see Sink.Dropped) rather than blocking the
 	// caller.
 	BufferSize int
+
+	// Version is the gateway version recorded alongside each schema apply
+	// in the schema ledger (gateway_schema_migrations). Informational only:
+	// whether the schema is up to date is decided by its fingerprint.
+	Version string
 }
 
 const (

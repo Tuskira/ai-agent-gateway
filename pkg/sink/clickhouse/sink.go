@@ -42,10 +42,12 @@ type Sink struct {
 	logger    *slog.Logger
 }
 
-// New opens a ClickHouse connection per cfg, pings it, applies the
-// baseline migration (idempotent CREATE TABLE IF NOT EXISTS), and starts
-// the sink's background batch-writer goroutine. Callers must call Close
-// on shutdown to drain and flush whatever is still queued.
+// New opens a ClickHouse connection per cfg, pings it, makes sure the
+// sink's schema is in place (ensureSchema: a single ledger SELECT when the
+// current schema is already recorded -- normally by `gateway migrate` --
+// else the migrations themselves, with retry), and starts the sink's
+// background batch-writer goroutine. Callers must call Close on shutdown
+// to drain and flush whatever is still queued.
 //
 // The concrete *Sink returned also implements analytics.Reader and
 // exposes Dropped() uint64; cmd/gateway/main.go recovers those via a type
@@ -57,6 +59,48 @@ func New(cfg Config, logger *slog.Logger) (sink.LogSink, error) {
 	}
 	cfg = cfg.withDefaults()
 
+	c, err := open(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	migrateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := ensureSchema(migrateCtx, c, cfg.Version, logger); err != nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("clickhouse: apply baseline migration: %w", err)
+	}
+
+	return newSink(c, &chWriter{c: c}, cfg, logger), nil
+}
+
+// Migrate applies the sink's whole schema to cfg's database, with retry,
+// and records it in the schema ledger, so gateways started afterwards
+// issue no DDL. Unlike New it always applies, even when the schema is
+// already recorded: it is the one-shot `gateway migrate` step, run once
+// per release ahead of the gateway replicas, and re-applying keeps the
+// view matching the release being deployed (e.g. after a rollback).
+func Migrate(ctx context.Context, cfg Config, logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	cfg = cfg.withDefaults()
+
+	c, err := open(cfg)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	stmts := schemaStatements()
+	if err := applySchema(ctx, c, stmts, schemaFingerprint(stmts), cfg.Version, logger); err != nil {
+		return fmt.Errorf("clickhouse: apply migrations: %w", err)
+	}
+	return nil
+}
+
+// open connects to cfg (already defaulted) and pings it.
+func open(cfg Config) (conn, error) {
 	c, err := clickhouse.Open(cfg.options())
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: open: %w", err)
@@ -68,15 +112,7 @@ func New(cfg Config, logger *slog.Logger) (sink.LogSink, error) {
 		_ = c.Close()
 		return nil, fmt.Errorf("clickhouse: ping: %w", err)
 	}
-
-	migrateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := applyMigrations(migrateCtx, c); err != nil {
-		_ = c.Close()
-		return nil, fmt.Errorf("clickhouse: apply baseline migration: %w", err)
-	}
-
-	return newSink(c, &chWriter{c: c}, cfg, logger), nil
+	return c, nil
 }
 
 // newSink wires up the queue engine over an already-connected conn and

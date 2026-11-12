@@ -31,6 +31,7 @@ import (
 	_ "github.com/Tuskira/tusk-ai-secured-gateway/internal/store/postgres"
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/gateway"
+	chsink "github.com/Tuskira/tusk-ai-secured-gateway/pkg/sink/clickhouse"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
@@ -86,10 +87,19 @@ func main() {
 	}
 }
 
+// clickHouseMigrateTimeout bounds `gateway migrate`'s ClickHouse step. It
+// is longer than the 30s a gateway start allows itself because this is the
+// one runner per release: it can afford to wait out retryable errors from
+// a replica that is slow to catch up.
+const clickHouseMigrateTimeout = 2 * time.Minute
+
 // runMigrate loads config, connects to the store, applies every pending
 // migration, and exits. It is the `gateway migrate` subcommand: the same
 // path main() takes when database.migrate: true, runnable standalone
-// (e.g. in a Kubernetes init container, ahead of a rolling deploy).
+// (e.g. in a Kubernetes init container, ahead of a rolling deploy). When
+// sinks.clickhouse.enabled is true it also applies the ClickHouse sink's
+// schema and records it, so the gateway replicas started afterwards issue
+// no ClickHouse DDL (see pkg/sink/clickhouse.Migrate).
 func runMigrate() error {
 	configPath := flag.String("config", os.Getenv("CONFIG_PATH"), "path to YAML config file")
 	_ = flag.CommandLine.Parse(os.Args[2:])
@@ -116,6 +126,25 @@ func runMigrate() error {
 	}
 
 	logger.Info("migrations applied", "driver", cfg.Database.Driver)
+
+	if !cfg.Sinks.ClickHouse.Enabled {
+		return nil
+	}
+	chCtx, chCancel := context.WithTimeout(context.Background(), clickHouseMigrateTimeout)
+	defer chCancel()
+	ch := cfg.Sinks.ClickHouse
+	if err := chsink.Migrate(chCtx, chsink.Config{
+		Host:     ch.Host,
+		Port:     ch.Port,
+		Database: ch.Database,
+		Username: ch.Username,
+		Password: ch.Password,
+		Secure:   ch.Secure,
+		Version:  version,
+	}, logger); err != nil {
+		return fmt.Errorf("apply clickhouse sink migrations: %w", err)
+	}
+	logger.Info("clickhouse sink migrations applied", "host", ch.Host, "database", ch.Database)
 	return nil
 }
 

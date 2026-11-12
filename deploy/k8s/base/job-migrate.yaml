@@ -1,5 +1,8 @@
 # Runs `gateway migrate` (cmd/gateway/main.go's runMigrate) to apply every
-# pending Postgres migration and exit. Helm would wire this as a
+# pending Postgres migration and exit. When sinks.clickhouse.enabled is true
+# in its config/env it also applies the ClickHouse sink's schema and records
+# it in gateway_schema_migrations, so the plane pods then start without
+# issuing any ClickHouse DDL. Helm would wire this as a
 # pre-install/pre-upgrade hook; kustomize has no hook concept, so run it
 # explicitly, before the plane Deployments come up (or before a rollout of
 # a version with new migrations) -- see deploy/README.md's "Upgrading".

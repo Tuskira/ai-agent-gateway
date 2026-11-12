@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gateway replicas no longer race each other's ClickHouse schema changes
+  at start.** Every pod used to run the ClickHouse sink's ~24 schema
+  statements (`CREATE TABLE`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`,
+  `CREATE OR REPLACE VIEW`) on every start, so several pods starting
+  together on replicated ClickHouse could fail with code 517 ("replica
+  doesn't catchup with latest ALTER query updates") and crash-loop. Now
+  `gateway migrate` also applies the ClickHouse schema when
+  `sinks.clickhouse.enabled` is true and records it in a new
+  `gateway_schema_migrations` table, keyed by a SHA-256 of the statements.
+  A starting gateway that finds the current schema recorded runs one
+  `SELECT` and no DDL. When it is not recorded (fresh install, compose,
+  migrate not run), the gateway applies it itself as before, now retrying
+  each statement on ClickHouse's retryable errors (517, 473, 242, 999) with
+  backoff. No config change is needed; to keep pods from issuing DDL, run
+  `gateway migrate` with the ClickHouse settings once per release. See
+  [docs/configuration.md](docs/configuration.md#sinks).
+
 ## [0.11.0] - 2026-11-10
 
 ### Added

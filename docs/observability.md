@@ -734,7 +734,8 @@ no limits are enforced from it (the LLM plane's own budgets are in
 [llm-plane.md](llm-plane.md#budgets-and-limits)).
 
 Every figure comes from one ClickHouse view, **`llm_usage_canonical`**,
-created over `llm_calls` on startup (`pkg/sink/clickhouse/migrate.go`), so
+created over `llm_calls` with the sink's schema (`pkg/sink/clickhouse/migrate.go`;
+applied by `gateway migrate`, or on startup when not yet recorded), so
 totals, breakdowns and the chart always add up. The ClickHouse user therefore
 needs `CREATE VIEW` as well as the table privileges (see
 [configuration](configuration.md#sinks)):

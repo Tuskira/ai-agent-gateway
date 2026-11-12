@@ -282,7 +282,9 @@ curl -s localhost:9464/metrics | grep gateway_build_info
 2. Run the migrate Job first: `kubectl apply -f deploy/k8s/base/job-migrate.yaml`
    after deleting the previous run (`kubectl -n ai-gateway delete job
    gateway-migrate`; Job objects aren't re-runnable via re-apply), then wait
-   for it to complete.
+   for it to complete. With the ClickHouse sink enabled, give the Job the
+   same `GATEWAY_SINKS_CLICKHOUSE_*` settings as the Deployments: it then
+   applies the ClickHouse schema too, once, instead of every pod at start.
 3. Roll the three Deployments (`kubectl -n ai-gateway rollout restart
    deploy/gateway-api deploy/gateway-mcp deploy/gateway-llm`, or re-apply
    with the new tag).

@@ -34,6 +34,19 @@ type Sink struct {
 
 	batchSize  int
 	flushEvery time.Duration
+	// maxPending caps the records the run loop holds while every flush
+	// slot is busy; past it the loop stops draining ch, so ch fills and
+	// further writes are dropped (and counted) as before.
+	maxPending int
+	// async: background flushes use ClickHouse asynchronous inserts with
+	// settings (asyncSettings) and up to maxInflight of them run at once.
+	async       bool
+	settings    clickhouse.Settings
+	maxInflight int
+	// insertTimeout bounds one background insert attempt; retryDelay is
+	// the pause before its single retry (see retryable).
+	insertTimeout time.Duration
+	retryDelay    time.Duration
 
 	ch        chan item
 	done      chan struct{}
@@ -71,7 +84,67 @@ func New(cfg Config, logger *slog.Logger) (sink.LogSink, error) {
 		return nil, fmt.Errorf("clickhouse: apply baseline migration: %w", err)
 	}
 
+	if !cfg.SyncInsert {
+		probeCtx, cancelProbe := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelProbe()
+		cfg.adaptiveBusyTimeoutKnown = supportsAdaptiveBusyTimeout(probeCtx, c, logger)
+		logger.Info("clickhouse sink: asynchronous inserts on", "busy_timeout", cfg.AsyncInsertBusyTimeout, "flush_interval", cfg.FlushInterval)
+	}
 	return newSink(c, &chWriter{c: c}, cfg, logger), nil
+}
+
+// maxInflightFlushes is how many background flushes may wait on
+// ClickHouse at once in async mode. With wait_for_async_insert=1 an
+// insert returns only once the server has written the buffer it joined,
+// up to the busy timeout later, so flushes overlap rather than queue
+// behind each other; records keep accumulating in the run loop meanwhile
+// and the next free slot takes all of them as one batch.
+const maxInflightFlushes = 4
+
+const (
+	// insertTimeoutSlack is added to the busy timeout to bound one async
+	// insert attempt (a sync attempt gets the slack alone).
+	insertTimeoutSlack = 10 * time.Second
+	// closeFlushTimeout bounds Close's final, synchronous flush of what is
+	// still buffered, retry included, so shutdown stays well inside a
+	// Kubernetes termination grace period of 30s.
+	closeFlushTimeout = 10 * time.Second
+	defaultRetryDelay = time.Second
+)
+
+// asyncSettings are the per-insert settings of an async-mode flush:
+// async_insert so ClickHouse merges small inserts from every replica into
+// one part per busy timeout, wait_for_async_insert so an insert returns
+// only once its rows are written (an error still means the rows were not,
+// as with a synchronous insert), and the busy timeout itself. The server's
+// adaptive busy timeout (ClickHouse 24.2+, on by default) shrinks the wait
+// towards its 50ms minimum when inserts are sparse -- exactly the light
+// traffic this is meant for -- so it is switched off when the server
+// knows the setting. async_insert_busy_timeout_ms is the name every
+// version accepts (an alias of async_insert_busy_timeout_max_ms on 24.2+).
+func asyncSettings(busyTimeout time.Duration, adaptiveKnown bool) clickhouse.Settings {
+	st := clickhouse.Settings{
+		"async_insert":                 1,
+		"wait_for_async_insert":        1,
+		"async_insert_busy_timeout_ms": busyTimeout.Milliseconds(),
+	}
+	if adaptiveKnown {
+		st["async_insert_use_adaptive_busy_timeout"] = 0
+	}
+	return st
+}
+
+// supportsAdaptiveBusyTimeout reports whether the server has the
+// async_insert_use_adaptive_busy_timeout setting: sending a setting the
+// server doesn't know fails the insert (UNKNOWN_SETTING), so it is only
+// sent where it exists.
+func supportsAdaptiveBusyTimeout(ctx context.Context, c conn, logger *slog.Logger) bool {
+	var n uint64
+	if err := c.QueryRow(ctx, "SELECT count() FROM system.settings WHERE name = 'async_insert_use_adaptive_busy_timeout'").Scan(&n); err != nil {
+		logger.Warn("clickhouse sink: could not check for the adaptive async-insert busy timeout; not overriding it", "error", err)
+		return false
+	}
+	return n > 0
 }
 
 // Migrate applies the sink's whole schema to cfg's database, with retry,
@@ -120,14 +193,27 @@ func open(cfg Config) (conn, error) {
 // it with a fake batchWriter and no real ClickHouse.
 func newSink(c conn, w batchWriter, cfg Config, logger *slog.Logger) *Sink {
 	cfg = cfg.withDefaults()
+	if logger == nil {
+		logger = slog.Default()
+	}
 	s := &Sink{
-		c:          c,
-		writer:     w,
-		batchSize:  cfg.BatchSize,
-		flushEvery: cfg.FlushInterval,
-		ch:         make(chan item, cfg.BufferSize),
-		done:       make(chan struct{}),
-		logger:     logger,
+		c:             c,
+		writer:        w,
+		batchSize:     cfg.BatchSize,
+		flushEvery:    cfg.FlushInterval,
+		maxPending:    cfg.BufferSize,
+		async:         !cfg.SyncInsert,
+		maxInflight:   1,
+		insertTimeout: insertTimeoutSlack,
+		retryDelay:    defaultRetryDelay,
+		ch:            make(chan item, cfg.BufferSize),
+		done:          make(chan struct{}),
+		logger:        logger,
+	}
+	if s.async {
+		s.maxInflight = maxInflightFlushes
+		s.insertTimeout = cfg.AsyncInsertBusyTimeout + insertTimeoutSlack
+		s.settings = asyncSettings(cfg.AsyncInsertBusyTimeout, cfg.adaptiveBusyTimeoutKnown)
 	}
 	go s.run()
 	return s
@@ -159,9 +245,11 @@ func (s *Sink) Dropped() uint64 {
 	return s.dropped.Load()
 }
 
-// Close stops accepting new writes, flushes whatever is still queued or
-// buffered, waits for the background goroutine to finish, and closes the
-// underlying connection. Safe to call multiple times.
+// Close stops accepting new writes, writes whatever is still queued or
+// buffered in one final synchronous flush (bounded by closeFlushTimeout),
+// waits for in-flight flushes (each bounded by the busy timeout plus
+// insertTimeoutSlack), and closes the underlying connection.
+// Safe to call multiple times.
 func (s *Sink) Close() error {
 	s.closeOnce.Do(func() { close(s.ch) })
 	<-s.done
@@ -171,59 +259,171 @@ func (s *Sink) Close() error {
 	return nil
 }
 
-// run is the sink's background writer goroutine: it accumulates queued
-// records into per-type buffers, flushing them (one INSERT batch per
-// type) whenever their combined size reaches batchSize or flushEvery
-// elapses, whichever comes first. When the queue channel is closed
-// (Close), it drains whatever is still buffered in the channel and does
-// one final flush before returning.
+// batch is one flush's worth of records.
+type batch struct {
+	access []*sink.AccessLog
+	llm    []*sink.LLMCall
+}
+
+func (b *batch) len() int { return len(b.access) + len(b.llm) }
+
+func (b *batch) add(it item) {
+	switch {
+	case it.access != nil:
+		b.access = append(b.access, it.access)
+	case it.llm != nil:
+		b.llm = append(b.llm, it.llm)
+	}
+}
+
+// run is the sink's background loop: it accumulates queued records into
+// a batch and hands the batch to a flush goroutine (one INSERT per table)
+// whenever it reaches batchSize or flushEvery elapses, whichever comes
+// first. At most maxInflight flushes run at once (one in sync mode, as
+// before); while all are busy the loop keeps accumulating, up to
+// maxPending records, and the next flush to finish takes the whole batch.
+// Beyond maxPending the loop stops reading the queue, so it fills and
+// further writes are dropped and counted -- WriteAccess/WriteLLMCall never
+// block. When the queue channel is closed (Close), the loop drains it,
+// does one final synchronous flush and waits for in-flight flushes.
 func (s *Sink) run() {
 	defer close(s.done)
 
 	ticker := time.NewTicker(s.flushEvery)
 	defer ticker.Stop()
 
-	var accessBuf []*sink.AccessLog
-	var llmBuf []*sink.LLMCall
+	var (
+		cur      batch
+		inflight int
+		due      bool // a flush came due while every slot was busy
+		wg       sync.WaitGroup
+		finished = make(chan struct{}, s.maxInflight)
+	)
 
-	flush := func() {
-		if len(accessBuf) == 0 && len(llmBuf) == 0 {
+	dispatch := func() {
+		if cur.len() == 0 {
+			due = false
 			return
 		}
-		ctx := context.Background()
-		if len(accessBuf) > 0 {
-			if err := s.writer.InsertAccess(ctx, accessBuf); err != nil {
-				s.logger.Error("clickhouse sink: insert access logs failed", "error", err, "rows", len(accessBuf))
-			}
-			accessBuf = nil
+		if inflight >= s.maxInflight {
+			due = true
+			return
 		}
-		if len(llmBuf) > 0 {
-			if err := s.writer.InsertLLM(ctx, llmBuf); err != nil {
-				s.logger.Error("clickhouse sink: insert llm calls failed", "error", err, "rows", len(llmBuf))
-			}
-			llmBuf = nil
-		}
+		inflight++
+		due = false
+		b := cur
+		cur = batch{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.flush(b)
+			finished <- struct{}{}
+		}()
 	}
 
-loop:
 	for {
+		in := s.ch
+		if cur.len() >= s.maxPending {
+			in = nil // full: stop draining until a flush slot frees up
+		}
 		select {
-		case it, ok := <-s.ch:
+		case it, ok := <-in:
 			if !ok {
-				break loop
+				s.flushFinal(cur)
+				wg.Wait()
+				return
 			}
-			switch {
-			case it.access != nil:
-				accessBuf = append(accessBuf, it.access)
-			case it.llm != nil:
-				llmBuf = append(llmBuf, it.llm)
-			}
-			if len(accessBuf)+len(llmBuf) >= s.batchSize {
-				flush()
+			cur.add(it)
+			if cur.len() >= s.batchSize {
+				dispatch()
 			}
 		case <-ticker.C:
-			flush()
+			dispatch()
+		case <-finished:
+			inflight--
+			if due || cur.len() >= s.batchSize {
+				dispatch()
+			}
 		}
 	}
-	flush()
+}
+
+// flush writes b in the background path: async-insert settings when
+// async, each table's insert in its own attempt-bounded context, the
+// tables in parallel (each async insert waits out the busy timeout), and
+// one retry of a transient failure.
+func (s *Sink) flush(b batch) {
+	var wg sync.WaitGroup
+	if len(b.access) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.insertWithRetry(context.Background(), "access logs", len(b.access), func(ctx context.Context) error {
+				return s.writer.InsertAccess(s.insertCtx(ctx), b.access)
+			})
+		}()
+	}
+	if len(b.llm) > 0 {
+		s.insertWithRetry(context.Background(), "llm calls", len(b.llm), func(ctx context.Context) error {
+			return s.writer.InsertLLM(s.insertCtx(ctx), b.llm)
+		})
+	}
+	wg.Wait()
+}
+
+// flushFinal is Close's last flush: synchronous (no async-insert
+// settings, so it does not wait out a busy timeout -- its rows become one
+// part of their own), with every attempt, retry included, inside
+// closeFlushTimeout.
+func (s *Sink) flushFinal(b batch) {
+	if b.len() == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), closeFlushTimeout)
+	defer cancel()
+	if len(b.access) > 0 {
+		s.insertWithRetry(ctx, "access logs", len(b.access), func(ctx context.Context) error {
+			return s.writer.InsertAccess(ctx, b.access)
+		})
+	}
+	if len(b.llm) > 0 {
+		s.insertWithRetry(ctx, "llm calls", len(b.llm), func(ctx context.Context) error {
+			return s.writer.InsertLLM(ctx, b.llm)
+		})
+	}
+}
+
+// insertCtx attaches the async-insert settings to ctx in async mode.
+func (s *Sink) insertCtx(ctx context.Context) context.Context {
+	if !s.async {
+		return ctx
+	}
+	return clickhouse.Context(ctx, clickhouse.WithSettings(s.settings))
+}
+
+// insertWithRetry runs insert (each attempt bounded by insertTimeout and
+// by parent) and, if it fails with an error retryable reports as safe to
+// repeat, runs it once more after retryDelay. Every failed attempt is
+// logged with its row count; an unretried or second failure loses the
+// rows, as a failed insert always has.
+func (s *Sink) insertWithRetry(parent context.Context, what string, rows int, insert func(ctx context.Context) error) {
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(parent, s.insertTimeout)
+		err := insert(ctx)
+		cancel()
+		if err == nil {
+			return
+		}
+		retry := attempt == 1 && retryable(err)
+		s.logger.Error("clickhouse sink: insert "+what+" failed", "error", err, "rows", rows, "attempt", attempt, "will_retry", retry)
+		if !retry {
+			return
+		}
+		select {
+		case <-time.After(s.retryDelay):
+		case <-parent.Done():
+			s.logger.Error("clickhouse sink: insert "+what+" not retried: out of time", "rows", rows)
+			return
+		}
+	}
 }

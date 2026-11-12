@@ -13,7 +13,7 @@ asynchronously.
 |---|---|---|
 | `stdout` | `sinks.stdout.enabled` (default `true`), `sinks.stdout.include_bodies` (default `false`) | One JSON line per record on stdout. Captured bodies (`request_body`, `response_body`, `messages`, `system`, `tools`) are **left out** unless `sinks.stdout.include_bodies` is `true`. |
 | `otel` | `sinks.otel.*` | One OTLP span per record, exported over http or grpc. Connects lazily — a collector that's down at startup doesn't fail boot. |
-| `clickhouse` | `sinks.clickhouse.*` | Batched inserts into `mcp_access_logs`/`llm_calls`. The **only** sink that also backs a read API (`GET /api/v1/analytics/*`) and the console's Overview, Access Logs and Session Timeline pages and the traffic columns of the MCPs, Models and Skills pages. |
+| `clickhouse` | `sinks.clickhouse.*` | Batched inserts into `mcp_access_logs`/`llm_calls`, sent as ClickHouse asynchronous inserts by default so the server merges every replica's small flushes into one part per `async_insert_busy_timeout` (a record shows up within ~12s by default; see [configuration](configuration.md#sinks)). The **only** sink that also backs a read API (`GET /api/v1/analytics/*`) and the console's Overview, Access Logs and Session Timeline pages and the traffic columns of the MCPs, Models and Skills pages. |
 
 > **Privacy.** Bodies are customer prompts, completions and tool arguments.
 > With `store_bodies` on they are written to Postgres / ClickHouse / the body

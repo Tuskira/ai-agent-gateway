@@ -21,6 +21,7 @@ type fakeWriter struct {
 	once    sync.Once
 
 	mu          sync.Mutex
+	calls       int // InsertAccess calls entered, blocked or not
 	accessCalls [][]*sink.AccessLog
 	llmCalls    [][]*sink.LLMCall
 }
@@ -40,7 +41,16 @@ func (w *fakeWriter) block() {
 	<-w.release
 }
 
+func (w *fakeWriter) entered() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.calls
+}
+
 func (w *fakeWriter) InsertAccess(_ context.Context, rows []*sink.AccessLog) error {
+	w.mu.Lock()
+	w.calls++
+	w.mu.Unlock()
 	if w.release != nil {
 		select {
 		case <-w.release:
@@ -123,34 +133,43 @@ func TestSink_FlushesOnInterval(t *testing.T) {
 
 func TestSink_OverflowDropsAndCounts(t *testing.T) {
 	w := newBlockingFakeWriter()
-	// batchSize 1 so the very first write triggers a flush that blocks
-	// inside InsertAccess until we release it.
+	// batchSize 1: every record is its own flush, and every flush blocks
+	// inside InsertAccess until we release it. In async mode up to
+	// maxInflightFlushes flushes wait at once; after that the run loop
+	// holds at most BufferSize (1) record, the queue holds BufferSize (1)
+	// more, and the rest are dropped.
 	s := newSink(nil, w, Config{BatchSize: 1, FlushInterval: time.Hour, BufferSize: 1}, nil)
 
-	s.WriteAccess(&sink.AccessLog{RequestID: "1"}) // triggers the blocking flush
-	select {
-	case <-w.started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("writer never started its blocking insert")
-	}
-
-	// The run loop is now blocked inside InsertAccess for record 1, so
-	// nothing is draining the channel (capacity 1): record 2 fills it,
-	// and records 3 and 4 both find it full and are dropped.
-	s.WriteAccess(&sink.AccessLog{RequestID: "2"})
-	s.WriteAccess(&sink.AccessLog{RequestID: "3"})
-	s.WriteAccess(&sink.AccessLog{RequestID: "4"})
-
-	deadline := time.After(2 * time.Second)
-	for s.Dropped() < 2 {
-		select {
-		case <-deadline:
-			t.Fatalf("Dropped() = %d, want 2 (records 3 and 4)", s.Dropped())
-		case <-time.After(5 * time.Millisecond):
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+			time.Sleep(2 * time.Millisecond)
 		}
 	}
+
+	n := 0
+	for ; n < maxInflightFlushes; n++ {
+		s.WriteAccess(&sink.AccessLog{RequestID: "inflight"})
+		want := n + 1
+		waitFor("flush to start", func() bool { return w.entered() == want })
+	}
+	// One more is taken off the queue into the run loop's batch, which
+	// is then full (every flush slot busy)...
+	s.WriteAccess(&sink.AccessLog{RequestID: "held"})
+	waitFor("queue to drain", func() bool { return len(s.ch) == 0 })
+	// ...so this one stays in the queue, and the next two are dropped.
+	s.WriteAccess(&sink.AccessLog{RequestID: "queued"})
+	s.WriteAccess(&sink.AccessLog{RequestID: "dropped-1"})
+	s.WriteAccess(&sink.AccessLog{RequestID: "dropped-2"})
 	if got := s.Dropped(); got != 2 {
 		t.Fatalf("Dropped() = %d, want exactly 2", got)
+	}
+	if w.entered() != maxInflightFlushes {
+		t.Fatalf("flushes started = %d, want %d (held records must wait for a free slot)", w.entered(), maxInflightFlushes)
 	}
 
 	close(w.release)
@@ -160,6 +179,46 @@ func TestSink_OverflowDropsAndCounts(t *testing.T) {
 	if got := s.Dropped(); got != 2 {
 		t.Fatalf("Dropped() after Close() = %d, want unchanged 2", got)
 	}
+	access, _ := w.snapshot()
+	if got := totalAccessRows(access); got != maxInflightFlushes+2 {
+		t.Fatalf("rows written = %d, want %d (every record not dropped)", got, maxInflightFlushes+2)
+	}
+}
+
+// In sync mode only one flush runs at a time, as before async inserts;
+// records arriving meanwhile are batched for the next one.
+func TestSink_SyncModeOneFlushAtATime(t *testing.T) {
+	w := newBlockingFakeWriter()
+	s := newSink(nil, w, Config{BatchSize: 1, FlushInterval: time.Hour, BufferSize: 10, SyncInsert: true}, nil)
+
+	s.WriteAccess(&sink.AccessLog{RequestID: "1"})
+	select {
+	case <-w.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer never started")
+	}
+	s.WriteAccess(&sink.AccessLog{RequestID: "2"})
+	s.WriteAccess(&sink.AccessLog{RequestID: "3"})
+	time.Sleep(50 * time.Millisecond)
+	if got := w.entered(); got != 1 {
+		t.Fatalf("flushes started while one is in flight = %d, want 1", got)
+	}
+	close(w.release)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	access, _ := w.snapshot()
+	if len(access) != 2 || len(access[0]) != 1 || len(access[1]) != 2 {
+		t.Fatalf("flush batches = %v, want [1 record] then [2 records]", batchSizes(access))
+	}
+}
+
+func batchSizes(calls [][]*sink.AccessLog) []int {
+	var out []int
+	for _, c := range calls {
+		out = append(out, len(c))
+	}
+	return out
 }
 
 func TestSink_CloseFlushesBufferedRecords(t *testing.T) {
@@ -204,7 +263,8 @@ func TestSink_CloseIsIdempotent(t *testing.T) {
 
 func TestConfig_WithDefaults(t *testing.T) {
 	c := Config{}.withDefaults()
-	if c.Port != defaultPort || c.BatchSize != defaultBatchSize || c.FlushInterval != defaultFlushInterval || c.BufferSize != defaultBufferSize || c.Database != defaultDatabase {
+	if c.Port != defaultPort || c.BatchSize != defaultBatchSize || c.FlushInterval != defaultFlushInterval || c.BufferSize != defaultBufferSize || c.Database != defaultDatabase ||
+		c.AsyncInsertBusyTimeout != defaultAsyncInsertBusyTimeout || c.SyncInsert {
 		t.Errorf("withDefaults() = %+v", c)
 	}
 

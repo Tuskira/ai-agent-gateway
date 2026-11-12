@@ -318,16 +318,18 @@ func buildSinks(cfg *config.Config, gwMetrics *metrics.Metrics, extra []sink.Log
 	var ingestSink sink.IngestSink
 	if cfg.Sinks.ClickHouse.Enabled {
 		s, err := chsink.New(chsink.Config{
-			Host:          cfg.Sinks.ClickHouse.Host,
-			Port:          cfg.Sinks.ClickHouse.Port,
-			Database:      cfg.Sinks.ClickHouse.Database,
-			Username:      cfg.Sinks.ClickHouse.Username,
-			Password:      cfg.Sinks.ClickHouse.Password,
-			Secure:        cfg.Sinks.ClickHouse.Secure,
-			BatchSize:     cfg.Sinks.ClickHouse.BatchSize,
-			FlushInterval: cfg.Sinks.ClickHouse.FlushInterval,
-			BufferSize:    cfg.Sinks.ClickHouse.BufferSize,
-			Version:       cfg.Service.Version,
+			Host:                   cfg.Sinks.ClickHouse.Host,
+			Port:                   cfg.Sinks.ClickHouse.Port,
+			Database:               cfg.Sinks.ClickHouse.Database,
+			Username:               cfg.Sinks.ClickHouse.Username,
+			Password:               cfg.Sinks.ClickHouse.Password,
+			Secure:                 cfg.Sinks.ClickHouse.Secure,
+			BatchSize:              cfg.Sinks.ClickHouse.BatchSize,
+			FlushInterval:          cfg.Sinks.ClickHouse.FlushInterval,
+			BufferSize:             cfg.Sinks.ClickHouse.BufferSize,
+			SyncInsert:             !cfg.Sinks.ClickHouse.AsyncInsert,
+			AsyncInsertBusyTimeout: cfg.Sinks.ClickHouse.AsyncInsertBusyTimeout,
+			Version:                cfg.Service.Version,
 		}, logger)
 		if err != nil {
 			return nil, fmt.Errorf("build clickhouse sink: %w", err)

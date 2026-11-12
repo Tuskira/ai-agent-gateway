@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The ClickHouse sink no longer creates a new part per flush.** At light
+  traffic each replica's 5s flush carried a row or two, so
+  `mcp_access_logs` and `llm_calls` each got a new part about every second
+  and ClickHouse spent its time re-merging small tables. Background flushes
+  are now ClickHouse asynchronous inserts (`async_insert=1`,
+  `wait_for_async_insert=1`, a fixed busy timeout): ClickHouse buffers the
+  inserts from every replica and writes one part per busy timeout per
+  table. Measured with six sinks at ~0.7 records/s in total: about 290 new
+  parts an hour per table instead of ~1,450, at a worst-case delay of ~12s
+  before a record is queryable (was ~5s). A flush still returns only once
+  its rows are written, so failures are reported as before; a failed
+  insert is now also retried once when ClickHouse rejected it as a whole
+  (e.g. `TOO_MANY_PARTS`) or it never reached the server, never when the
+  rows may already be written. A flush waiting on ClickHouse no longer
+  holds up the queue: up to four run at once while the next batch
+  accumulates. Shutdown writes what is left synchronously and waits for
+  flushes in flight (at most the busy timeout).
+
+### Changed
+
+- **New `sinks.clickhouse.async_insert` (default `true`) and
+  `sinks.clickhouse.async_insert_busy_timeout` (default `10s`, at most
+  `15s`)**, also as `GATEWAY_SINKS_CLICKHOUSE_ASYNC_INSERT` and
+  `GATEWAY_SINKS_CLICKHOUSE_ASYNC_INSERT_BUSY_TIMEOUT`.
+  `async_insert: false` restores plain synchronous inserts.
+- **`sinks.clickhouse.flush_interval` defaults to `2s` (was `5s`).** With
+  async inserts the part count no longer depends on it, so a shorter
+  interval only cuts delay. If you turn `async_insert` off, set it back to
+  `5s`. The sink's connection pool grows by eight connections (to 18) so
+  flushes waiting on ClickHouse don't take the analytics reads' ones. See
+  [docs/configuration.md](docs/configuration.md#sinks).
+
 ## [0.11.1] - 2026-11-12
 
 ### Fixed

@@ -46,23 +46,27 @@ var _ Pricer = (*Card)(nil)
 // what NewCardFromRates takes per model. Above200k, when set,
 // is the long-context override applied to the WHOLE request once the prompt
 // exceeds 200K tokens (Claude Sonnet 4.5, Gemini 2.5/3.x Pro bill every token at
-// the higher tier past that threshold). RegionalPremium marks models whose
+// the higher tier past that threshold). LongContextThreshold, when set, moves
+// that threshold (Claude Haiku 5.5 switches at 100K). RegionalPremium marks models whose
 // Bedrock geo inference profiles bill above the global rate (Claude 4.5+; see
 // bedrockPremium). Priority/Flex replace the rate for a call served on that
 // provider service tier (OpenAI service_tier, Gemini serviceTier).
 // FastMultiplier and USGeoMultiplier scale every token cost of an Anthropic
 // call reported as speed "fast" / inference_geo "us".
 type Rate struct {
-	Input           float64 `json:"input"`
-	Output          float64 `json:"output"`
-	CacheRead       float64 `json:"cache_read"`
-	CacheWrite      float64 `json:"cache_write"`
-	Above200k       *Rate   `json:"above_200k,omitempty"`
-	RegionalPremium bool    `json:"regional_premium,omitempty"`
-	Priority        *Rate   `json:"priority,omitempty"`
-	Flex            *Rate   `json:"flex,omitempty"`
-	FastMultiplier  float64 `json:"fast_multiplier,omitempty"`
-	USGeoMultiplier float64 `json:"us_geo_multiplier,omitempty"`
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cache_read"`
+	CacheWrite float64 `json:"cache_write"`
+	Above200k  *Rate   `json:"above_200k,omitempty"`
+	// LongContextThreshold is the prompt size (tokens) past which Above200k
+	// applies; 0 means 200,000.
+	LongContextThreshold int64   `json:"long_context_threshold,omitempty"`
+	RegionalPremium      bool    `json:"regional_premium,omitempty"`
+	Priority             *Rate   `json:"priority,omitempty"`
+	Flex                 *Rate   `json:"flex,omitempty"`
+	FastMultiplier       float64 `json:"fast_multiplier,omitempty"`
+	USGeoMultiplier      float64 `json:"us_geo_multiplier,omitempty"`
 }
 
 // Usage is the token accounting for one call that Cost prices. Fields mirror the
@@ -306,7 +310,11 @@ func (c *Card) Cost(provider, model string, u Usage) (*float64, bool) {
 	if provider == "anthropic" || provider == "bedrock" {
 		promptSize = u.Input + u.CacheRead + u.CacheCreation
 	}
-	if r.Above200k != nil && promptSize > 200_000 {
+	threshold := r.LongContextThreshold
+	if threshold <= 0 {
+		threshold = 200_000
+	}
+	if r.Above200k != nil && promptSize > threshold {
 		r = *r.Above200k
 	}
 

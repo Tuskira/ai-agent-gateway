@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-11-12
+
 ### Fixed
 
 - **The ClickHouse sink no longer creates a new part per flush.** At light
@@ -2215,7 +2217,8 @@ First release: phase 1 of the open-source AI gateway.
   `bootstrap-key` transcript.
 - CI badge in `README.md`.
 
-[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.9.1...v0.10.0

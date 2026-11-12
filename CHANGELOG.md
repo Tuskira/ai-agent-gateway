@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pricing for every current Claude model.** Calls to models missing
+  from `pkg/pricing/prices.json` were stored with `cost_usd = NULL`
+  (seen with `claude-opus-4-8`). Added, at the published Claude API
+  rates: `claude-fable-5-2`, `claude-mythos-5-2`, `claude-mythos-5-1`,
+  `claude-fable-5`, `claude-mythos-5`, `claude-opus-5`, `claude-opus-4-8`,
+  `claude-opus-4-7`, `claude-opus-4-6`, `claude-opus-4-5`,
+  `claude-sonnet-5-5`, `claude-sonnet-4-6` and `claude-haiku-5-5`,
+  including each model's cache-read rate (0.025x on Fable / Mythos
+  5.1–5.2, 0.05x on Opus 5.5 / Sonnet 5.5, 0.1x elsewhere), 2x fast mode
+  where offered, and 1.1x US-only inference on Claude 4.6 and later.
+- **`long_context_threshold` on a price card** moves the prompt size at
+  which `above_200k` applies (default 200,000). Claude Haiku 5.5 uses it:
+  a request whose prompt (input plus cache reads and writes) is over
+  100K tokens is billed at $0.50 / $2.50 instead of $0.10 / $0.50.
+
 ## [0.11.2] - 2026-11-12
 
 ### Fixed

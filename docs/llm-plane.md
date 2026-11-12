@@ -1147,7 +1147,8 @@ amount. Cache-token accounting is provider-aware (Anthropic/Bedrock
 report cache tokens separately from input; OpenAI/Gemini fold them into
 the input count — getting this wrong double-bills cache reads), and a
 model with an `above_200k` tier bills the whole request at the higher rate
-once the true prompt size passes 200K tokens. Anthropic 1-hour cache
+once the true prompt size passes 200K tokens (or the model's
+`long_context_threshold`, e.g. 100K for Claude Haiku 5.5). Anthropic 1-hour cache
 writes bill at 2× base input (5-minute writes at the card's
 `cache_write`), and each `web_search` server-tool request adds $0.01. For
 models flagged `regional_premium` (Claude 4.5+), Bedrock geographic

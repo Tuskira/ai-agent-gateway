@@ -651,6 +651,52 @@ feeds analytics ([Agent traffic
 flow](observability.md#agent-traffic-flow)), and like `client_ip` it is a
 ClickHouse column and stdout field, not stored in the Postgres ledger.
 
+### Secret redaction
+
+With `store_bodies` on, the stored copy of each call is scrubbed of
+credential-shaped strings before it is written anywhere: the Postgres
+capture row, the body store, and every analytics sink (ClickHouse, OTel,
+stdout) all get the same scrubbed text. Each match is replaced with
+`[REDACTED:<kind>]`:
+
+| Kind | Matches |
+|---|---|
+| `aws_key_id` | `AKIA` / `ASIA` followed by 16 upper-case letters or digits |
+| `aws_secret` | a 40-character secret, only when labelled (`aws_secret_access_key=`, `"SecretAccessKey": "..."`) |
+| `jwt` | three base64url segments whose header starts `eyJ` |
+| `bearer` | the token after `Bearer ` (16+ characters) |
+| `api_key` | `sk-...` / `sk-ant-...` style keys and gateway `gk_...` keys |
+| `private_key` | a `-----BEGIN ... PRIVATE KEY-----` block through its `END` line |
+| `password`, `secret` | the value of a `password`/`passwd`/`secret` key: JSON `"password": "..."` (also inside an escaped JSON string) or `password=...` / `client_secret: ...`; the key name is kept |
+
+- **Upstream and client untouched.** The request is still forwarded
+  byte for byte and the response relayed as received; only the stored
+  copy changes.
+- **JSON stays JSON.** The marker holds no quote or backslash, so a body
+  that was valid JSON still parses.
+- **Before the caps.** Scrubbing runs before `max_request_bytes` /
+  `max_response_bytes`, so a secret straddling a cap is redacted whole. A
+  streamed capture already cut by the cap also has its tail checked for the
+  start of a secret (e.g. `AKIA...`, `Bearer ...`, an unterminated private
+  key block). A streamed reply is scrubbed after it is assembled, so a
+  secret split across stream events is found. A stream stored raw (not
+  assembled) is scrubbed as text, so a secret split across two of its
+  events can be missed.
+- **Patterns are narrow on purpose.** Ordinary text (UUIDs, hashes,
+  request ids, base64 images, "password reset") is left alone, at the cost
+  that a secret in an unknown format is stored as is.
+- **Not retroactive.** Rows stored before redaction was on are not
+  rewritten.
+- **Off switch.** `llm_proxy.capture.redact_secrets: false`
+  (`GATEWAY_LLM_PROXY_CAPTURE_REDACT_SECRETS=false`). The MCP plane has its
+  own switch, `capture.redact_secrets`. Records pushed to `POST
+  /api/v1/ingest` follow the switch of their plane.
+- **Detection agent.** The turn copied to `llm_proxy.detection.agent_url`
+  is not scrubbed: the agent sees the raw call, as it must to detect a
+  leaked secret.
+- Redactions are counted in `gateway_capture_redactions_total{plane,kind}`
+  ([metrics](observability.md#metrics-prometheus)).
+
 ### Body offload
 
 By default captured bodies are stored inline: Postgres `llm_calls.request_body`

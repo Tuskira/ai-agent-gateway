@@ -360,6 +360,49 @@ func TestLoad_AssembleStreams(t *testing.T) {
 	})
 }
 
+// Secret redaction of captured bodies is on by default on both planes and
+// can be turned off per plane, from the environment or from YAML.
+func TestLoad_RedactSecrets(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		cfg, err := Load("")
+		if err != nil || !cfg.Capture.RedactSecrets || !cfg.LLMProxy.Capture.RedactSecrets {
+			t.Errorf("redact_secrets should default to true on both planes: %+v / %+v, err %v", cfg.Capture, cfg.LLMProxy.Capture, err)
+		}
+	})
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("GATEWAY_CAPTURE_REDACT_SECRETS", "false")
+		t.Setenv("GATEWAY_LLM_PROXY_CAPTURE_REDACT_SECRETS", "false")
+		cfg, err := Load("")
+		if err != nil || cfg.Capture.RedactSecrets || cfg.LLMProxy.Capture.RedactSecrets {
+			t.Errorf("env false: mcp %v llm %v, err %v", cfg.Capture.RedactSecrets, cfg.LLMProxy.Capture.RedactSecrets, err)
+		}
+	})
+	t.Run("env one plane", func(t *testing.T) {
+		t.Setenv("GATEWAY_LLM_PROXY_CAPTURE_REDACT_SECRETS", "false")
+		cfg, err := Load("")
+		if err != nil || !cfg.Capture.RedactSecrets || cfg.LLMProxy.Capture.RedactSecrets {
+			t.Errorf("llm-only off: mcp %v llm %v, err %v", cfg.Capture.RedactSecrets, cfg.LLMProxy.Capture.RedactSecrets, err)
+		}
+	})
+	t.Run("yaml", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "gateway.yml")
+		yml := "capture:\n  store_bodies: true\n  redact_secrets: false\nllm_proxy:\n  capture:\n    store_bodies: true\n"
+		if err := os.WriteFile(path, []byte(yml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil || cfg.Capture.RedactSecrets || !cfg.LLMProxy.Capture.RedactSecrets {
+			t.Errorf("yaml: mcp %v llm %v, err %v", cfg.Capture.RedactSecrets, cfg.LLMProxy.Capture.RedactSecrets, err)
+		}
+	})
+	t.Run("bad value fails", func(t *testing.T) {
+		t.Setenv("GATEWAY_CAPTURE_REDACT_SECRETS", "maybe")
+		if _, err := Load(""); err == nil {
+			t.Error("a non-boolean value should fail startup")
+		}
+	})
+}
+
 func TestLoad_EnvOverlay_Detection(t *testing.T) {
 	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_AGENT_URL", "http://127.0.0.1:8090")
 	t.Setenv("GATEWAY_LLM_PROXY_DETECTION_TIMEOUT", "2s")

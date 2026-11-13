@@ -23,7 +23,12 @@ asynchronously.
 > `store_bodies` prints them unredacted and the gateway logs a startup
 > warning. LLM bodies are capped at 1 MiB each by default
 > (`llm_proxy.capture.max_request_bytes` / `max_response_bytes`, `0` =
-> unbounded); a cut body is flagged `truncated` in the console.
+> unbounded); a cut body is flagged `truncated` in the console. Credential-
+> shaped strings (AWS key ids, JWTs, bearer tokens, API keys, private keys,
+> password/secret values) are replaced with `[REDACTED:<kind>]` before a
+> body reaches any of these destinations (`capture.redact_secrets` /
+> `llm_proxy.capture.redact_secrets`, on by default; see
+> [llm-plane.md](llm-plane.md#secret-redaction)).
 
 ClickHouse is the analytics read source; stdout and OTel are write-only
 exhaust. The one exception is LLM Logs, which falls back to the Postgres
@@ -172,6 +177,7 @@ their standard names.
 | `gateway_sink_records_dropped_total` | counter | `sink` (`stdout`, `clickhouse`) | Records a sink dropped because its queue was full. The OTel sink keeps no count. |
 | `gateway_body_store_offloads_total` | counter | | LLM calls whose bodies went to the body store. LLM plane only. |
 | `gateway_body_store_fallbacks_total` | counter | | Offloads that failed, so the bodies were stored inline. Non-zero means the body store is unhealthy; no record is lost. |
+| `gateway_capture_redactions_total` | counter | `plane` (`llm`, `mcp`), `kind` (`aws_key_id`, `aws_secret`, `jwt`, `bearer`, `api_key`, `private_key`, `password`, `secret`) | Secrets replaced with `[REDACTED:<kind>]` in captured payloads before storage, including `POST /api/v1/ingest` records. The secret itself is never logged or exported. |
 | `gateway_db_connections` | gauge | `state` (`open`, `idle`, `in_use`) | Database pool connections. Postgres store only. |
 | `gateway_db_wait_duration_seconds_total` | counter | | Total time callers waited for a database connection. A rising rate means the pool is too small. |
 

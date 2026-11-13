@@ -21,6 +21,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectioncheck"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectionevents"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/inflight"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/redact"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -399,6 +400,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	defer sinks.Sink.Close()
 	if err := metrics.RegisterSinkDrops(gwMetrics, sinks.Dropped); err != nil {
+		return err
+	}
+	if err := metrics.RegisterCaptureRedactions(gwMetrics, redact.Range); err != nil {
 		return err
 	}
 

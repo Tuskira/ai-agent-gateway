@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
-	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/sink"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/redact"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/trace"
 )
 
@@ -24,13 +24,21 @@ type captured struct {
 }
 
 // captureRequest stashes a bounded copy of the request body for the
-// access log, when capture is enabled.
+// access log, when capture is enabled. The copy is scrubbed of secrets
+// (capture.redact_secrets) before it is capped; body itself, which is what
+// the request is served from, is never modified.
 func captureRequest(ctx context.Context, body []byte, cfg config.Capture) {
 	slot, ok := ctx.Value(captureKey{}).(*captured)
 	if !ok {
 		return
 	}
-	slot.body, slot.truncated = sink.TruncateBody(body, cfg.MaxRequestBytes)
+	slot.body, slot.truncated = capturePolicy(cfg).Body(body, cfg.MaxRequestBytes, false)
+}
+
+// capturePolicy is the secret-scrubbing policy of the MCP plane's
+// captured payloads.
+func capturePolicy(cfg config.Capture) redact.Policy {
+	return redact.Policy{On: cfg.RedactSecrets, Plane: redact.MCP}
 }
 
 // capturedRequest returns what captureRequest stashed.

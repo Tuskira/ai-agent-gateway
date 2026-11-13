@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/discovery"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/redact"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/pricing"
 	pkgsink "github.com/Tuskira/tusk-ai-secured-gateway/pkg/sink"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
@@ -33,9 +34,10 @@ type router struct {
 	recorder       Recorder
 	client         *http.Client
 	storeBodies    bool
-	maxCaptureReq  int  // bounded storage cap for the request body
-	maxCaptureResp int  // bounded storage cap for the response body
-	assembleStream bool // store a streamed response as the message it describes
+	maxCaptureReq  int           // bounded storage cap for the request body
+	maxCaptureResp int           // bounded storage cap for the response body
+	assembleStream bool          // store a streamed response as the message it describes
+	redact         redact.Policy // secret scrubbing of the stored bodies
 	pricing        pricing.Pricer
 	// registry resolves the requested model against the tenant's model
 	// registry; nil resolves nothing (pure passthrough, as before).
@@ -488,8 +490,6 @@ func (rt *router) emit(r *http.Request, info callInfo, reqBody []byte, start tim
 	if h := providerRequestID(resp.Header); h != "" {
 		usage.ProviderRequestID = h
 	}
-	reqBodyCapped, reqBodyCut := pkgsink.TruncateBody(reqBody, rt.maxCaptureReq)
-	reqTruncated := rt.storeBodies && reqBodyCut
 	headers := make(map[string]string, len(r.Header)+len(resp.Header))
 	maskInto(headers, r.Header)
 	maskInto(headers, resp.Header)
@@ -524,32 +524,12 @@ func (rt *router) emit(r *http.Request, info callInfo, reqBody []byte, start tim
 		ProviderRequestID:   usage.ProviderRequestID,
 		UpstreamHost:        resp.Request.URL.Host,
 		Headers:             headers,
-		Truncated:           reqTruncated || (cap != nil && cap.Truncated),
 		SkillsUsed:          found.Skills,
 		MCPToolsUsed:        found.MCPTools,
 		Error:               relayErr,
 	}
 	if cap != nil {
-		call.RequestBody = reqBodyCapped
-		call.ResponseBody = cap.Bytes()
-		// A streamed reply is stored as the message it describes, unless the
-		// capture was cut (an assembled prefix would pass for the whole) or the
-		// stream cannot be assembled: those keep the raw bytes and, for a cut
-		// capture, the truncated flag set above. Runs after the relay, on the
-		// capture copy only.
-		if rt.assembleStream && call.Stream && !cap.Truncated {
-			if b, ok := assembledBody(info.reader, resp, call.ResponseBody); ok {
-				call.ResponseBody = b
-			}
-		}
-		call.Messages, call.System, call.Tools = parseRequestParts(reqBody)
-		// The parsed parts are slices of the request body, so they obey the
-		// same per-body cap (the console renders a cut part as truncated).
-		var cut1, cut2, cut3 bool
-		call.Messages, cut1 = pkgsink.TruncateBody(call.Messages, rt.maxCaptureReq)
-		call.System, cut2 = pkgsink.TruncateBody(call.System, rt.maxCaptureReq)
-		call.Tools, cut3 = pkgsink.TruncateBody(call.Tools, rt.maxCaptureReq)
-		call.Truncated = call.Truncated || (rt.storeBodies && (cut1 || cut2 || cut3))
+		rt.captureBodies(call, info, resp, reqBody, cap)
 	}
 	// Freeze the dollar cost from the parsed tokens + the per-model rate card.
 	// Free utility endpoints are not priced, and neither is a successful call
@@ -582,6 +562,39 @@ func (rt *router) emit(r *http.Request, info callInfo, reqBody []byte, start tim
 		}
 	}
 	rt.record(call)
+}
+
+// captureBodies fills call's stored bodies. Secrets are scrubbed once, here,
+// before the byte caps, so every destination of the record (capture store,
+// body store, analytics sinks) gets the scrubbed text and a secret straddling
+// a cap is never stored half-visible. reqBody and the relayed response are
+// never modified: what went upstream and to the client is unchanged.
+func (rt *router) captureBodies(call *pkgsink.LLMCall, info callInfo, resp *http.Response, reqBody []byte, cap *boundedCap) {
+	scrubbed := rt.redact.Scrub(reqBody)
+	var reqCut, respCut bool
+	call.RequestBody, reqCut = pkgsink.TruncateBody(scrubbed, rt.maxCaptureReq)
+	respBody := cap.Bytes()
+	// A streamed reply is stored as the message it describes, unless the
+	// capture was cut (an assembled prefix would pass for the whole) or the
+	// stream cannot be assembled: those keep the raw bytes and, for a cut
+	// capture, the truncated flag. Runs after the relay, on the capture copy
+	// only, and before scrubbing, so a secret split across stream events is
+	// redacted in the assembled text.
+	if rt.assembleStream && call.Stream && !cap.Truncated {
+		if b, ok := assembledBody(info.reader, resp, respBody); ok {
+			respBody = b
+		}
+	}
+	call.ResponseBody, respCut = rt.redact.Body(respBody, rt.maxCaptureResp, cap.Truncated)
+	// The parsed parts come from the scrubbed body (scrubbing keeps it valid
+	// JSON) and obey the same per-body cap (the console renders a cut part as
+	// truncated).
+	call.Messages, call.System, call.Tools = parseRequestParts(scrubbed)
+	var cut1, cut2, cut3 bool
+	call.Messages, cut1 = pkgsink.TruncateBody(call.Messages, rt.maxCaptureReq)
+	call.System, cut2 = pkgsink.TruncateBody(call.System, rt.maxCaptureReq)
+	call.Tools, cut3 = pkgsink.TruncateBody(call.Tools, rt.maxCaptureReq)
+	call.Truncated = reqCut || respCut || cut1 || cut2 || cut3
 }
 
 // emitError records failed upstream attempts so they are not invisible.

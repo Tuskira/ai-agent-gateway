@@ -142,6 +142,24 @@ func TestSinkDropsCollector(t *testing.T) {
 	noSeries(t, body, `gateway_sink_records_dropped_total{sink="absent"}`)
 }
 
+func TestCaptureRedactionsCollector(t *testing.T) {
+	m := newMetrics(t, promCfg("127.0.0.1:0"))
+	var jwt atomic.Uint64
+	if err := RegisterCaptureRedactions(m, func(fn func(plane, kind string, n uint64)) {
+		fn("mcp", "jwt", jwt.Load())
+		fn("llm", "aws_key_id", 0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jwt.Store(3)
+	body := scrape(t, m)
+	wantSeries(t, body, `gateway_capture_redactions_total{kind="jwt",plane="mcp"}`, "3")
+	wantSeries(t, body, `gateway_capture_redactions_total{kind="aws_key_id",plane="llm"}`, "0")
+	if err := RegisterCaptureRedactions(nil, nil); err != nil {
+		t.Errorf("nil source: %v", err)
+	}
+}
+
 type fakeBodyStore struct{ off, fb atomic.Uint64 }
 
 func (f *fakeBodyStore) Offloaded() uint64 { return f.off.Load() }

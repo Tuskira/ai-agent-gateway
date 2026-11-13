@@ -287,6 +287,12 @@ type Capture struct {
 	// record cut short is flagged truncated.
 	MaxRequestBytes  int `yaml:"max_request_bytes"`
 	MaxResponseBytes int `yaml:"max_response_bytes"`
+	// RedactSecrets replaces credential-shaped strings (AWS key ids, JWTs,
+	// bearer tokens, API keys, private keys, password/secret values) in a
+	// captured payload with "[REDACTED:<kind>]" before it is stored or
+	// exported. Default true; only meaningful with StoreBodies. What is
+	// forwarded to the connector or returned to the client never changes.
+	RedactSecrets bool `yaml:"redact_secrets"`
 }
 
 // Ingest configures POST /api/v1/ingest (internal/api/handlers.Ingest): the
@@ -546,6 +552,12 @@ type LLMCapture struct {
 	// response is stored raw, and false stores every one raw (for debugging).
 	// Only meaningful with StoreBodies.
 	AssembleStreams bool `yaml:"assemble_streams"`
+	// RedactSecrets replaces credential-shaped strings in captured bodies,
+	// messages, system and tools with "[REDACTED:<kind>]" before the call is
+	// stored or exported (capture store, body store, analytics sinks).
+	// Default true; only meaningful with StoreBodies. What is forwarded to
+	// the provider or returned to the client never changes.
+	RedactSecrets bool `yaml:"redact_secrets"`
 	// BodyStore optionally offloads captured bodies out of the capture row
 	// (see sink.BodyStore). Only meaningful with StoreBodies.
 	BodyStore BodyStoreConfig `yaml:"body_store"`
@@ -1005,6 +1017,7 @@ func Default() *Config {
 				MaxRequestBytes:  1 << 20,    // 1 MiB per body; 0 = unbounded (opt in explicitly)
 				MaxResponseBytes: 1 << 20,    // 1 MiB per body; 0 = unbounded (opt in explicitly)
 				AssembleStreams:  true,       // a streamed Anthropic reply is stored as one message
+				RedactSecrets:    true,       // scrub credentials from stored bodies
 				BodyStore: BodyStoreConfig{
 					Type: "none", // bodies inline in the capture row
 					S3:   S3BodyStoreConfig{Prefix: "llm-bodies"},
@@ -1100,6 +1113,7 @@ func Default() *Config {
 			StoreBodies:      false,
 			MaxRequestBytes:  300000,
 			MaxResponseBytes: 300000,
+			RedactSecrets:    true,
 		},
 		Sinks: Sinks{
 			Stdout: StdoutSink{Enabled: true},

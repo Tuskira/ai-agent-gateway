@@ -397,8 +397,12 @@ func (h *Handler) withAccessLog(next http.Handler) http.Handler {
 				record.RequestBody = body
 				record.Truncated = record.Truncated || truncated
 			}
-			record.ResponseBody = rec.body
-			record.Truncated = record.Truncated || rec.truncated
+			// The relayed response was written to the client as is; only
+			// this stored copy is scrubbed. A capture cut at the limit has
+			// its tail checked for a partial secret too.
+			var respCut bool
+			record.ResponseBody, respCut = capturePolicy(h.deps.Capture).Body(rec.body, h.deps.Capture.MaxResponseBytes, rec.truncated)
+			record.Truncated = record.Truncated || respCut
 		}
 
 		// WriteAccess is contractually non-blocking (it enqueues), so

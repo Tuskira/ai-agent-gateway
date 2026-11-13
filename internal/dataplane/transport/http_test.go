@@ -351,6 +351,52 @@ func TestHealthIsOpen(t *testing.T) {
 	}
 }
 
+func TestHealthProbeWritesNoAccessLog(t *testing.T) {
+	f := newFixture(t, fixtureOptions{})
+
+	for i := 0; i < 100; i++ {
+		resp, err := f.server.Client().Get(f.server.URL + "/health")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /health = %d, want 200", resp.StatusCode)
+		}
+	}
+	resp, err := f.server.Client().Head(f.server.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD /health = %d, want 200", resp.StatusCode)
+	}
+	if got := f.sink.all(); len(got) != 0 {
+		t.Fatalf("health probes wrote %d access-log rows, want 0", len(got))
+	}
+}
+
+func TestUnauthenticatedRequestIsStillAccessLogged(t *testing.T) {
+	f := newFixture(t, fixtureOptions{})
+
+	resp, err := f.server.Client().Post(f.server.URL+"/mcp", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("POST /mcp = %d, want 401", resp.StatusCode)
+	}
+	got := f.sink.all()
+	if len(got) != 1 {
+		t.Fatalf("got %d access-log rows, want 1", len(got))
+	}
+	if got[0].TenantID != "" {
+		t.Errorf("tenant = %q, want empty", got[0].TenantID)
+	}
+}
+
 func TestUnauthenticatedRequestGets401AndJSONRPC32001(t *testing.T) {
 	// The status code is the exception to "everything is a 200": there
 	// is no JSON-RPC layer yet when a credential is refused. The BODY is

@@ -31,6 +31,10 @@ capture table when ClickHouse is off (see [Analytics API](#analytics-api)).
 
 ## Drop counters on `/health`
 
+The MCP plane does not write access-log rows for `GET`/`HEAD /health`
+(probe traffic); those requests are still counted in
+`gateway_http_requests_total{plane="mcp",route="/health"}`.
+
 `GET /api/v1/health` (control plane) reports each enabled sink's live
 state:
 

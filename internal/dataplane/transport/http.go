@@ -65,7 +65,8 @@ type Handler struct {
 }
 
 // NewHandler returns the plane's http.Handler: /health open, everything
-// else authenticated.
+// else authenticated. GET/HEAD /health is not access-logged (probes would
+// swamp the log); it is still counted in gateway_http_requests_total.
 func NewHandler(deps Deps) http.Handler {
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
@@ -78,7 +79,6 @@ func NewHandler(deps Deps) http.Handler {
 	auth := AuthMiddleware(deps.Authenticator, deps.Authorizer, deps.Logger)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", h.health)
 	mux.Handle("POST /mcp", auth(http.HandlerFunc(h.rpc)))
 	mux.Handle("DELETE /mcp", auth(http.HandlerFunc(h.deleteSession)))
 	mux.Handle("GET /mcp/stream", auth(http.HandlerFunc(h.stream)))
@@ -87,7 +87,14 @@ func NewHandler(deps Deps) http.Handler {
 	// The access log wraps authentication so a rejected request is
 	// still recorded: a burst of 401s is exactly the thing an operator
 	// needs the log for.
-	return h.withAccessLog(mux)
+	//
+	// /health sits outside the access log: load-balancer and kubelet
+	// probes would otherwise be nearly every row. Other methods on
+	// /health fall through to "/" and stay authenticated and logged.
+	root := http.NewServeMux()
+	root.HandleFunc("GET /health", h.health)
+	root.Handle("/", h.withAccessLog(mux))
+	return root
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {

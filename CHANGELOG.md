@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The MCP plane no longer writes an access-log row for `GET`/`HEAD /health`
+  (load-balancer and kubelet probes were about 99.7% of `mcp_access_logs`
+  rows in one deployment). Probes are still counted in
+  `gateway_http_requests_total{plane="mcp",route="/health"}`. Existing rows
+  are not deleted.
+
 ## [0.12.0] - 2026-11-12
 
 ### Added

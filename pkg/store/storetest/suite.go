@@ -41,6 +41,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("Tenants", func(t *testing.T) { testTenants(t, newStore(t)) })
 	t.Run("APIKeys", func(t *testing.T) { testAPIKeys(t, newStore(t)) })
 	t.Run("APIKeyLimits", func(t *testing.T) { testAPIKeyLimits(t, newStore(t)) })
+	t.Run("StrictModels", func(t *testing.T) { testStrictModels(t, newStore(t)) })
 	t.Run("Credentials", func(t *testing.T) { testCredentials(t, newStore(t)) })
 	t.Run("Connectors", func(t *testing.T) { testConnectors(t, newStore(t)) })
 	t.Run("CredentialSources", func(t *testing.T) { testCredentialSources(t, newStore(t)) })
@@ -295,6 +296,114 @@ func testAPIKeys(t *testing.T, s store.Store) {
 
 // testAPIKeyLimits covers APIKey.Limits: round-tripped on Create, replaced
 // and cleared by SetLimits, visible through every read, tenant-scoped.
+// testStrictModels covers the strict model policy: the tenant's flag
+// (store.TenantModelPolicy) and a key's override (store.APIKeyModelPolicy).
+// Both are optional capabilities; a store without one skips its half.
+func testStrictModels(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	tenantA := mustCreateTenant(t, ctx, s, "strict-a")
+	tenantB := mustCreateTenant(t, ctx, s, "strict-b")
+
+	t.Run("Tenant", func(t *testing.T) {
+		tp, ok := s.Tenants().(store.TenantModelPolicy)
+		if !ok {
+			t.Skip("store does not implement store.TenantModelPolicy")
+		}
+		if got, err := s.Tenants().GetByID(ctx, tenantA.ID); err != nil || got.StrictModels {
+			t.Fatalf("new tenant = %+v, %v; want StrictModels false", got, err)
+		}
+		updated, err := tp.SetStrictModels(ctx, tenantA.ID, true)
+		if err != nil || !updated.StrictModels || updated.ID != tenantA.ID || updated.Slug != tenantA.Slug {
+			t.Fatalf("SetStrictModels(true) = %+v, %v", updated, err)
+		}
+		for name, get := range map[string]func() (*store.Tenant, error){
+			"GetByID":   func() (*store.Tenant, error) { return s.Tenants().GetByID(ctx, tenantA.ID) },
+			"GetBySlug": func() (*store.Tenant, error) { return s.Tenants().GetBySlug(ctx, tenantA.Slug) },
+		} {
+			if got, err := get(); err != nil || !got.StrictModels {
+				t.Errorf("%s after set = %+v, %v; want StrictModels true", name, got, err)
+			}
+		}
+		list, err := s.Tenants().List(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tn := range list {
+			if (tn.ID == tenantA.ID && !tn.StrictModels) || (tn.ID == tenantB.ID && tn.StrictModels) {
+				t.Errorf("List: tenant %s StrictModels = %v; want true for the strict tenant only", tn.Slug, tn.StrictModels)
+			}
+		}
+		if renamed, err := s.Tenants().UpdateName(ctx, tenantA.ID, "renamed"); err != nil || !renamed.StrictModels {
+			t.Errorf("UpdateName = %+v, %v; want the policy kept", renamed, err)
+		}
+		if got, err := tp.SetStrictModels(ctx, tenantA.ID, false); err != nil || got.StrictModels {
+			t.Errorf("SetStrictModels(false) = %+v, %v", got, err)
+		}
+		if _, err := tp.SetStrictModels(ctx, "00000000-0000-4000-8000-000000000000", true); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SetStrictModels(unknown) err = %v, want ErrNotFound", err)
+		}
+		created := &store.Tenant{Slug: unique("strict-c"), Name: "c", StrictModels: true}
+		if err := s.Tenants().Create(ctx, created); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.Tenants().GetByID(ctx, created.ID); err != nil || !got.StrictModels {
+			t.Errorf("Create with StrictModels = %+v, %v; want it stored", got, err)
+		}
+	})
+
+	t.Run("APIKey", func(t *testing.T) {
+		kp, ok := s.APIKeys().(store.APIKeyModelPolicy)
+		if !ok {
+			t.Skip("store does not implement store.APIKeyModelPolicy")
+		}
+		k := &store.APIKey{TenantID: tenantA.ID, Name: "inherit", Role: "agent", KeyHash: unique("hash"), KeyPrefix: "gk_strict001"}
+		if err := s.APIKeys().Create(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.APIKeys().GetByHash(ctx, k.KeyHash); err != nil || got.StrictModels != nil {
+			t.Fatalf("new key = %+v, %v; want StrictModels nil (inherit)", got, err)
+		}
+		for _, want := range []*bool{boolPtr(true), boolPtr(false), nil} {
+			if err := kp.SetStrictModels(ctx, tenantA.ID, k.ID, want); err != nil {
+				t.Fatalf("SetStrictModels(%v): %v", want, err)
+			}
+			byHash, err1 := s.APIKeys().GetByHash(ctx, k.KeyHash)
+			byID, err2 := s.APIKeys().GetByID(ctx, tenantA.ID, k.ID)
+			list, err3 := s.APIKeys().List(ctx, tenantA.ID)
+			if err1 != nil || err2 != nil || err3 != nil {
+				t.Fatal(err1, err2, err3)
+			}
+			for name, got := range map[string]*bool{"GetByHash": byHash.StrictModels, "GetByID": byID.StrictModels, "List": findAPIKey(list, k.ID).StrictModels} {
+				if (got == nil) != (want == nil) || (got != nil && *got != *want) {
+					t.Errorf("%s after SetStrictModels(%v) = %v", name, fmtBoolPtr(want), fmtBoolPtr(got))
+				}
+			}
+		}
+		if err := kp.SetStrictModels(ctx, tenantB.ID, k.ID, boolPtr(true)); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SetStrictModels from another tenant err = %v, want ErrNotFound", err)
+		}
+		created := &store.APIKey{TenantID: tenantA.ID, Name: "strict", Role: "agent", KeyHash: unique("hash"), KeyPrefix: "gk_strict002", StrictModels: boolPtr(true)}
+		if err := s.APIKeys().Create(ctx, created); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.APIKeys().GetByID(ctx, tenantA.ID, created.ID); err != nil || got.StrictModels == nil || !*got.StrictModels {
+			t.Errorf("Create with StrictModels = %+v, %v; want true stored", got, err)
+		}
+	})
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func fmtBoolPtr(b *bool) string {
+	if b == nil {
+		return "nil"
+	}
+	if *b {
+		return "true"
+	}
+	return "false"
+}
+
 func testAPIKeyLimits(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	tenantA := mustCreateTenant(t, ctx, s, "limits-a")

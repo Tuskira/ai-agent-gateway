@@ -9,7 +9,8 @@ captured for usage/cost. Authentication is *not* the plane's own concern —
 unauthenticated `GET /health` ahead of it.
 
 Unregistered calls are forwarded **byte-for-byte** for Anthropic/OpenAI/Gemini
-(no re-marshaling), so Anthropic prompt caching survives the proxy hop. A call
+(no re-marshaling) unless the caller's [strict model policy](#strict-model-policy)
+refuses them, so Anthropic prompt caching survives the proxy hop. A call
 to a [registered](#model-registry) same-format target has only its top-level
 members rewritten (`model`; nested content stays byte-identical). Beyond that,
 a body changes only with the opt-in
@@ -722,7 +723,8 @@ A request naming `"model": "sonnet"` then goes to Anthropic with the
 `anthropic-prod` credential; if Anthropic is unreachable or throttled the
 same request is re-sent to Bedrock (see fallback below). A name that is
 **not registered** behaves exactly as before: byte-for-byte passthrough,
-the caller's own key riding along.
+the caller's own key riding along -- unless the caller's
+[strict model policy](#strict-model-policy) is on, which refuses it.
 
 **Rows.** `name` is lowercase `[a-z0-9._-]{1,64}`, unique per tenant among
 live rows (a soft-deleted name can be re-used). `targets` is an ordered
@@ -752,8 +754,10 @@ returned or logged), `allow_caller_key` (see
 `openai_compat` a `label` (see [Labels](#labels)), and for `bedrock` a
 `region` (required). `price`,
 when set, is a flat USD-per-million-token rate that overrides the rate
-card for calls resolved through this row. `enabled: false` makes the row
-behave as if it did not exist. A row with `"scope": "platform"` in a
+card for calls resolved through this row. `enabled: false` **refuses**
+every call naming the row (`403`, see
+[Disabled and unregistered models](#disabled-and-unregistered-models)); it
+is never forwarded, not to its targets and not as a passthrough. A row with `"scope": "platform"` in a
 response is a platform default (created by the YAML seed, `tenant_id
 NULL`) every tenant sees; it is read-only through the API — a tenant
 overrides it by creating its own row of the same name.
@@ -797,6 +801,48 @@ adapter yet), any cross-format pair involving `gemini`, a non-Anthropic
 Bedrock model from the Anthropic dialect, and Anthropic paths other than
 the two above (Message Batches, the legacy `/v1/complete`, Bedrock
 `count_tokens`).
+
+### Disabled and unregistered models
+
+An admin controls which models a tenant may call in two ways:
+
+- **Disable a row** (`PUT /api/v1/models/{id}` with `"enabled": false`). Every call naming it is refused.
+- **Turn on the strict model policy** (below). Every call naming a model
+  with no registry row is refused.
+
+Both refusals happen after the registry lookup and before any upstream
+call. The answer is `403` in the client dialect's own error envelope
+(Anthropic `permission_error`, OpenAI `{"error":{"type":"permission_error"}}`,
+Gemini `PERMISSION_DENIED`, Bedrock `AccessDeniedException`), and each is
+captured to `llm_calls` like the other refusals: `status_code` `403`,
+`fallback_index` `-1`, `error` `model_disabled` or `model_not_registered`.
+A failed registry or tenant lookup is still a `502` (`registry_error: ...`),
+never a passthrough.
+
+#### Strict model policy
+
+With strict off (the default) a model with no registry row is forwarded
+as it always was. With strict on, it is refused with `403`
+`model_not_registered`; registered, enabled rows route exactly as before.
+Under strict a write that names no model at all (for example
+`POST /v1/messages/batches`, whose models sit inside each request) is
+refused too, since it could reach a model the registry never sees; reads
+(`GET`/`HEAD`, e.g. a batch's status) pass through.
+
+The policy is set per tenant and may be overridden per API key:
+
+| Setting | Where | Values |
+|---|---|---|
+| Tenant policy | `PATCH /api/v1/tenants/{tenant_id}` `{"strict_models": true}` (`platform.admin`) | `false` (default) or `true` |
+| Key override | `PATCH /api/v1/api-keys/{id}` `{"strict_models": ...}` (`admin.manage`), also on create | `null` (default: inherit the tenant's), `true`, `false` |
+
+The effective policy is the key's override when it sets one, else the
+tenant's. Both are stored in Postgres (`tenants.strict_models`,
+`api_keys.strict_models`, migration `000014`). Neither adds a query per
+call: the key's override rides on the cached API-key lookup, and the
+tenant's policy is cached with the registry (30 s per tenant). A change
+applies at once on the replica that served the write; other replicas
+pick it up when their cache expires (up to 30 s).
 
 ### Whose key reaches the vendor
 

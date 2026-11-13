@@ -12,8 +12,10 @@ catalog layered on top of it.
 
 - **Registry** (`models` table, `/api/v1/models`) — tenant-scoped rows a
   tenant creates by hand (or a catalog "connects" on its behalf). Only a
-  registered model is routed; an unregistered name is forwarded unchanged
-  to the provider its route names.
+  registered model is routed; a disabled row is refused (`403`); an
+  unregistered name is forwarded unchanged to the provider its route
+  names, unless the caller's
+  [strict model policy](llm-plane.md#strict-model-policy) refuses it.
 - **Catalog** (`model_catalog_providers` / `model_catalog_models` tables,
   `/api/v1/model-catalog`) — a platform-wide, not-tenant-scoped list of
   known providers (Nebius, Together AI, OpenAI, Google Gemini by default)

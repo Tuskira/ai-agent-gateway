@@ -252,22 +252,6 @@ func TestRegistry_UnregisteredIsByteIdentical(t *testing.T) {
 	}
 }
 
-// A disabled row behaves as unregistered.
-func TestRegistry_DisabledRowIsPassthrough(t *testing.T) {
-	f := newRegistryFixture(t)
-	up := newAnthropicUpstream(t, http.StatusOK)
-	other := newAnthropicUpstream(t, http.StatusOK)
-	if err := f.models.Create(context.Background(), &store.Model{TenantID: f.tenant, Name: "sonnet", Enabled: false,
-		Targets: []store.ModelTarget{{Vendor: "anthropic", Model: "x", BaseURL: other.URL}}}); err != nil {
-		t.Fatal(err)
-	}
-	gw := f.gateway(t, Config{UpstreamBaseURL: up.URL})
-	do(t, "POST", gw.URL+"/v1/messages", nil, aliasBody)
-	if up.hits.Load() != 1 || other.hits.Load() != 0 {
-		t.Errorf("disabled row routed: upstream %d, target %d", up.hits.Load(), other.hits.Load())
-	}
-}
-
 // Whose key reaches the vendor. A target with a credential gets exactly
 // that credential. A target WITHOUT one gets the caller's own key only
 // when it is on the gateway's configured default host for the vendor, or

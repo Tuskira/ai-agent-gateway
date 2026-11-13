@@ -13,27 +13,28 @@ import (
 type apiKeyStore struct{ db *sql.DB }
 
 var (
-	_ store.APIKeyStore     = (*apiKeyStore)(nil)
-	_ store.APIKeyContainer = (*apiKeyStore)(nil)
+	_ store.APIKeyStore       = (*apiKeyStore)(nil)
+	_ store.APIKeyContainer   = (*apiKeyStore)(nil)
+	_ store.APIKeyModelPolicy = (*apiKeyStore)(nil)
 )
 
 func (s *apiKeyStore) Create(ctx context.Context, k *store.APIKey) error {
 	const q = `
-		INSERT INTO api_keys (tenant_id, name, role, key_hash, key_prefix, expires_at, created_by, limits, profile_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO api_keys (tenant_id, name, role, key_hash, key_prefix, expires_at, created_by, limits, profile_id, strict_models)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at`
 	lim, err := marshalLimits(k.Limits)
 	if err != nil {
 		return err
 	}
-	err = s.db.QueryRowContext(ctx, q, k.TenantID, k.Name, k.Role, k.KeyHash, k.KeyPrefix, k.ExpiresAt, k.CreatedBy, lim, k.ProfileID).
+	err = s.db.QueryRowContext(ctx, q, k.TenantID, k.Name, k.Role, k.KeyHash, k.KeyPrefix, k.ExpiresAt, k.CreatedBy, lim, k.ProfileID, k.StrictModels).
 		Scan(&k.ID, &k.CreatedAt)
 	return mapWriteErr(err)
 }
 
 func (s *apiKeyStore) GetByHash(ctx context.Context, keyHash string) (*store.APIKey, error) {
 	const q = `
-		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id, suspended_at, restricted_at, containment_note
+		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id, suspended_at, restricted_at, containment_note, strict_models
 		FROM api_keys WHERE key_hash = $1`
 	k, err := scanAPIKeyRow(s.db.QueryRowContext(ctx, q, keyHash))
 	if err != nil {
@@ -44,7 +45,7 @@ func (s *apiKeyStore) GetByHash(ctx context.Context, keyHash string) (*store.API
 
 func (s *apiKeyStore) GetByID(ctx context.Context, tenantID, id string) (*store.APIKey, error) {
 	const q = `
-		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id, suspended_at, restricted_at, containment_note
+		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id, suspended_at, restricted_at, containment_note, strict_models
 		FROM api_keys WHERE tenant_id = $1 AND id = $2`
 	k, err := scanAPIKeyRow(s.db.QueryRowContext(ctx, q, tenantID, id))
 	if err != nil {
@@ -55,7 +56,7 @@ func (s *apiKeyStore) GetByID(ctx context.Context, tenantID, id string) (*store.
 
 func (s *apiKeyStore) List(ctx context.Context, tenantID string) ([]*store.APIKey, error) {
 	const q = `
-		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id, suspended_at, restricted_at, containment_note
+		SELECT id, tenant_id, name, role, key_hash, key_prefix, expires_at, revoked_at, last_used_at, created_by, created_at, limits, profile_id, suspended_at, restricted_at, containment_note, strict_models
 		FROM api_keys WHERE tenant_id = $1 ORDER BY created_at`
 	rows, err := s.db.QueryContext(ctx, q, tenantID)
 	if err != nil {
@@ -114,6 +115,14 @@ func (s *apiKeyStore) SetProfile(ctx context.Context, tenantID, id string, profi
 	return execExpectingOneRow(ctx, s.db, q, tenantID, id, profileID)
 }
 
+// SetStrictModels sets (or, with nil, clears) the key's strict model
+// override. Like a change to its limits, other replicas see it once their
+// cached lookup of the key expires.
+func (s *apiKeyStore) SetStrictModels(ctx context.Context, tenantID, id string, strict *bool) error {
+	const q = `UPDATE api_keys SET strict_models = $3 WHERE tenant_id = $1 AND id = $2`
+	return execExpectingOneRow(ctx, s.db, q, tenantID, id, strict)
+}
+
 // SetContainment puts a live (unrevoked) key on a rung of the containment
 // ladder with the reason; ErrNotFound for an unknown or revoked key. A kill
 // also notifies keyRevokedChannel, so every process evicts the key's cached
@@ -151,7 +160,7 @@ func scanAPIKeyRow(row rowScanner) (*store.APIKey, error) {
 	if err := row.Scan(
 		&k.ID, &k.TenantID, &k.Name, &k.Role, &k.KeyHash, &k.KeyPrefix,
 		&k.ExpiresAt, &k.RevokedAt, &k.LastUsedAt, &k.CreatedBy, &k.CreatedAt, &lim, &k.ProfileID,
-		&k.SuspendedAt, &k.RestrictedAt, &k.ContainmentNote,
+		&k.SuspendedAt, &k.RestrictedAt, &k.ContainmentNote, &k.StrictModels,
 	); err != nil {
 		return nil, err
 	}

@@ -43,6 +43,11 @@ type Principal struct {
 	// plane refuses every tool call. Tools stay listed, so each attempt
 	// is refused visibly rather than silently impossible.
 	ToolsRestricted bool
+	// StrictModels is the API key's strict model override: nil inherits
+	// the tenant's policy, true or false replaces it. The LLM plane then
+	// refuses a model with no registry row when the effective policy is
+	// strict. Nil for every non-key principal.
+	StrictModels *bool
 
 	// The fields below are set only for a console user logged in with a
 	// session cookie (IsUser: AuthMethod is AuthMethodSession or

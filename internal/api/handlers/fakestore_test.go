@@ -165,7 +165,22 @@ func (s *fakeTenantStore) UpdateName(_ context.Context, id, name string) (*store
 	return &cp, nil
 }
 
-var _ store.TenantStore = (*fakeTenantStore)(nil)
+func (s *fakeTenantStore) SetStrictModels(_ context.Context, id string, strict bool) (*store.Tenant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.byID[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	t.StrictModels = strict
+	cp := *t
+	return &cp, nil
+}
+
+var (
+	_ store.TenantStore       = (*fakeTenantStore)(nil)
+	_ store.TenantModelPolicy = (*fakeTenantStore)(nil)
+)
 
 // ---------------------------------------------------------------------------
 // api keys
@@ -300,9 +315,21 @@ func (s *fakeAPIKeyStore) SetContainment(_ context.Context, tenantID, id string,
 	return nil
 }
 
+func (s *fakeAPIKeyStore) SetStrictModels(_ context.Context, tenantID, id string, strict *bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k, ok := s.byID[id]
+	if !ok || k.TenantID != tenantID {
+		return store.ErrNotFound
+	}
+	k.StrictModels = strict
+	return nil
+}
+
 var (
-	_ store.APIKeyStore     = (*fakeAPIKeyStore)(nil)
-	_ store.APIKeyContainer = (*fakeAPIKeyStore)(nil)
+	_ store.APIKeyStore       = (*fakeAPIKeyStore)(nil)
+	_ store.APIKeyContainer   = (*fakeAPIKeyStore)(nil)
+	_ store.APIKeyModelPolicy = (*fakeAPIKeyStore)(nil)
 )
 
 // ---------------------------------------------------------------------------

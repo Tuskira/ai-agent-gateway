@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
@@ -37,7 +38,10 @@ import (
 // resolvedRoute is a registry hit: the row and the targets the client's
 // dialect can be sent to, in the row's order.
 type resolvedRoute struct {
-	model    *store.Model
+	model *store.Model
+	// disabled is set for a row that exists but is not enabled: the
+	// router refuses the call (403) and builds no attempt.
+	disabled bool
 	attempts []resolvedTarget
 	// noCredential lists the indexes of reachable targets that were
 	// skipped because no credential may reach them (see callerKeyAllowed).
@@ -77,15 +81,19 @@ type upstreamAttempt struct {
 }
 
 // resolve looks the requested model up for the caller's tenant. It returns
-// (nil, nil) on a miss (or with no registry, or for a disabled row, which
-// behaves as unregistered), a route with zero attempts when the row exists
-// but no target is usable (none can be reached from the client's wire
-// format, or none may be given a credential -- route.noCredential), and an
-// error only when the store failed.
+// (nil, nil) on a miss (or with no registry), a route with disabled set
+// for a row that exists but is disabled (refused by the router, never
+// forwarded), a route with zero attempts when the row exists but no
+// target is usable (none can be reached from the client's wire format, or
+// none may be given a credential -- route.noCredential), and an error only
+// when the store failed.
 func (rt *router) resolve(ctx context.Context, p Provider, model, upstreamPath, tenantID string) (*resolvedRoute, error) {
 	m, err := rt.registry.Resolve(ctx, tenantID, model)
-	if err != nil || m == nil || !m.Enabled {
+	if err != nil || m == nil {
 		return nil, err
+	}
+	if !m.Enabled {
+		return &resolvedRoute{model: m, disabled: true}, nil
 	}
 	route := &resolvedRoute{model: m}
 	for i, t := range m.Targets {
@@ -179,6 +187,40 @@ func (rt *router) refuseNoCredential(w http.ResponseWriter, r *http.Request, inf
 	rt.emitError(r, info, body, start, http.StatusBadRequest, "no_credential")
 	writeDialectError(w, info.provider, http.StatusBadRequest, requestIDOf(r.Context()),
 		fmt.Sprintf("model %s: no credential for target %d (set a credential or allow_caller_key)", info.requestedModel, target))
+}
+
+// Model policy refusals (403, before any upstream call), in the client
+// dialect's own error envelope and captured like every other refusal.
+const (
+	captureModelDisabled      = "model_disabled"
+	captureModelNotRegistered = "model_not_registered"
+)
+
+// strictModels reports whether the caller's effective strict model policy
+// is on: the API key's override when it sets one, else the tenant's. Both
+// are cheap: the override rides on the Principal (from the API-key
+// authenticator's cached row) and the tenant's policy is cached by the
+// Registry.
+func (rt *router) strictModels(ctx context.Context) (bool, error) {
+	if p, ok := pkgauth.PrincipalFrom(ctx); ok && p.StrictModels != nil {
+		return *p.StrictModels, nil
+	}
+	return rt.registry.TenantStrict(ctx, tenantOf(ctx))
+}
+
+// refuseModel answers a call the model policy refuses: a disabled registry
+// row, or (strict policy) a model with no row. Nothing is sent upstream.
+func (rt *router) refuseModel(w http.ResponseWriter, r *http.Request, info callInfo, body []byte, start time.Time, capture, message string) {
+	info.fallbackIndex = -1 // no target was tried
+	rt.emitError(r, info, body, start, http.StatusForbidden, capture)
+	writeDialectError(w, info.provider, http.StatusForbidden, requestIDOf(r.Context()), message)
+}
+
+// isRead reports a request that cannot invoke a model (listing models,
+// reading a batch's status): the strict policy lets such a request through
+// even though it names no model.
+func isRead(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
 }
 
 // requiresTranslation reports whether sending a request in the client's

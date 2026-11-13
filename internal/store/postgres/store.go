@@ -103,6 +103,13 @@ var containmentMigration string
 //go:embed migrations/000013_user_identities.up.sql
 var userIdentitiesMigration string
 
+// strictModelsMigration (000014) adds the strict model policy:
+// tenants.strict_models and the per-key override api_keys.strict_models.
+// Its sibling 000014_strict_models.down.sql is for a hand rollback only.
+//
+//go:embed migrations/000014_strict_models.up.sql
+var strictModelsMigration string
+
 // migrations are applied in version order; each is recorded in
 // schema_migrations once applied. Append new migrations here (with the next
 // version) — never edit one that has already shipped.
@@ -123,6 +130,7 @@ var migrations = []struct {
 	{11, credentialSourcesMigration},
 	{12, containmentMigration},
 	{13, userIdentitiesMigration},
+	{14, strictModelsMigration},
 }
 
 // migrationLockKey is an arbitrary constant used as a Postgres advisory

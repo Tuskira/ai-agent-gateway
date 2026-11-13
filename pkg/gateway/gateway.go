@@ -286,7 +286,9 @@ func Run(ctx context.Context, opts Options) error {
 	// The model registry resolver is shared by the LLM plane (resolution)
 	// and the API plane (cache invalidation on /models writes) when both
 	// run in this process; either plane works without the other.
-	modelRegistry := llmplane.NewRegistry(st.Models(), secDeps.Service, llmplane.RegistryOptions{})
+	// It also caches each tenant's strict model policy, read from the
+	// tenant store; the API plane's tenant writes invalidate it.
+	modelRegistry := llmplane.NewRegistry(st.Models(), secDeps.Service, llmplane.RegistryOptions{Tenants: st.Tenants()})
 
 	if cfg.Auth.DevMode.Enabled {
 		if err := resolveDevTenant(cfg, st, logger); err != nil {

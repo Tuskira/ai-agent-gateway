@@ -36,21 +36,26 @@ type createTenantRequest struct {
 	ID   string `json:"id,omitempty"`
 	Slug string `json:"slug"`
 	Name string `json:"name"`
+	// StrictModels sets the tenant's strict model policy (default false):
+	// the LLM plane then refuses a model with no registry row.
+	StrictModels bool `json:"strict_models,omitempty"`
 }
 
 type tenantView struct {
-	ID        string `json:"id"`
-	Slug      string `json:"slug"`
-	Name      string `json:"name"`
-	CreatedAt string `json:"created_at"`
+	ID           string `json:"id"`
+	Slug         string `json:"slug"`
+	Name         string `json:"name"`
+	StrictModels bool   `json:"strict_models"`
+	CreatedAt    string `json:"created_at"`
 }
 
 func newTenantView(t *store.Tenant) tenantView {
 	return tenantView{
-		ID:        t.ID,
-		Slug:      t.Slug,
-		Name:      t.Name,
-		CreatedAt: formatTime(t.CreatedAt),
+		ID:           t.ID,
+		Slug:         t.Slug,
+		Name:         t.Name,
+		StrictModels: t.StrictModels,
+		CreatedAt:    formatTime(t.CreatedAt),
 	}
 }
 
@@ -80,7 +85,14 @@ func (h Tenants) Create(w http.ResponseWriter, r *http.Request) {
 		id = u.String()
 	}
 
-	t := &store.Tenant{ID: id, Slug: req.Slug, Name: req.Name}
+	if req.StrictModels {
+		if _, ok := h.Store.Tenants().(store.TenantModelPolicy); !ok {
+			httpx.WriteError(w, http.StatusNotImplemented, "not_implemented", "this store cannot set a strict model policy")
+			return
+		}
+	}
+
+	t := &store.Tenant{ID: id, Slug: req.Slug, Name: req.Name, StrictModels: req.StrictModels}
 	if err := h.Store.Tenants().Create(r.Context(), t); err != nil {
 		writeStoreErr(w, r, "create tenant", err)
 		return
@@ -91,29 +103,62 @@ func (h Tenants) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateTenantRequest struct {
-	Name string `json:"name"`
+	Name *string `json:"name"`
+	// StrictModels sets the tenant's strict model policy. Absent (or
+	// null) leaves it unchanged.
+	StrictModels *bool `json:"strict_models"`
 }
 
-// Update handles PATCH /api/v1/tenants/{tenant_id}: rename a tenant. Only
-// the display name changes; the slug and id are immutable. An id that is
-// not a tenant, including a malformed one, is 404.
+// Update handles PATCH /api/v1/tenants/{tenant_id}: rename a tenant and/or
+// set its strict model policy. At least one of name and strict_models is
+// required. The slug and id are immutable. An id that is not a tenant,
+// including a malformed one, is 404.
 func (h Tenants) Update(w http.ResponseWriter, r *http.Request) {
 	var req updateTenantRequest
 	if !httpx.Decode(w, r, &req) {
 		return
 	}
-	if err := validateName("name", req.Name); err != nil {
-		httpx.ValidationError(w, err.Error())
+	if req.Name == nil && req.StrictModels == nil {
+		httpx.ValidationError(w, "name or strict_models is required")
 		return
 	}
-
-	t, err := h.Store.Tenants().UpdateName(r.Context(), chi.URLParam(r, "tenant_id"), req.Name)
-	if err != nil {
-		writeStoreErr(w, r, "rename tenant", err)
-		return
+	if req.Name != nil {
+		if err := validateName("name", *req.Name); err != nil {
+			httpx.ValidationError(w, err.Error())
+			return
+		}
+	}
+	var policy store.TenantModelPolicy
+	if req.StrictModels != nil {
+		var ok bool
+		if policy, ok = h.Store.Tenants().(store.TenantModelPolicy); !ok {
+			httpx.WriteError(w, http.StatusNotImplemented, "not_implemented", "this store cannot set a strict model policy")
+			return
+		}
 	}
 
-	AuditNote(r.Context(), "renamed_tenant_id", t.ID, "new_name", t.Name)
+	id := chi.URLParam(r, "tenant_id")
+	var t *store.Tenant
+	var err error
+	if req.Name != nil {
+		if t, err = h.Store.Tenants().UpdateName(r.Context(), id, *req.Name); err != nil {
+			writeStoreErr(w, r, "rename tenant", err)
+			return
+		}
+		AuditNote(r.Context(), "renamed_tenant_id", t.ID, "new_name", t.Name)
+	}
+	if req.StrictModels != nil {
+		if t, err = policy.SetStrictModels(r.Context(), id, *req.StrictModels); err != nil {
+			writeStoreErr(w, r, "set tenant model policy", err)
+			return
+		}
+		// The LLM plane caches the tenant's policy with its registry.
+		if h.ModelInvalidator != nil {
+			h.ModelInvalidator.Invalidate(t.ID)
+		}
+		AuditNote(r.Context(), "policy_tenant_id", t.ID, "strict_models", t.StrictModels)
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, newTenantView(t))
 }
 

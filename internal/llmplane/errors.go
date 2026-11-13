@@ -91,7 +91,10 @@ func writeDialectError(w http.ResponseWriter, dialect string, status int, reques
 		body = map[string]any{"error": map[string]any{"code": status, "message": message, "status": st}}
 	case "bedrock":
 		et := "InternalServerException"
-		if status/100 == 4 {
+		switch {
+		case status == http.StatusForbidden:
+			et = "AccessDeniedException"
+		case status/100 == 4:
 			et = "ValidationException"
 		}
 		w.Header().Set("X-Amzn-ErrorType", et)

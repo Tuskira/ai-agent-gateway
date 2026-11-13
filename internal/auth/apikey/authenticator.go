@@ -262,7 +262,10 @@ func (a *Authenticator) Authenticate(ctx context.Context, r *http.Request) (*aut
 		// A restricted key may call models; the MCP plane refuses its
 		// tool calls (containment).
 		ToolsRestricted: key.RestrictedAt != nil,
-		RawCredential:   plaintext,
+		// The key's strict model override; the LLM plane combines it
+		// with the tenant's policy.
+		StrictModels:  key.StrictModels,
+		RawCredential: plaintext,
 	}, nil
 }
 

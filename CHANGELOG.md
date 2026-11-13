@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Strict model policy for the LLM plane.** With strict on, a model with
+  no row in the model registry is refused with `403` (error
+  `model_not_registered`) before any upstream call, instead of being
+  forwarded as-is; a write that names no model at all (such as a message
+  batch) is refused too. It is set per tenant with
+  `PATCH /api/v1/tenants/{id}` `{"strict_models": true}` (default `false`)
+  and can be overridden per API key with `strict_models` on
+  `POST`/`PATCH /api/v1/api-keys` (`null` inherits the tenant's,
+  `true`/`false` overrides it). Stored in Postgres (migration `000014`);
+  the plane reads it from the cached key lookup and a 30s per-tenant
+  cache, so there is no extra query per call. With strict off, unregistered
+  models pass through exactly as before.
+
+### Changed
+
+- **A disabled model registry row is now refused with `403` instead of
+  being passed through.** `enabled: false` used to make the row behave as
+  if it did not exist, so the call went to the provider unchanged under
+  the client's model name and an admin could not stop a tenant from using
+  that model. The call is now refused before any upstream call, in the
+  client's own error format, and recorded in `llm_calls` with status 403
+  and error `model_disabled`. Clients that relied on a disabled row being
+  forwarded must delete the row instead.
+
 ## [0.13.0] - 2026-11-13
 
 ### Added

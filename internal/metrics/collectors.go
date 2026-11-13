@@ -167,6 +167,30 @@ func RegisterSinkDrops(m *Metrics, dropped map[string]func() uint64) error {
 	return nil
 }
 
+// RegisterCaptureRedactions exposes capture_redactions (counter): secrets
+// scrubbed out of captured payloads before they were stored or exported,
+// labelled by plane ("llm", "mcp") and kind ("aws_key_id", "jwt", ...).
+// rangeFn is internal/redact.Range. Both label sets are closed, and no
+// tenant, key or secret value is ever a label.
+func RegisterCaptureRedactions(m *Metrics, rangeFn func(fn func(plane, kind string, n uint64))) error {
+	if rangeFn == nil {
+		return nil
+	}
+	if _, err := m.Meter().Int64ObservableCounter("capture_redactions",
+		metric.WithDescription("Secrets replaced with a [REDACTED:<kind>] marker in captured payloads before storage, since start, per plane and kind."),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			rangeFn(func(plane, kind string, n uint64) {
+				o.Observe(clamp(n), metric.WithAttributes(
+					attribute.String("plane", plane), attribute.String("kind", kind)))
+			})
+			return nil
+		}),
+	); err != nil {
+		return fmt.Errorf("metrics: register capture_redactions: %w", err)
+	}
+	return nil
+}
+
 // BodyStore is the capture recorder's body-offload tally
 // (internal/capture.Recorder).
 type BodyStore interface {

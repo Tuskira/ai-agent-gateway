@@ -8,6 +8,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/netguard"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/redact"
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/pricing"
 )
@@ -58,6 +59,10 @@ type Config struct {
 	// describes, when its reader can assemble one (see assembledBody); false
 	// stores the raw stream.
 	AssembleStreams bool
+	// RedactSecrets scrubs credential-shaped strings from the stored bodies
+	// (see internal/redact). The forwarded request and the relayed response
+	// are never changed.
+	RedactSecrets bool
 
 	// Authorizer decides PermissionLLMAccess for the Principal the caller's auth
 	// middleware put on the context. It is REQUIRED: Handler returns an error
@@ -143,6 +148,7 @@ func Handler(cfg Config, rec Recorder) (http.Handler, error) {
 		maxCaptureReq:  cfg.MaxCaptureRequestBytes,
 		maxCaptureResp: cfg.MaxCaptureResponseBytes,
 		assembleStream: cfg.AssembleStreams,
+		redact:         redact.Policy{On: cfg.RedactSecrets, Plane: redact.LLM},
 		pricing:        pc,
 		registry:       cfg.Registry,
 		bedrock:        bedrock,

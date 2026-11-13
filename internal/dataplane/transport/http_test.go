@@ -95,6 +95,8 @@ type fixtureOptions struct {
 	StoreBodies bool
 	// MaxResponseBytes, when set, overrides the captured-response cap.
 	MaxResponseBytes int
+	// NoRedact turns capture.redact_secrets off.
+	NoRedact bool
 	// NoCatalog leaves the backend without prompts and resources, so it
 	// declares only the tools capability.
 	NoCatalog bool
@@ -178,6 +180,7 @@ func newFixture(t *testing.T, opts fixtureOptions) *fixture {
 	cfg := config.Default()
 	cfg.MCP.RequireProfile = opts.RequireProfile
 	cfg.Capture.StoreBodies = opts.StoreBodies
+	cfg.Capture.RedactSecrets = !opts.NoRedact
 	if opts.MaxResponseBytes > 0 {
 		cfg.Capture.MaxResponseBytes = opts.MaxResponseBytes
 	}

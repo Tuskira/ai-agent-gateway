@@ -32,6 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client's own error format, and recorded in `llm_calls` with status 403
   and error `model_disabled`. Clients that relied on a disabled row being
   forwarded must delete the row instead.
+### Fixed
+
+- **Captured payloads no longer store credentials verbatim.** With body
+  capture on, prompts, responses and MCP tool payloads were stored as
+  sent, so AWS key ids in tool output, JWTs, bearer tokens and API keys
+  ended up in Postgres, ClickHouse, the body store and the other sinks.
+  The stored copy is now scrubbed once, before the byte caps, and each
+  match is replaced with `[REDACTED:<kind>]` (`aws_key_id`, `aws_secret`,
+  `jwt`, `bearer`, `api_key`, `private_key`, `password`, `secret`). It is
+  on by default on both planes and for `POST /api/v1/ingest` records; turn
+  it off with `capture.redact_secrets` / `llm_proxy.capture.redact_secrets`
+  (`GATEWAY_CAPTURE_REDACT_SECRETS`,
+  `GATEWAY_LLM_PROXY_CAPTURE_REDACT_SECRETS`). What is sent upstream and
+  returned to the client is unchanged. Rows stored before the upgrade are
+  not rewritten. New counter `gateway_capture_redactions_total{plane,kind}`.
 
 ## [0.13.0] - 2026-11-13
 

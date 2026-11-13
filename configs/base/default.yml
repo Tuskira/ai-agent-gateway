@@ -25,6 +25,15 @@ mcp:
   write_timeout: 0s
 
 # MCP sessions (the Mcp-Session-Id an initialize hands out).
+# MCP access-log payload capture (off by default). redact_secrets scrubs
+# credentials from captured payloads before they are stored, as for
+# llm_proxy.capture.redact_secrets above. Default true.
+capture:
+  store_bodies: false
+  max_request_bytes: 300000
+  max_response_bytes: 300000
+  redact_secrets: true
+
 sessions:
   # The pkg/session driver sessions live in.
   # memory (default): in-process, so the mcp plane runs as ONE replica.
@@ -100,6 +109,12 @@ llm_proxy:
     # is ALSO teed into sinks.* below (ClickHouse/OTel), independently of
     # this setting -- see docs/llm-plane.md, "Capture: durable write vs. analytics tee".
     store: postgres
+    # With store_bodies on, credential-shaped strings (AWS key ids, JWTs,
+    # bearer tokens, sk-/gk_ API keys, private key blocks, password/secret
+    # values) are replaced with [REDACTED:<kind>] in the stored copy before
+    # it reaches Postgres, the body store or any sink. What goes upstream
+    # and back to the client is never changed. Default true.
+    redact_secrets: true
 
   # Detection agent (see docs/llm-plane.md "Detection agent"): each relayed
   # call is posted to a LOCAL agent after it completes, with its raw request

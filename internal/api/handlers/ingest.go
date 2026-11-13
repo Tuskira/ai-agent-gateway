@@ -13,6 +13,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/api/httpx"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/discovery"
 	applog "github.com/Tuskira/tusk-ai-secured-gateway/internal/log"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/redact"
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/llm"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/sink"
@@ -378,8 +379,11 @@ func (h Ingest) applyAccessBodies(a *sink.AccessLog, in accessLogIn) {
 	if !h.Capture.StoreBodies {
 		return
 	}
-	reqBody, reqCut := sink.TruncateBody([]byte(in.RequestBody), h.Capture.MaxRequestBytes)
-	respBody, respCut := sink.TruncateBody([]byte(in.ResponseBody), h.Capture.MaxResponseBytes)
+	// Secrets are scrubbed (capture.redact_secrets) before the cap; a body
+	// the sender already cut short also has its tail checked.
+	pol := redact.Policy{On: h.Capture.RedactSecrets, Plane: redact.MCP}
+	reqBody, reqCut := pol.Body([]byte(in.RequestBody), h.Capture.MaxRequestBytes, in.Truncated)
+	respBody, respCut := pol.Body([]byte(in.ResponseBody), h.Capture.MaxResponseBytes, in.Truncated)
 	if len(reqBody) > 0 {
 		a.RequestBody = reqBody
 	}
@@ -475,9 +479,14 @@ func (h Ingest) applyLLMBodies(l *sink.LLMCall, in llmCallIn) {
 	if !h.LLMCapture.StoreBodies {
 		return
 	}
-	reqBody, reqCut := sink.TruncateBody([]byte(in.RequestBody), h.LLMCapture.MaxRequestBytes)
-	messages, msgCut := sink.TruncateBody([]byte(in.Messages), h.LLMCapture.MaxRequestBytes)
-	respBody, respCut := sink.TruncateBody([]byte(in.assembledResponse(h.LLMCapture.AssembleStreams)), h.LLMCapture.MaxResponseBytes)
+	// Secrets are scrubbed (llm_proxy.capture.redact_secrets) before the cap,
+	// and after stream assembly, so a secret split across stream events is
+	// still found; a body the sender already cut short also has its tail
+	// checked.
+	pol := redact.Policy{On: h.LLMCapture.RedactSecrets, Plane: redact.LLM}
+	reqBody, reqCut := pol.Body([]byte(in.RequestBody), h.LLMCapture.MaxRequestBytes, in.Truncated)
+	messages, msgCut := pol.Body([]byte(in.Messages), h.LLMCapture.MaxRequestBytes, in.Truncated)
+	respBody, respCut := pol.Body([]byte(in.assembledResponse(h.LLMCapture.AssembleStreams)), h.LLMCapture.MaxResponseBytes, in.Truncated)
 	if len(reqBody) > 0 {
 		l.RequestBody = reqBody
 	}

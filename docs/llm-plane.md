@@ -179,12 +179,32 @@ curl -X POST http://localhost:8082/bedrock/model/us.anthropic.claude-haiku-4-5-2
 |---|---|---|---|
 | Max request body | `llm_proxy.limits.max_request_bytes` | 10 MiB | `413` |
 | Max total request duration (incl. streaming) | `llm_proxy.limits.max_stream_duration` | 15m | `504` if it hits before the response starts; after that the stream is cut (captured as `stream_deadline`) |
-| Max concurrent requests per tenant | `llm_proxy.limits.max_concurrent_per_tenant` | 64 | `429` |
+| Max concurrent requests per tenant | `llm_proxy.limits.max_concurrent_per_tenant` | 64 | `429`, captured in `llm_calls` (error `tenant_concurrency_limit`) |
 
-All three limits are enforced by middleware ahead of the router
-(`internal/llmplane/server.go`'s `chain`), outermost tag-then-limit order:
-tags → `llm.access` permission (`403`) → body cap → per-tenant concurrency →
-stream deadline. Errors the plane raises itself (`403`, `413`, `429`, `502`,
+The body cap and the stream deadline are middleware ahead of the router
+(`internal/llmplane/server.go`'s `chain`), outermost first: tags →
+`llm.access` permission (`403`) → body cap → stream deadline. The
+per-tenant concurrency limit runs first thing in the router, once the
+provider is known and **before the request body is read**, so a tenant at
+its cap cannot make a pod buffer more than limit × `max_request_bytes`.
+A refusal is captured as an `llm_calls` row (status `429`, no upstream
+call) like the other refusals; since the body is not read,
+`requested_model` is set only when the path names the model (Bedrock,
+Gemini) and is empty otherwise.
+A slot is held until the response ends, streams included.
+
+The concurrency limit is counted **per pod** by default
+(`llm_proxy.limits.concurrency_store: memory`): with N llm replicas a
+tenant can have N × the limit in flight. Set `concurrency_store: redis`
+(with the `redis` section enabled) to make it one cap across every
+replica. Each request then holds a lease in a per-tenant Redis sorted set
+(`gw:llm:conc:<tenant>`), renewed every `concurrency_lease_ttl`/3 while it
+runs; a pod that dies stops renewing and its slots come back after
+`concurrency_lease_ttl` (30s). If Redis is unreachable the plane falls back
+to the per-pod count (so the cap is per pod again for the outage) and logs
+a warning; Redis never blocks a request for more than 500ms.
+
+Errors the plane raises itself (`403`, `413`, `429`, `502`,
 `504`) use Anthropic's error envelope on every route. A missing or invalid
 gateway key gets `401` before the plane; repeated failures lock the client
 IP out of this plane with `429` + `Retry-After` in the route's own dialect

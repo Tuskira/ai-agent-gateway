@@ -674,6 +674,13 @@ func Run(ctx context.Context, opts Options) error {
 		llmCfg.Limiter = limiter
 		llmCfg.Registry = modelRegistry
 		llmCfg.Profiles = llmplane.NewProfileNames(st.AgentProfiles(), 0)
+		// Cluster-wide per-tenant concurrency (concurrency_store: redis);
+		// memory keeps the per-pod count. Closed after the planes stop.
+		if cfg.LLMProxy.Limits.ConcurrencyStore == config.ConcurrencyStoreRedis && cfg.LLMProxy.Limits.MaxConcurrentPerTenant > 0 {
+			rdb := dialConcurrencyRedis(ctx, cfg.Redis, logger)
+			defer rdb.Close()
+			llmCfg.ConcurrencyRedis = rdb
+		}
 		if d := cfg.LLMProxy.Detection; d.AgentURL != "" {
 			tee := llmplane.NewDetectionTee(llmplane.DetectionTeeConfig{
 				AgentURL: d.AgentURL, AgentToken: d.AgentToken, Timeout: d.Timeout, QueueSize: d.QueueSize,

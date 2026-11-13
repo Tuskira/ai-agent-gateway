@@ -46,6 +46,9 @@ type router struct {
 	// Anthropic-dialect alias can still land on Bedrock.
 	bedrock *bedrockProvider
 	limiter *Limiter // per-key limits; nil = none enforced
+	// conc caps each tenant's in-flight requests
+	// (max_concurrent_per_tenant); nil = no cap.
+	conc concurrency
 	// tee hands each relayed call to a detection agent; nil = off.
 	tee *DetectionTee
 	// profiles names a bound API key's profile for capture; nil = bound
@@ -105,6 +108,38 @@ func (rt *router) record(call *pkgsink.LLMCall) {
 func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	reqID := requestIDOf(r.Context())
+
+	p, upstreamPath := pickProvider(rt.byID, r)
+	if p == nil {
+		writeAnthropicError(w, http.StatusNotFound, reqID, "no provider for route "+r.URL.Path)
+		return
+	}
+
+	// Per-tenant concurrency, the cheapest check, first -- and before the
+	// body is read, so a tenant at its cap cannot make this pod buffer more
+	// bodies (or hold slow uploads) than its limit allows. The slot is held
+	// until ServeHTTP returns, which for a stream is when it ends. A refusal
+	// is captured like the other refusals below; the body is never read for
+	// it, so requested_model is set only where the path carries the model
+	// (Bedrock, Gemini).
+	if rt.conc != nil {
+		release, ok, err := rt.conc.acquire(r.Context(), tenantOf(r.Context()))
+		switch {
+		case err != nil:
+			// Unreachable with the limiters newConcurrency builds (the
+			// Redis one falls back in-process); fail open, never 5xx.
+			slog.Warn("llmplane: tenant concurrency check failed", "request_id", reqID, "error", err)
+		case !ok:
+			info := callInfo{provider: p.Name(), pricingProvider: p.Name(),
+				requestedModel: p.Model(nil, upstreamPath), fallbackIndex: -1} // no target was tried
+			rt.emitError(r, info, nil, start, http.StatusTooManyRequests, "tenant_concurrency_limit")
+			writeAnthropicError(w, http.StatusTooManyRequests, reqID, "too many concurrent requests for this tenant")
+			return
+		default:
+			defer release()
+		}
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		var mbe *http.MaxBytesError
@@ -113,12 +148,6 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeAnthropicError(w, http.StatusBadRequest, reqID, "cannot read request body")
-		return
-	}
-
-	p, upstreamPath := pickProvider(rt.byID, r)
-	if p == nil {
-		writeAnthropicError(w, http.StatusNotFound, reqID, "no provider for route "+r.URL.Path)
 		return
 	}
 	model := p.Model(body, upstreamPath)

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,9 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
+
+	goredis "github.com/redis/go-redis/v9"
 
 	internalauth "github.com/Tuskira/tusk-ai-secured-gateway/internal/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/auth/apikey"
@@ -118,6 +122,7 @@ func llmConfig(c config.LLMProxy, card pricing.Pricer, z pkgauth.Authorizer) llm
 		MaxRequestBytes:         c.Limits.MaxRequestBytes,
 		MaxStreamDuration:       c.Limits.MaxStreamDuration,
 		MaxConcurrentPerTenant:  c.Limits.MaxConcurrentPerTenant,
+		ConcurrencyLeaseTTL:     c.Limits.ConcurrencyLeaseTTL,
 		BedrockEnabled:          c.Bedrock.Enabled,
 		BedrockRegion:           c.Bedrock.Region,
 		BedrockCredentialMode:   c.Bedrock.CredentialMode,
@@ -134,6 +139,39 @@ func llmConfig(c config.LLMProxy, card pricing.Pricer, z pkgauth.Authorizer) llm
 		AssembleStreams:         c.Capture.AssembleStreams,
 		Pricing:                 card,
 	}
+}
+
+// concurrencyRedisPingTimeout bounds the boot-time Ping of the
+// concurrency Redis; a failure only logs (see dialConcurrencyRedis).
+const concurrencyRedisPingTimeout = 5 * time.Second
+
+// dialConcurrencyRedis builds the Redis client the LLM plane counts
+// per-tenant concurrency in (llm_proxy.limits.concurrency_store: redis),
+// with the same options as the redis session driver (pkg/session/redis).
+// A failed boot Ping is a warning, not an error: the plane starts on its
+// per-pod fallback and switches to Redis once it answers, so a Redis
+// outage never crash-loops the LLM plane. The caller closes the client.
+func dialConcurrencyRedis(ctx context.Context, c config.Redis, logger *slog.Logger) *goredis.Client {
+	opts := &goredis.Options{
+		Addr:     c.Addr,
+		Password: c.Password,
+		DB:       c.DB,
+		// Per-call deadlines (llmplane's op timeout) bound each round trip.
+		ContextTimeoutEnabled: true,
+	}
+	if c.TLS {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	client := goredis.NewClient(opts)
+	pingCtx, cancel := context.WithTimeout(ctx, concurrencyRedisPingTimeout)
+	defer cancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		logger.Warn("llm concurrency store (redis) unreachable at startup; using the per-pod limit until it answers",
+			"addr", c.Addr, "error", err)
+	} else {
+		logger.Info("llm concurrency store enabled", "store", config.ConcurrencyStoreRedis, "addr", c.Addr)
+	}
+	return client
 }
 
 // buildPricingCard builds the LLM cost rate card: pricing.Default (the

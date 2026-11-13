@@ -7,8 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`llm_proxy.limits.concurrency_store: redis` makes the per-tenant
+  concurrency limit cluster-wide.** `max_concurrent_per_tenant` was
+  counted in each pod, so with the llm plane autoscaling to N replicas a
+  tenant could have N times the limit in flight. With the new store every
+  llm pod counts a tenant's requests in one Redis lease set (the existing
+  `redis` section). Each request renews its lease while it runs, so long
+  streams keep their slot, and a crashed pod's slots come back after
+  `llm_proxy.limits.concurrency_lease_ttl` (default 30s). If Redis is
+  unreachable the plane falls back to the per-pod count and logs a
+  warning. The default, `memory`, keeps today's per-pod behaviour.
+
 ### Fixed
 
+- **A refusal by the per-tenant concurrency limit is now recorded in
+  `llm_calls`.** The 429 used to leave no row, so nobody could see it
+  happened. The check now runs in the router, and each refusal is captured
+  with status 429, error `tenant_concurrency_limit`, the tenant, key and
+  provider, and no upstream call. The check still runs before the request
+  body is read, so a tenant at its cap cannot make a pod buffer extra
+  bodies; the refusal row therefore has `requested_model` only when the
+  path names the model (Bedrock, Gemini).
 - The MCP plane no longer writes an access-log row for `GET`/`HEAD /health`
   (load-balancer and kubelet probes were about 99.7% of `mcp_access_logs`
   rows in one deployment). Probes are still counted in

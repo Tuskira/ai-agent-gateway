@@ -656,9 +656,10 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
   │                               │ 1 authenticate                     │
   │                               │ 2 tag session id, check llm.access │
   │                               │ 3 cap request body (413)          │
-  │                               │ 4 per-tenant concurrency limit     │
-  │                               │ 5 stream deadline starts           │
-  │                               │ 6 pick provider by route           │
+  │                               │ 4 stream deadline starts           │
+  │                               │ 5 pick provider by route,          │
+  │                               │   per-tenant concurrency limit     │
+  │                               │ 6 per-key limits, model registry   │
   │                               │ 7 build upstream request           │
   │                               │   (byte-for-byte / SigV4 sign)     │
   │                               ├────────── forward ───────────────►│
@@ -684,13 +685,15 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
    every key through.
 3. `limitBody` enforces `llm_proxy.limits.max_request_bytes` (413 on
    overflow).
-4. `tenantLimiter` enforces `llm_proxy.limits.max_concurrent_per_tenant`
-   (429 over the cap).
-5. `streamDeadline` bounds the whole request at
+4. `streamDeadline` bounds the whole request at
    `llm_proxy.limits.max_stream_duration`.
-6. `pickProvider` matches a `/{provider-id}/…` prefix, or one of the bare
+5. `pickProvider` matches a `/{provider-id}/…` prefix, or one of the bare
    native paths (`/v1/messages*`, `/v1/complete*` → Anthropic; `/model/*`
-   → Bedrock). Per-key limits (budgets, requests-per-minute, `max_tokens`)
+   → Bedrock). The router then takes a per-tenant concurrency slot
+   (`llm_proxy.limits.max_concurrent_per_tenant`, held until the response
+   ends; counted per pod, or across pods with `concurrency_store: redis`).
+   Over the cap it answers 429 and captures the refusal in `llm_calls`.
+6. Per-key limits (budgets, requests-per-minute, `max_tokens`)
    are checked next, then the model registry resolves the requested model:
    a hit (after that model's own limits) replaces the upstream with the
    row's ordered targets, a miss is the passthrough below — see

@@ -355,11 +355,12 @@ var reMetricsNamespace = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // Redis configures the optional Redis connection.
 //
-// Its one reader is sessions.store: redis, which keeps MCP sessions in
+// Its readers are sessions.store: redis, which keeps MCP sessions in
 // Redis and relays tools/list_changed between mcp replicas over Redis
-// pub/sub, so the mcp plane can run more than one replica. Everything
-// else (the tool cache, connector health) stays on Postgres or in
-// process. A single node is supported (TLS optional); Cluster is
+// pub/sub, so the mcp plane can run more than one replica, and
+// llm_proxy.limits.concurrency_store: redis, which counts each tenant's
+// in-flight LLM requests across every llm replica. Everything else (the
+// tool cache, connector health) stays on Postgres or in process. A single node is supported (TLS optional); Cluster is
 // rejected by Validate until a cluster client is wired.
 type Redis struct {
 	Enabled  bool   `yaml:"enabled"`
@@ -490,7 +491,26 @@ type LLMLimits struct {
 	MaxRequestBytes        int64         `yaml:"max_request_bytes"`   // 413 threshold on the inbound request
 	MaxStreamDuration      time.Duration `yaml:"max_stream_duration"` // total request deadline
 	MaxConcurrentPerTenant int           `yaml:"max_concurrent_per_tenant"`
+	// ConcurrencyStore is where max_concurrent_per_tenant is counted:
+	// "memory" (default) in each pod, so the real cap is the limit times
+	// the replica count; "redis" in the shared redis section, so the cap
+	// holds across every llm pod (falls back to per pod, with a warning,
+	// while Redis is unreachable).
+	ConcurrencyStore string `yaml:"concurrency_store"`
+	// ConcurrencyLeaseTTL is how long a Redis slot outlives its last
+	// renewal, i.e. how soon a crashed pod's slots come back. Requests
+	// renew every TTL/3, so long streams keep their slot. Min 3s.
+	ConcurrencyLeaseTTL time.Duration `yaml:"concurrency_lease_ttl"`
 }
+
+// Stores for llm_proxy.limits.concurrency_store.
+const (
+	ConcurrencyStoreMemory = "memory"
+	ConcurrencyStoreRedis  = "redis"
+)
+
+// minConcurrencyLeaseTTL keeps the renewal interval (TTL/3) at 1s or more.
+const minConcurrencyLeaseTTL = 3 * time.Second
 
 // Bedrock configures the optional Amazon Bedrock provider (SigV4). Disabled →
 // the /model/* route is not mounted (falls through to 404).
@@ -967,6 +987,8 @@ func Default() *Config {
 				MaxRequestBytes:        10 << 20, // 10 MiB
 				MaxStreamDuration:      15 * time.Minute,
 				MaxConcurrentPerTenant: 64,
+				ConcurrencyStore:       ConcurrencyStoreMemory,
+				ConcurrencyLeaseTTL:    30 * time.Second,
 			},
 			Bedrock: Bedrock{
 				Enabled:        false,
@@ -1448,6 +1470,22 @@ func (c *Config) Validate() error {
 		// Any other name is a third-party pkg/session driver; whether the
 		// binary registered it is only known at open time, where
 		// pkg/session.Open reports the registered names.
+	}
+
+	switch l := c.LLMProxy.Limits; l.ConcurrencyStore {
+	case "", ConcurrencyStoreMemory:
+	case ConcurrencyStoreRedis:
+		if !c.Redis.Enabled {
+			return fmt.Errorf("llm_proxy.limits: concurrency_store %q requires redis.enabled: true", ConcurrencyStoreRedis)
+		}
+		if strings.TrimSpace(c.Redis.Addr) == "" {
+			return fmt.Errorf("llm_proxy.limits: concurrency_store %q requires redis.addr", ConcurrencyStoreRedis)
+		}
+		if l.ConcurrencyLeaseTTL < minConcurrencyLeaseTTL {
+			return fmt.Errorf("llm_proxy.limits: concurrency_lease_ttl must be at least %s", minConcurrencyLeaseTTL)
+		}
+	default:
+		return fmt.Errorf("llm_proxy.limits: concurrency_store must be %q or %q, got %q", ConcurrencyStoreMemory, ConcurrencyStoreRedis, l.ConcurrencyStore)
 	}
 
 	if c.Redis.Enabled && c.Redis.Cluster {

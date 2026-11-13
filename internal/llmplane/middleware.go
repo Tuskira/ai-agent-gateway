@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,7 +20,7 @@ const (
 
 // Caller identity comes from the Principal the gateway's auth middleware
 // (internal/auth) resolves and stores on the context AHEAD of this plane. The
-// LLM plane only READS it for capture and the per-tenant limiter; a missing
+// LLM plane only READS it for capture and the per-tenant concurrency limit; a missing
 // Principal (e.g. an unauthenticated /health) yields empty strings.
 func tenantOf(ctx context.Context) string {
 	if p, ok := pkgauth.PrincipalFrom(ctx); ok {
@@ -112,46 +111,5 @@ func streamDeadline(d time.Duration, next http.Handler) http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), d)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// tenantLimiter caps concurrent in-flight requests per tenant; over the cap → 429.
-// Tenant comes from context (set by the auth layer); unset → a single shared bucket.
-type tenantLimiter struct {
-	mu    sync.Mutex
-	sem   map[string]chan struct{}
-	limit int
-}
-
-func newTenantLimiter(limit int) *tenantLimiter {
-	return &tenantLimiter{sem: make(map[string]chan struct{}), limit: limit}
-}
-
-func (tl *tenantLimiter) chanFor(tenant string) chan struct{} {
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-	ch := tl.sem[tenant]
-	if ch == nil {
-		ch = make(chan struct{}, tl.limit)
-		tl.sem[tenant] = ch
-	}
-	return ch
-}
-
-func (tl *tenantLimiter) middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if tl.limit <= 0 {
-			next.ServeHTTP(w, r)
-			return
-		}
-		ch := tl.chanFor(tenantOf(r.Context()))
-		select {
-		case ch <- struct{}{}:
-			defer func() { <-ch }()
-			next.ServeHTTP(w, r)
-		default:
-			writeAnthropicError(w, http.StatusTooManyRequests, requestIDOf(r.Context()),
-				"too many concurrent requests for this tenant")
-		}
 	})
 }

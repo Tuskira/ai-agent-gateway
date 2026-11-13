@@ -46,7 +46,8 @@ sessions:
   # options:
   #   dsn: "..."
 
-# Redis: read only when sessions.store is redis. A single node (managed
+# Redis: read only when sessions.store is redis or
+# llm_proxy.limits.concurrency_store is redis. A single node (managed
 # or self-hosted); cluster: true is rejected at startup for now.
 redis:
   enabled: false
@@ -79,6 +80,17 @@ llm_proxy:
   enabled: false
   address: "0.0.0.0:8082"
   upstream_base_url: "https://api.anthropic.com"
+
+  # limits:
+  #   max_request_bytes: 10485760   # 413 over this
+  #   max_stream_duration: 15m      # whole request, streaming included
+  #   max_concurrent_per_tenant: 64 # 429 over this; 0 = no cap
+  #   # Where the concurrency cap is counted: "memory" (default) in each
+  #   # pod, so with N llm replicas the real cap is N x the limit; "redis"
+  #   # in the redis section above, so the cap holds across every replica
+  #   # (falls back to per pod, with a warning, while Redis is unreachable).
+  #   concurrency_store: memory
+  #   concurrency_lease_ttl: 30s    # redis only: how soon a crashed pod's slots come back (min 3s)
 
   capture:
     # Durable capture store for every proxied call: "postgres" (default)

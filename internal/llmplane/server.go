@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/netguard"
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/pricing"
@@ -26,9 +28,19 @@ type Config struct {
 	MaxRequestBytes        int64 // 413 threshold on the inbound request
 	MaxStreamDuration      time.Duration
 	MaxConcurrentPerTenant int
-	BedrockEnabled         bool
-	BedrockRegion          string
-	BedrockCredentialMode  string
+	// ConcurrencyRedis makes MaxConcurrentPerTenant cluster-wide: every
+	// llm pod counts a tenant's in-flight requests in one Redis lease set
+	// (see concurrency.go). Nil counts in this process only, so the cap is
+	// per pod. While Redis is unreachable the plane falls back to the
+	// per-pod count and logs a warning. The caller owns (and closes) it.
+	ConcurrencyRedis goredis.UniversalClient
+	// ConcurrencyLeaseTTL is how long a Redis lease outlives its last
+	// renewal (a request renews every TTL/3). Zero means
+	// DefaultConcurrencyLeaseTTL.
+	ConcurrencyLeaseTTL   time.Duration
+	BedrockEnabled        bool
+	BedrockRegion         string
+	BedrockCredentialMode string
 	// BedrockRoleAccounts is the comma-separated allowlist of accounts whose
 	// roles X-Bedrock-Role-Arn may name: a bare account id for the "aws"
 	// partition, "<partition>:<account>" (aws-us-gov:…, aws-cn:…) outside it,
@@ -135,6 +147,7 @@ func Handler(cfg Config, rec Recorder) (http.Handler, error) {
 		registry:       cfg.Registry,
 		bedrock:        bedrock,
 		limiter:        cfg.Limiter,
+		conc:           newConcurrency(cfg.MaxConcurrentPerTenant, cfg.ConcurrencyRedis, cfg.ConcurrencyLeaseTTL),
 		tee:            cfg.DetectionTee,
 		profiles:       cfg.Profiles,
 	}
@@ -163,13 +176,13 @@ func buildProviders(cfg Config, bedrock *bedrockProvider) []Provider {
 }
 
 // chain wraps the handler outermost-first: tags → permission → body limit →
-// per-tenant concurrency → stream deadline. Authentication is applied by the
-// caller AHEAD of this plane; the Principal it put on the context feeds the
-// permission check and the limiter's tenant.
+// stream deadline. Authentication is applied by the caller AHEAD of this
+// plane; the Principal it put on the context feeds the permission check.
+// The per-tenant concurrency limit is NOT a step here: the router applies
+// it once it knows the provider and model, so a refusal is captured as an
+// llm_calls row like every other refusal.
 func chain(h http.Handler, cfg Config) http.Handler {
-	tl := newTenantLimiter(cfg.MaxConcurrentPerTenant)
 	h = streamDeadline(cfg.MaxStreamDuration, h)
-	h = tl.middleware(h)
 	h = limitBody(cfg.MaxRequestBytes, h)
 	h = requirePermission(cfg.Authorizer, h)
 	h = withTags(h)

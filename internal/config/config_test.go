@@ -28,6 +28,10 @@ func TestDefault(t *testing.T) {
 	if cfg.LLMProxy.Providers.OpenAI.InjectStreamUsage {
 		t.Error("LLMProxy.Providers.OpenAI.InjectStreamUsage default should be false (opt-in: it rewrites the upstream body)")
 	}
+	if l := cfg.LLMProxy.Limits; l.MaxConcurrentPerTenant != 64 || l.ConcurrencyStore != ConcurrencyStoreMemory ||
+		l.ConcurrencyLeaseTTL != 30*time.Second {
+		t.Errorf("LLMProxy.Limits defaults = %+v", l)
+	}
 	if cfg.LLMProxy.PricingFile != "" {
 		t.Errorf("LLMProxy.PricingFile default should be empty (embedded card only), got %q", cfg.LLMProxy.PricingFile)
 	}
@@ -274,6 +278,21 @@ func TestLoad_EnvOverlay_ClickHouseAsyncInsert(t *testing.T) {
 	ch := cfg.Sinks.ClickHouse
 	if ch.AsyncInsert || ch.AsyncInsertBusyTimeout != 4*time.Second || ch.FlushInterval != 2*time.Second {
 		t.Errorf("Sinks.ClickHouse = %+v", ch)
+	}
+}
+
+func TestLoad_EnvOverlay_ConcurrencyStore(t *testing.T) {
+	t.Setenv("GATEWAY_LLM_PROXY_LIMITS_CONCURRENCY_STORE", "redis")
+	t.Setenv("GATEWAY_LLM_PROXY_LIMITS_CONCURRENCY_LEASE_TTL", "45s")
+	t.Setenv("GATEWAY_REDIS_ENABLED", "true")
+	t.Setenv("GATEWAY_REDIS_ADDR", "redis:6379")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if l := cfg.LLMProxy.Limits; l.ConcurrencyStore != ConcurrencyStoreRedis || l.ConcurrencyLeaseTTL != 45*time.Second {
+		t.Errorf("LLMProxy.Limits = %+v", l)
 	}
 }
 
@@ -767,6 +786,53 @@ func TestValidate(t *testing.T) {
 				c.Redis.Enabled = true
 			},
 			wantErr: false,
+		},
+		{
+			name: "redis concurrency store without redis enabled",
+			mutate: func(c *Config) {
+				c.LLMProxy.Limits.ConcurrencyStore = ConcurrencyStoreRedis
+			},
+			wantErr: true,
+		},
+		{
+			name: "redis concurrency store without an address",
+			mutate: func(c *Config) {
+				c.LLMProxy.Limits.ConcurrencyStore = ConcurrencyStoreRedis
+				c.Redis.Enabled = true
+				c.Redis.Addr = ""
+			},
+			wantErr: true,
+		},
+		{
+			name: "redis concurrency store with a lease under 3s",
+			mutate: func(c *Config) {
+				c.LLMProxy.Limits.ConcurrencyStore = ConcurrencyStoreRedis
+				c.LLMProxy.Limits.ConcurrencyLeaseTTL = 2 * time.Second
+				c.Redis.Enabled = true
+			},
+			wantErr: true,
+		},
+		{
+			name: "redis concurrency store with redis enabled is valid",
+			mutate: func(c *Config) {
+				c.LLMProxy.Limits.ConcurrencyStore = ConcurrencyStoreRedis
+				c.Redis.Enabled = true
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty concurrency store means memory",
+			mutate: func(c *Config) {
+				c.LLMProxy.Limits.ConcurrencyStore = ""
+			},
+			wantErr: false,
+		},
+		{
+			name: "unknown concurrency store",
+			mutate: func(c *Config) {
+				c.LLMProxy.Limits.ConcurrencyStore = "postgres"
+			},
+			wantErr: true,
 		},
 		{
 			name: "redis cluster mode is not supported",

@@ -261,9 +261,12 @@ value is either from a fixed set or bounded:
 - HTTP duration buckets, in seconds: 0.005, 0.01, 0.025, 0.05, 0.1, 0.25,
   0.5, 1, 2.5, 5, 10, 30, 60, 300.
 - `gateway_llm_calls_total` and the LLM plane's HTTP request counters are
-  different series on purpose. The sink only sees calls that reached a
-  provider, so pre-route denials (401, `llm.access` denied, body too
-  large, the per-tenant concurrency limit) are in the HTTP counters only.
+  different series on purpose. The sink sees every call that reached the
+  router, refusals included: per-key and per-model limits, the per-tenant
+  concurrency limit and rule blocks are captured as `llm_calls` rows with
+  their status and error, and counted in `gateway_llm_calls_total`. Only
+  pre-route denials (401, `llm.access` denied, body too large) appear in
+  the HTTP counters alone.
 - Token kinds are the provider's own: `input` includes cache reads for
   OpenAI and Gemini but not for Anthropic. Compare them within a provider,
   or add `cache_read` yourself for Anthropic.

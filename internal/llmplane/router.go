@@ -182,6 +182,33 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, http.StatusBadGateway, reqID, "model registry unavailable")
 		return
 	}
+	// Model policy, before anything is forwarded: a disabled row is refused;
+	// a name with no row is refused when the caller's strict policy is on
+	// (the key's override, else the tenant's), and passed through as it
+	// always has been otherwise. Under strict, a write that names no model
+	// at all (a batch, a file upload) is refused too: it could reach a
+	// model the registry never sees.
+	switch {
+	case route != nil && route.disabled:
+		rt.refuseModel(w, r, info, body, start, captureModelDisabled, "model "+model+" is disabled")
+		return
+	case route == nil:
+		strict, err := rt.strictModels(r.Context())
+		if err != nil {
+			slog.Error("llmplane: model policy lookup failed", "request_id", reqID, "model", model, "error", err)
+			rt.emitError(r, info, body, start, http.StatusBadGateway, "registry_error: "+errorText(err))
+			writeAnthropicError(w, http.StatusBadGateway, reqID, "model registry unavailable")
+			return
+		}
+		if strict && (model != "" || !isRead(r.Method)) {
+			msg := "model " + model + " is not registered (strict model policy)"
+			if model == "" {
+				msg = "request names no model (strict model policy)"
+			}
+			rt.refuseModel(w, r, info, body, start, captureModelNotRegistered, msg)
+			return
+		}
+	}
 	// Model-level limits, once the name is known to be a registered row:
 	// the row's own budgets and caps, per tenant, on top of the key's.
 	if route != nil && rt.limiter != nil {

@@ -369,3 +369,20 @@ func TestAuthenticator_RestrictedKeyIsToolsRestricted(t *testing.T) {
 		t.Fatalf("p %+v err %v", p, err)
 	}
 }
+
+// The key's strict model override rides on the Principal for the LLM plane:
+// nil (inherit the tenant's policy) stays nil, true/false are carried.
+func TestAuthenticator_StrictModelsOverrideOnPrincipal(t *testing.T) {
+	for _, want := range []*bool{nil, func() *bool { b := true; return &b }(), func() *bool { b := false; return &b }()} {
+		plaintext, hash, prefix, _ := Generate()
+		fs := newFakeStore()
+		fs.byHash[hash] = &store.APIKey{ID: "key-1", TenantID: "t1", Role: "agent", KeyHash: hash, KeyPrefix: prefix, StrictModels: want}
+		p, err := New(fs, Options{}).Authenticate(context.Background(), bearerRequest(plaintext))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (want == nil) != (p.StrictModels == nil) || (want != nil && *want != *p.StrictModels) {
+			t.Errorf("StrictModels = %v, want %v", p.StrictModels, want)
+		}
+	}
+}

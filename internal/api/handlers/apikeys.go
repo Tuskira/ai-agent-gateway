@@ -47,14 +47,18 @@ type createAPIKeyRequest struct {
 	Limits    *store.Limits `json:"limits,omitempty"`
 	// ProfileID binds the key to an agent profile of the caller's tenant.
 	ProfileID *string `json:"profile_id,omitempty"`
+	// StrictModels overrides the tenant's strict model policy for this
+	// key; absent or null inherits it.
+	StrictModels *bool `json:"strict_models,omitempty"`
 }
 
-// updateAPIKeyRequest is the PATCH body. Limits and ProfileID are
-// json.RawMessage so an explicit `null` (clear) is distinguishable from an
-// absent field.
+// updateAPIKeyRequest is the PATCH body. Limits, ProfileID and
+// StrictModels are json.RawMessage so an explicit `null` (clear) is
+// distinguishable from an absent field.
 type updateAPIKeyRequest struct {
-	Limits    json.RawMessage `json:"limits"`
-	ProfileID json.RawMessage `json:"profile_id"`
+	Limits       json.RawMessage `json:"limits"`
+	ProfileID    json.RawMessage `json:"profile_id"`
+	StrictModels json.RawMessage `json:"strict_models"`
 }
 
 type apiKeyView struct {
@@ -77,6 +81,9 @@ type apiKeyView struct {
 	SuspendedAt     string `json:"suspended_at,omitempty"`
 	RestrictedAt    string `json:"restricted_at,omitempty"`
 	ContainmentNote string `json:"containment_note,omitempty"`
+	// StrictModels is the key's strict model override: null inherits the
+	// tenant's policy, true or false replaces it.
+	StrictModels *bool `json:"strict_models"`
 }
 
 type apiKeyCreateView struct {
@@ -100,6 +107,7 @@ func newAPIKeyView(k *store.APIKey) apiKeyView {
 		SuspendedAt:     formatTimePtr(k.SuspendedAt),
 		RestrictedAt:    formatTimePtr(k.RestrictedAt),
 		ContainmentNote: k.ContainmentNote,
+		StrictModels:    k.StrictModels,
 	}
 	if k.ProfileID != nil {
 		v.ProfileID = *k.ProfileID
@@ -215,6 +223,12 @@ func (h APIKeys) create(w http.ResponseWriter, r *http.Request, tid string) stri
 	if req.ProfileID != nil && !h.checkProfile(w, r, tid, *req.ProfileID) {
 		return ""
 	}
+	if req.StrictModels != nil {
+		if _, ok := h.Store.APIKeys().(store.APIKeyModelPolicy); !ok {
+			httpx.WriteError(w, http.StatusNotImplemented, "not_implemented", "this store cannot set a key's strict model policy")
+			return ""
+		}
+	}
 
 	var expiresAt *time.Time
 	if req.ExpiresAt != nil && *req.ExpiresAt != "" {
@@ -247,15 +261,16 @@ func (h APIKeys) create(w http.ResponseWriter, r *http.Request, tid string) stri
 	}
 
 	k := &store.APIKey{
-		TenantID:  tid,
-		Name:      req.Name,
-		Role:      req.Role,
-		KeyHash:   hash,
-		KeyPrefix: prefix,
-		ExpiresAt: expiresAt,
-		Limits:    req.Limits,
-		ProfileID: req.ProfileID,
-		CreatedBy: principalSubject(r),
+		TenantID:     tid,
+		Name:         req.Name,
+		Role:         req.Role,
+		KeyHash:      hash,
+		KeyPrefix:    prefix,
+		ExpiresAt:    expiresAt,
+		Limits:       req.Limits,
+		ProfileID:    req.ProfileID,
+		StrictModels: req.StrictModels,
+		CreatedBy:    principalSubject(r),
 	}
 	if err := h.Store.APIKeys().Create(r.Context(), k); err != nil {
 		writeStoreErr(w, r, "create api key", err)
@@ -292,10 +307,12 @@ func (h APIKeys) list(w http.ResponseWriter, r *http.Request, tid string) {
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page{Items: paginate(views, page), Total: len(views)})
 }
 
-// Update handles PATCH /api/v1/api-keys/{id}. Today the only mutable field
-// is limits: an object replaces the key's limits wholesale, null clears
-// them. The LLM plane re-reads a key's limits at most every 10 s (see
-// internal/llmplane/limits.go), so a change takes effect within that.
+// Update handles PATCH /api/v1/api-keys/{id}. limits: an object replaces
+// the key's limits wholesale, null clears them (the LLM plane re-reads a
+// key's limits at most every 10 s, see internal/llmplane/limits.go).
+// profile_id: binds or (null) unbinds the key. strict_models: true or
+// false overrides the tenant's strict model policy for the key, null
+// inherits it again.
 func (h APIKeys) Update(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -313,8 +330,8 @@ func (h APIKeys) update(w http.ResponseWriter, r *http.Request, tid string) {
 	if !httpx.Decode(w, r, &req) {
 		return
 	}
-	if len(req.Limits) == 0 && len(req.ProfileID) == 0 {
-		httpx.ValidationError(w, "limits or profile_id is required (a value to set, or null to clear)")
+	if len(req.Limits) == 0 && len(req.ProfileID) == 0 && len(req.StrictModels) == 0 {
+		httpx.ValidationError(w, "limits, profile_id or strict_models is required (a value to set, or null to clear)")
 		return
 	}
 	var limits *store.Limits
@@ -342,6 +359,22 @@ func (h APIKeys) update(w http.ResponseWriter, r *http.Request, tid string) {
 		}
 	}
 
+	var strict *bool
+	var policy store.APIKeyModelPolicy
+	if len(req.StrictModels) != 0 {
+		if string(req.StrictModels) != "null" {
+			if err := json.Unmarshal(req.StrictModels, &strict); err != nil || strict == nil {
+				httpx.ValidationError(w, "strict_models must be true, false or null")
+				return
+			}
+		}
+		var ok bool
+		if policy, ok = h.Store.APIKeys().(store.APIKeyModelPolicy); !ok {
+			httpx.WriteError(w, http.StatusNotImplemented, "not_implemented", "this store cannot set a key's strict model policy")
+			return
+		}
+	}
+
 	if len(req.Limits) != 0 {
 		if err := h.Store.APIKeys().SetLimits(r.Context(), tid, id, limits); err != nil {
 			writeStoreErr(w, r, "update api key", err)
@@ -353,7 +386,16 @@ func (h APIKeys) update(w http.ResponseWriter, r *http.Request, tid string) {
 			writeStoreErr(w, r, "update api key", err)
 			return
 		}
-		// The data plane resolves a key's profile from its cached row.
+	}
+	if len(req.StrictModels) != 0 {
+		if err := policy.SetStrictModels(r.Context(), tid, id, strict); err != nil {
+			writeStoreErr(w, r, "update api key", err)
+			return
+		}
+	}
+	// The data plane resolves a key's profile, and the LLM plane its strict
+	// model override, from the key's cached row.
+	if len(req.ProfileID) != 0 || len(req.StrictModels) != 0 {
 		if existing, err := h.Store.APIKeys().GetByID(r.Context(), tid, id); err == nil && h.KeyInvalidator != nil {
 			h.KeyInvalidator.InvalidateKey(existing.KeyHash)
 		}
@@ -451,9 +493,10 @@ func (h APIKeys) rotate(w http.ResponseWriter, r *http.Request, tid string) stri
 		KeyPrefix: prefix,
 		// Limits carry over; spend is tracked per key id, so the new key
 		// starts its day/month at $0.
-		Limits:    existing.Limits,
-		ProfileID: existing.ProfileID,
-		CreatedBy: principalSubject(r),
+		Limits:       existing.Limits,
+		ProfileID:    existing.ProfileID,
+		StrictModels: existing.StrictModels,
+		CreatedBy:    principalSubject(r),
 	}
 	if err := h.Store.APIKeys().Create(r.Context(), k); err != nil {
 		writeStoreErr(w, r, "rotate api key (create new)", err)

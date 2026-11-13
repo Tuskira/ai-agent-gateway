@@ -418,19 +418,19 @@ func buildRoutes(deps Deps) []routeSpec {
 		// why an ordinary "*.read"/"*" grant must not satisfy this.
 		{Method: http.MethodPost, Pattern: "/tenants", Tag: "tenants", Summary: "Create a tenant", Permission: "platform.admin", Handler: tenants.Create},
 		{Method: http.MethodGet, Pattern: "/tenants", Tag: "tenants", Summary: "List tenants", Permission: "platform.admin", Handler: tenants.List},
-		{Method: http.MethodPatch, Pattern: "/tenants/{tenant_id}", Tag: "tenants", Summary: "Rename a tenant (the slug is immutable)", Permission: "platform.admin", Handler: tenants.Update},
+		{Method: http.MethodPatch, Pattern: "/tenants/{tenant_id}", Tag: "tenants", Summary: "Rename a tenant or set its strict model policy (the slug is immutable)", Permission: "platform.admin", Handler: tenants.Update},
 		// A platform-admin key manages API keys in a named tenant (same
 		// bodies and rules as /api-keys, scoped to {tenant_id}). Gated on
 		// platform.admin, so a tenant admin gets 403 even for its own tenant.
 		{Method: http.MethodPost, Pattern: "/tenants/{tenant_id}/api-keys", Tag: "tenants", Summary: "Create an API key in a named tenant", Permission: "platform.admin", Handler: apiKeys.PlatformCreate},
 		{Method: http.MethodGet, Pattern: "/tenants/{tenant_id}/api-keys", Tag: "tenants", Summary: "List a named tenant's API keys", Permission: "platform.admin", Handler: apiKeys.PlatformList},
-		{Method: http.MethodPatch, Pattern: "/tenants/{tenant_id}/api-keys/{id}", Tag: "tenants", Summary: "Update an API key's limits or profile binding in a named tenant", Permission: "platform.admin", Handler: apiKeys.PlatformUpdate},
+		{Method: http.MethodPatch, Pattern: "/tenants/{tenant_id}/api-keys/{id}", Tag: "tenants", Summary: "Update an API key's limits, profile binding or strict model override in a named tenant", Permission: "platform.admin", Handler: apiKeys.PlatformUpdate},
 		{Method: http.MethodDelete, Pattern: "/tenants/{tenant_id}/api-keys/{id}", Tag: "tenants", Summary: "Revoke an API key in a named tenant", Permission: "platform.admin", Handler: apiKeys.PlatformRevoke},
 		{Method: http.MethodPost, Pattern: "/tenants/{tenant_id}/api-keys/{id}/rotate", Tag: "tenants", Summary: "Rotate an API key in a named tenant", Permission: "platform.admin", Handler: apiKeys.PlatformRotate},
 
 		{Method: http.MethodPost, Pattern: "/api-keys", Tag: "api-keys", Summary: "Create an API key", Permission: "admin.manage", Handler: apiKeys.Create},
 		{Method: http.MethodGet, Pattern: "/api-keys", Tag: "api-keys", Summary: "List API keys", Permission: "admin.manage", Handler: apiKeys.List},
-		{Method: http.MethodPatch, Pattern: "/api-keys/{id}", Tag: "api-keys", Summary: "Update an API key's limits or profile binding", Permission: "admin.manage", Handler: apiKeys.Update},
+		{Method: http.MethodPatch, Pattern: "/api-keys/{id}", Tag: "api-keys", Summary: "Update an API key's limits, profile binding or strict model override", Permission: "admin.manage", Handler: apiKeys.Update},
 		{Method: http.MethodDelete, Pattern: "/api-keys/{id}", Tag: "api-keys", Summary: "Revoke an API key", Permission: "admin.manage", Handler: apiKeys.Revoke},
 		{Method: http.MethodPost, Pattern: "/api-keys/{id}/containment", Tag: "api-keys", Summary: "Move an agent's key along the containment ladder: normal, restrict (tool calls refused) or kill (every call refused), with a note; cuts the key's open calls", Permission: "admin.manage", Handler: apiKeys.Containment},
 		{Method: http.MethodPost, Pattern: "/api-keys/{id}/suspend", Tag: "api-keys", Summary: "Kill an agent's key (containment level kill): refused on every plane until resumed", Permission: "admin.manage", Handler: apiKeys.Suspend},

@@ -25,24 +25,40 @@ type CredentialSource interface {
 	Get(ctx context.Context, tenantID, name string) (map[string]string, error)
 }
 
+// TenantLookup reads a tenant's row, for its strict model policy
+// (store.Tenant.StrictModels). store.TenantStore satisfies it.
+type TenantLookup interface {
+	GetByID(ctx context.Context, id string) (*store.Tenant, error)
+}
+
 // Registry resolves the "model" a client asked for against the tenant's
 // model registry (pkg/store.ModelStore): the tenant's own row first, then
 // the platform default of that name. A name with no row is a MISS, and the
-// router forwards the request byte-for-byte as it always has; a hit swaps
-// the upstream host, credential, region and model id (see resolve.go).
+// router forwards the request byte-for-byte as it always has -- unless the
+// caller's strict model policy is on (TenantStrict, the key's override),
+// which refuses it; a hit swaps the upstream host, credential, region and
+// model id (see resolve.go), and a disabled row is refused.
 //
 // A nil *Registry is valid and resolves nothing -- the plane runs that way
 // when no store is wired (tests, or a deployment that never registered a
 // model).
 type Registry struct {
-	models store.ModelStore
-	creds  CredentialSource
+	models  store.ModelStore
+	creds   CredentialSource
+	tenants TenantLookup
 
 	ttl time.Duration
 	now func() time.Time
 
-	mu    sync.Mutex
-	cache map[string]registryEntry // tenant|name -> entry
+	mu     sync.Mutex
+	cache  map[string]registryEntry // tenant|name -> entry
+	strict map[string]strictEntry   // tenant -> its strict model policy
+}
+
+// strictEntry caches a tenant's strict model policy.
+type strictEntry struct {
+	strict    bool
+	expiresAt time.Time
 }
 
 // registryEntry caches a lookup result. model nil is a negative entry (the
@@ -60,6 +76,9 @@ type RegistryOptions struct {
 	TTL time.Duration
 	// Now returns the current time; tests override it.
 	Now func() time.Time
+	// Tenants reads each tenant's strict model policy. Nil: every tenant
+	// is non-strict (an API key's own override still applies).
+	Tenants TenantLookup
 }
 
 // NewRegistry returns a Registry over the model store and credential
@@ -73,11 +92,13 @@ func NewRegistry(models store.ModelStore, creds CredentialSource, opts RegistryO
 		opts.Now = time.Now
 	}
 	return &Registry{
-		models: models,
-		creds:  creds,
-		ttl:    opts.TTL,
-		now:    opts.Now,
-		cache:  make(map[string]registryEntry),
+		models:  models,
+		creds:   creds,
+		tenants: opts.Tenants,
+		ttl:     opts.TTL,
+		now:     opts.Now,
+		cache:   make(map[string]registryEntry),
+		strict:  make(map[string]strictEntry),
 	}
 }
 
@@ -111,12 +132,46 @@ func (r *Registry) Resolve(ctx context.Context, tenantID, name string) (*store.M
 	return m, nil
 }
 
-// Invalidate drops every cached resolution for tenantID, so a registry
-// write takes effect before the TTL lapses on the replica that served
-// the write (internal/api/handlers.Models calls it; other replicas wait
-// out the TTL). tenantID "" -- a platform-row change -- drops every
-// tenant's entries, since any of them may have resolved to the platform
-// row. Nil-safe.
+// TenantStrict reports the tenant's strict model policy
+// (store.Tenant.StrictModels), cached like a resolution (TTL, dropped by
+// Invalidate). An unknown tenant, a nil Registry and a Registry with no
+// TenantLookup are all non-strict. An error is returned only when the
+// store failed; the router then refuses the call (502) rather than
+// guessing the policy.
+func (r *Registry) TenantStrict(ctx context.Context, tenantID string) (bool, error) {
+	if r == nil || r.tenants == nil || tenantID == "" {
+		return false, nil
+	}
+	now := r.now()
+	r.mu.Lock()
+	if e, ok := r.strict[tenantID]; ok && now.Before(e.expiresAt) {
+		r.mu.Unlock()
+		return e.strict, nil
+	}
+	r.mu.Unlock()
+
+	strict := false
+	t, err := r.tenants.GetByID(ctx, tenantID)
+	switch {
+	case err == nil:
+		strict = t.StrictModels
+	case !errors.Is(err, store.ErrNotFound):
+		return false, fmt.Errorf("model policy: look up tenant: %w", err)
+	}
+
+	r.mu.Lock()
+	r.strict[tenantID] = strictEntry{strict: strict, expiresAt: now.Add(r.ttl)}
+	r.mu.Unlock()
+	return strict, nil
+}
+
+// Invalidate drops every cached resolution for tenantID, and its cached
+// strict model policy, so a registry or policy write takes effect before
+// the TTL lapses on the replica that served the write
+// (internal/api/handlers.Models and handlers.Tenants call it; other
+// replicas wait out the TTL). tenantID "" -- a platform-row change --
+// drops every tenant's entries, since any of them may have resolved to
+// the platform row. Nil-safe.
 func (r *Registry) Invalidate(tenantID string) {
 	if r == nil {
 		return
@@ -125,8 +180,10 @@ func (r *Registry) Invalidate(tenantID string) {
 	defer r.mu.Unlock()
 	if tenantID == "" {
 		r.cache = make(map[string]registryEntry)
+		r.strict = make(map[string]strictEntry)
 		return
 	}
+	delete(r.strict, tenantID)
 	prefix := tenantID + "|"
 	for k := range r.cache {
 		if strings.HasPrefix(k, prefix) {

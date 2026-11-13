@@ -41,11 +41,17 @@ var (
 // Tenant is the top-level isolation boundary. Every other model is scoped
 // to a TenantID. The tenant "default" is created at first boot.
 type Tenant struct {
-	ID        string
-	Slug      string
-	Name      string
-	Settings  map[string]any
-	CreatedAt time.Time
+	ID       string
+	Slug     string
+	Name     string
+	Settings map[string]any
+	// StrictModels is the tenant's strict model policy: when true, the
+	// LLM plane refuses (403) a model with no row in the model registry
+	// instead of forwarding it as-is. An API key may override it
+	// (APIKey.StrictModels). Default false. Set through the optional
+	// TenantModelPolicy capability.
+	StrictModels bool
+	CreatedAt    time.Time
 }
 
 // APIKey is a hashed, tenant-bound, role-scoped bearer credential. Only
@@ -81,6 +87,11 @@ type APIKey struct {
 	// set, the MCP plane enforces that profile for every request the key
 	// makes and rejects a different X-Agent-Profile-Name. nil = unbound.
 	ProfileID *string
+
+	// StrictModels overrides the tenant's strict model policy for this
+	// key (Tenant.StrictModels): nil inherits it, true or false replaces
+	// it. Set through the optional APIKeyModelPolicy capability.
+	StrictModels *bool
 
 	CreatedBy string
 	CreatedAt time.Time
@@ -665,6 +676,27 @@ type APIKeyContainer interface {
 	// SetContainment sets the key's rung with the reason. Returns
 	// ErrNotFound for a key unknown under tenantID or already revoked.
 	SetContainment(ctx context.Context, tenantID, id string, level Containment, note string) error
+}
+
+// APIKeyModelPolicy is an OPTIONAL capability of an APIKeyStore
+// (discovered with a type assertion, like APIKeyContainer): setting a
+// key's strict model override (APIKey.StrictModels). A store without it
+// keeps every key inheriting its tenant's policy.
+type APIKeyModelPolicy interface {
+	// SetStrictModels sets the key's override; nil clears it (the key
+	// inherits the tenant's policy). Returns ErrNotFound if id doesn't
+	// exist under tenantID.
+	SetStrictModels(ctx context.Context, tenantID, id string, strict *bool) error
+}
+
+// TenantModelPolicy is an OPTIONAL capability of a TenantStore
+// (discovered with a type assertion): setting a tenant's strict model
+// policy (Tenant.StrictModels). A store without it keeps every tenant
+// non-strict.
+type TenantModelPolicy interface {
+	// SetStrictModels sets the tenant's policy and returns the updated
+	// row; ErrNotFound if id is not a tenant.
+	SetStrictModels(ctx context.Context, id string, strict bool) (*Tenant, error)
 }
 
 // APIKeyLookup is the one APIKeyStore read the LLM plane's per-key limiter

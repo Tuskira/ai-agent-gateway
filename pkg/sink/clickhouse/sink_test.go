@@ -187,9 +187,27 @@ func TestSink_OverflowDropsAndCounts(t *testing.T) {
 
 // In sync mode only one flush runs at a time, as before async inserts;
 // records arriving meanwhile are batched for the next one.
+//
+// Every step waits on an observable event, never a fixed delay: the
+// second batch is awaited before Close, so it can only come from the run
+// loop dispatching it once the first flush finishes. (Closing straight
+// after the release would let Close's final flush write it concurrently
+// with the first flush winding down, and the order of the two would be
+// up to the scheduler.)
 func TestSink_SyncModeOneFlushAtATime(t *testing.T) {
 	w := newBlockingFakeWriter()
 	s := newSink(nil, w, Config{BatchSize: 1, FlushInterval: time.Hour, BufferSize: 10, SyncInsert: true}, nil)
+
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
 
 	s.WriteAccess(&sink.AccessLog{RequestID: "1"})
 	select {
@@ -199,17 +217,27 @@ func TestSink_SyncModeOneFlushAtATime(t *testing.T) {
 	}
 	s.WriteAccess(&sink.AccessLog{RequestID: "2"})
 	s.WriteAccess(&sink.AccessLog{RequestID: "3"})
-	time.Sleep(50 * time.Millisecond)
+	// The run loop has taken both off the queue and, with the only flush
+	// slot busy, is holding them for the next flush.
+	waitFor("run loop to take both records", func() bool { return len(s.ch) == 0 })
 	if got := w.entered(); got != 1 {
 		t.Fatalf("flushes started while one is in flight = %d, want 1", got)
 	}
+
 	close(w.release)
+	waitFor("second flush to be written", func() bool {
+		access, _ := w.snapshot()
+		return len(access) == 2
+	})
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 	access, _ := w.snapshot()
 	if len(access) != 2 || len(access[0]) != 1 || len(access[1]) != 2 {
 		t.Fatalf("flush batches = %v, want [1 record] then [2 records]", batchSizes(access))
+	}
+	if access[0][0].RequestID != "1" || access[1][0].RequestID != "2" || access[1][1].RequestID != "3" {
+		t.Fatalf("flush contents = %q then %q %q, want 1 then 2 3", access[0][0].RequestID, access[1][0].RequestID, access[1][1].RequestID)
 	}
 }
 

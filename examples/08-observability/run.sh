@@ -368,16 +368,41 @@ echo "  -> 20/20 calls succeeded and echoed back correctly"
 # 8. wait for the ClickHouse tee to flush, then assert via the analytics API
 # ---------------------------------------------------------------------------
 
-# pkg/sink/clickhouse/config.go: defaultBatchSize=100, defaultFlushInterval
-# =5s -- this run's ~25 records never reaches the batch-size trigger, so
-# everything waits on the 5s timer. 7s gives a 2s margin.
-echo "check: waiting 7s for the ClickHouse sink to flush its batch"
-sleep 7
+# The ClickHouse sink hands a batch to the server every flush_interval
+# (default 2s, pkg/sink/clickhouse/config.go) and the server then buffers
+# the async insert for up to async_insert_busy_timeout (default 10s), so a
+# row can take ~12s to become readable. Poll instead of sleeping a fixed
+# time, and wait on this run's own rows (the trace id): the overview count
+# alone could already be satisfied by rows from an earlier run on a reused
+# stack. Re-read every 2s for up to 60s.
+#
+# AccessLogFilter (pkg/analytics/analytics.go) has no trace_id field to
+# filter server-side by, so this fetches the tool's own rows (ordered
+# newest-first, pkg/sink/clickhouse/reader.go's ListAccessLogs) and
+# matches trace_id client-side with jq -- exactly 20, one per echo call
+# above (the 3 tools/list calls share the same trace id but carry no
+# tool_name, so they never match tool=everything__echo).
+echo "check: analytics/logs rows carry the shared trace id (polling up to 60s for the sink to flush)"
+matching_logs=0
+for _ in $(seq 1 30); do
+  logs_resp="$(curl -sSf -H "Authorization: Bearer $GATEWAY_ADMIN_KEY" \
+    "$CONTROL_BASE/analytics/logs?tool=everything__echo&limit=50")"
+  matching_logs="$(jq --arg tid "$TRACE_ID" '[(.items // [])[] | select(.trace_id == $tid)] | length' <<<"$logs_resp")"
+  if [[ "$matching_logs" -ge 20 ]]; then
+    break
+  fi
+  sleep 2
+done
+echo "  -> $matching_logs access-log row(s) match trace_id=$TRACE_ID"
+if [[ "$matching_logs" -ne 20 ]]; then
+  echo "FAIL: expected exactly 20 analytics/logs rows with trace_id=$TRACE_ID within 60s, got $matching_logs" >&2
+  exit 1
+fi
 
 echo "check: analytics/overview counts at least the 20 tools/call above"
 before_body="$(curl -sSf -H "Authorization: Bearer $GATEWAY_ADMIN_KEY" \
   "$CONTROL_BASE/analytics/overview?range=24h")"
-overview_calls="$(jq -r '.kpis.mcpToolCalls.value' <<<"$before_body")"
+overview_calls="$(jq -r '.kpis.mcpToolCalls.value // 0' <<<"$before_body")"
 echo "  -> kpis.mcpToolCalls.value (24h window) = $overview_calls"
 if [[ "$overview_calls" -lt 20 ]]; then
   echo "FAIL: expected analytics/overview kpis.mcpToolCalls.value >= 20, got $overview_calls" >&2
@@ -388,22 +413,6 @@ if ! jq -e '[.mcpTools[].name] | index("everything__echo")' >/dev/null 2>&1 <<<"
   exit 1
 fi
 echo "  -> mcpTools includes everything__echo: $(jq -c '.mcpTools' <<<"$before_body")"
-
-echo "check: analytics/logs rows carry the shared trace id"
-# AccessLogFilter (pkg/analytics/analytics.go) has no trace_id field to
-# filter server-side by, so this fetches the tool's own rows (ordered
-# newest-first, pkg/sink/clickhouse/reader.go's ListAccessLogs) and
-# matches trace_id client-side with jq -- exactly 20, one per echo call
-# above (the 3 tools/list calls share the same trace id but carry no
-# tool_name, so they never match tool=everything__echo).
-logs_resp="$(curl -sSf -H "Authorization: Bearer $GATEWAY_ADMIN_KEY" \
-  "$CONTROL_BASE/analytics/logs?tool=everything__echo&limit=50")"
-matching_logs="$(jq --arg tid "$TRACE_ID" '[.items[] | select(.trace_id == $tid)] | length' <<<"$logs_resp")"
-echo "  -> $matching_logs access-log row(s) match trace_id=$TRACE_ID"
-if [[ "$matching_logs" -ne 20 ]]; then
-  echo "FAIL: expected exactly 20 analytics/logs rows with trace_id=$TRACE_ID, got $matching_logs" >&2
-  exit 1
-fi
 
 # ---------------------------------------------------------------------------
 # 9. assert the same thing straight from ClickHouse SQL

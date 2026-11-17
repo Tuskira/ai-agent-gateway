@@ -33,10 +33,10 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
-// sessionStoreOpenTimeout bounds opening the session store (for the
-// Redis driver, the dial and ping). A wrong address should fail the boot
-// in seconds.
-const sessionStoreOpenTimeout = 10 * time.Second
+// sessionStoreOpenTimeout is the total time the gateway waits for the
+// session store to become reachable at boot (Redis may start alongside
+// the gateway); wrong credentials still fail immediately.
+const sessionStoreOpenTimeout = 90 * time.Second
 
 // Deps are everything the MCP plane needs from the process around it.
 type Deps struct {

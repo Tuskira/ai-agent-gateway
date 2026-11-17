@@ -36,6 +36,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,9 +61,16 @@ const (
 	// relayed on.
 	SessionChannel = "gw:session_msgs"
 
-	// pingTimeout bounds the startup Ping. A wrong address should fail
-	// the boot in seconds, not after the dial's own retries have run out.
+	// pingTimeout bounds each startup Ping attempt, so one attempt at an
+	// unreachable address fails in seconds, not after the dial's own
+	// retries have run out. New repeats the attempt until its ctx is done.
 	pingTimeout = 5 * time.Second
+
+	// pingBackoffMin and pingBackoffMax bound the wait between startup
+	// Ping attempts: it starts at the minimum, doubles, and stops growing
+	// at the maximum.
+	pingBackoffMin = 500 * time.Millisecond
+	pingBackoffMax = 5 * time.Second
 )
 
 func init() {
@@ -79,6 +88,13 @@ func init() {
 // rather than on the first MCP request, and returns a Store and a
 // Notifier sharing one connection pool. Closing either closes the pool
 // once both have been closed; the gateway closes both at shutdown.
+//
+// Redis may be starting alongside the gateway, so a ping that cannot
+// reach it (refused, unreachable, timed out after pingTimeout) is
+// retried with exponential backoff until ctx is done; ctx is therefore
+// the total time New waits. A ping Redis answers with an error reply
+// (wrong password, bad DB index) is a configuration mistake and fails at
+// once without a retry.
 func New(ctx context.Context, cfg session.Config) (*Store, *Notifier, error) {
 	if cfg.Addr == "" {
 		return nil, nil, errors.New("redis: addr is required")
@@ -93,15 +109,50 @@ func New(ctx context.Context, cfg session.Config) (*Store, *Notifier, error) {
 	}
 	client := goredis.NewClient(opts)
 
-	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
-	defer cancel()
-	if err := client.Ping(pingCtx).Err(); err != nil {
+	if err := pingWithRetry(ctx, client, cfg.Addr); err != nil {
 		_ = client.Close()
-		return nil, nil, fmt.Errorf("redis: ping %s: %w", cfg.Addr, err)
+		return nil, nil, err
 	}
 
 	shared := &conn{client: client, refs: 2}
 	return &Store{conn: shared}, &Notifier{conn: shared, instance: uuid.NewString()}, nil
+}
+
+// pingWithRetry pings client until one attempt succeeds, Redis answers
+// with an error reply, or ctx is done.
+func pingWithRetry(ctx context.Context, client *goredis.Client, addr string) error {
+	backoff := pingBackoffMin
+	for attempt := 1; ; attempt++ {
+		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+		err := client.Ping(pingCtx).Err()
+		cancel()
+		if err == nil {
+			return nil
+		}
+
+		// A server error reply (-WRONGPASS, -NOAUTH, -ERR invalid DB
+		// index) means Redis is up and the config is wrong: fail fast.
+		// -LOADING is the exception: a Redis with persistence answers it
+		// while it reads its dataset back after a restart, and it passes.
+		var reply goredis.Error
+		if errors.As(err, &reply) && !strings.HasPrefix(reply.Error(), "LOADING ") {
+			return fmt.Errorf("redis: ping %s: %w", addr, err)
+		}
+
+		if ctx.Err() != nil {
+			return fmt.Errorf("redis: ping %s: gave up after %d attempts: %w", addr, attempt, err)
+		}
+		slog.Warn("redis: ping failed, retrying", "addr", addr, "attempt", attempt, "error", err)
+
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("redis: ping %s: gave up after %d attempts: %w", addr, attempt, err)
+		case <-timer.C:
+		}
+		backoff = min(backoff*2, pingBackoffMax)
+	}
 }
 
 // conn is the pool shared by a Store/Notifier pair, closed when the last

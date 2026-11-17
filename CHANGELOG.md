@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The gateway now waits for Redis at boot instead of exiting on the first
+  failed ping.** When Redis starts alongside the gateway, the MCP plane
+  retries the session store ping with backoff for up to 90s; a wrong
+  password or DB index still fails immediately. The MCP
+  Deployment gains a `startupProbe` (up to 120s) so the kubelet does not
+  restart the pod during that wait.
+
 ## [0.13.1] - 2026-11-13
 
 ### Added

@@ -67,6 +67,17 @@ spec:
             - name: config
               mountPath: /etc/gateway
               readOnly: true
+          # The MCP plane is built before the HTTP listener serves, and with
+          # the redis session store it waits up to 90s for Redis to come up,
+          # so /health is down that long. Liveness and readiness only start
+          # once this probe succeeds (24 x 5s = 120s).
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http-mcp
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
           readinessProbe:
             httpGet:
               path: /health

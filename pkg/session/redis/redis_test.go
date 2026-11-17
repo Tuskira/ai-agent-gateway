@@ -58,7 +58,7 @@ func TestNotifierConformance(t *testing.T) {
 
 func TestNewRejectsAnUnreachableAddress(t *testing.T) {
 	redisAddr(t) // the test still needs Redis in principle; keep it env-gated like the rest
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if _, _, err := redis.New(ctx, session.Config{Addr: "127.0.0.1:1"}); err == nil {
 		t.Fatal("New(unreachable) = nil, want a ping error")

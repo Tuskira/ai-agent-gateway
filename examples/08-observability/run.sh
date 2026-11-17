@@ -387,7 +387,7 @@ matching_logs=0
 for _ in $(seq 1 30); do
   logs_resp="$(curl -sSf -H "Authorization: Bearer $GATEWAY_ADMIN_KEY" \
     "$CONTROL_BASE/analytics/logs?tool=everything__echo&limit=50")"
-  matching_logs="$(jq --arg tid "$TRACE_ID" '[.items[] | select(.trace_id == $tid)] | length' <<<"$logs_resp")"
+  matching_logs="$(jq --arg tid "$TRACE_ID" '[(.items // [])[] | select(.trace_id == $tid)] | length' <<<"$logs_resp")"
   if [[ "$matching_logs" -ge 20 ]]; then
     break
   fi

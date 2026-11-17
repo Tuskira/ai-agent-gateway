@@ -348,7 +348,7 @@ jobs:
         run: make examples-smoke
 
       - if: failure()
-        run: docker compose -f deploy/docker-compose.yml -f examples/14-prometheus/docker-compose.prometheus.yml --profile analytics --profile grafana logs gateway otel-collector prometheus grafana
+        run: docker compose -f deploy/docker-compose.yml -f examples/08-observability/docker-compose.observability.yml -f examples/14-prometheus/docker-compose.prometheus.yml --profile analytics --profile grafana logs gateway otel-collector prometheus grafana
 
       - if: always()
         # 08 adds the analytics profile and an overlay file; 14 (which tears

@@ -153,9 +153,11 @@ per MCP session, so this works even though every call in the loop shares
 one `Mcp-Session-Id`.
 
 **8. Wait for the ClickHouse sink to flush, then assert via the analytics
-API.** ClickHouse batches on 100 records or a 5s timer, whichever comes
-first (`pkg/sink/clickhouse/config.go`); this run's ~25 records never
-reaches 100, so `run.sh` sleeps 7s (5s timer + margin), then:
+API.** ClickHouse batches on 100 records or a 2s timer, whichever comes
+first (`pkg/sink/clickhouse/config.go`), and the server then buffers each
+async insert for up to 10s, so a row can take ~12s to become readable.
+`run.sh` therefore polls for this run's own rows every 2s for up to 60s
+instead of sleeping a fixed time, then:
 
 - `GET /api/v1/analytics/overview?range=24h` -- `.kpis.mcpToolCalls.value`
   (a count of `method = "tools/call"` rows only; `tools/list` doesn't

@@ -435,6 +435,15 @@ func (e *Enforcer) InvalidateTenant(tenantID string) {
 	}
 }
 
+// InvalidateAll drops every cached allow-list and bound profile, of every
+// tenant: a platform skill changed, or events may have been missed.
+func (e *Enforcer) InvalidateAll() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cache = make(map[string]cacheEntry)
+	e.bound = make(map[string]boundEntry)
+}
+
 // maxSlugLen is the agent_profiles.slug column width (VARCHAR(100)).
 const maxSlugLen = 100
 

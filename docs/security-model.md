@@ -710,6 +710,33 @@ pin is a maintainer task; see
   `cache_ttl`. A store without the optional `store.RevocationNotifier`
   interface has the TTL only. Console sessions are not cached (read per
   request), so a session revoke is immediate everywhere.
+### Cache invalidation across replicas
+
+Besides API keys, a gateway process caches resolved agent profiles (30s),
+profile skill bundles, decrypted secret-store fields and values fetched from
+an external credential service (up to their `cache_ttl`). With the Postgres
+store, migration `000017` adds row triggers that publish one event on the
+`gateway_invalidate` channel for every committed write to the rows behind
+them: `{"kind":"profile|credential|source|key","tenant":"<id>","id":"<id>"}`.
+The notification is queued inside the writing transaction, so it is delivered
+if and only if the write commits, whichever process or statement made it.
+Identical events within one transaction are delivered once, so replacing a
+profile's tool list is one event.
+
+| Kind | Written rows | Evicted on every replica |
+|---|---|---|
+| `profile` | `agent_profiles`, `agent_profile_tools`, `profile_skills` (id = the profile); `skills`, `skill_versions` (id empty: any profile of the tenant may attach the skill; tenant empty: a platform skill, every tenant) | the profile's resolved allow-list, bound-profile and skill-bundle entries, and `list_changed` to its open streams on that replica |
+| `credential`, `source` | `credentials`, `credential_sources` | every decrypted field and every external-service value of the tenant |
+| `key` | `api_keys`, on any change but `last_used_at`, and on delete (id = the key hash) | that key's lookup entry |
+
+Every process (API, MCP and LLM planes) listens, and flushes all of these
+caches each time its listener (re)connects, with exponential backoff,
+because `LISTEN/NOTIFY` is at-most-once. While a listener is down, the TTLs
+above apply. A store without the optional `store.InvalidationNotifier`
+interface has the TTLs only. A read that started before a write committed
+can still refill a cache after its eviction; the TTL bounds that. Connector
+and model-registry changes are not announced this way.
+
 - **Single sign-on covers console users only.** Programs authenticate with
   API keys; console users with username/password or through an OIDC
   identity provider ([authentication.md](authentication.md#single-sign-on-oidc)),

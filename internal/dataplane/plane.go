@@ -99,6 +99,11 @@ type Plane struct {
 	orch     *orchestrator.Orchestrator
 	notifier orchestrator.Notifier
 	ops      *opsAdapter
+	// profiles, skills and hub are what ApplyInvalidation evicts and tells.
+	profiles    *profile.Enforcer
+	profileRows store.AgentProfileStore
+	skills      *skillsext.Resolver
+	hub         *transport.Hub
 	// sessionStore and sessionNotifier are the pkg/session driver's
 	// halves, closed with the plane. sessionNotifier is nil for a
 	// single-replica driver.
@@ -116,6 +121,47 @@ type Plane struct {
 // when an operator adds or edits a connector and the agents connected
 // right now should not have to wait out a refresh interval to notice.
 func (p *Plane) NotifyToolsListChanged(tenantID string) { p.notifier.ToolsListChanged(tenantID) }
+
+// Apply implements invalidate.Target for the data plane's own caches: a
+// profile write (or a skill registry write) announced by any process evicts
+// the affected resolved allow-lists and skill bundles on this one, and
+// pushes list_changed to this replica's streams for the profile. The push is
+// local only: every replica gets its own event, so none is relayed.
+func (p *Plane) Apply(ev store.Invalidation) {
+	if ev.Kind != store.InvalidateProfile {
+		return
+	}
+	switch {
+	case ev.Tenant == "":
+		// A platform skill: any profile of any tenant may attach it.
+		p.profiles.InvalidateAll()
+		p.skills.InvalidateAll()
+	case ev.ID == "":
+		p.profiles.InvalidateTenant(ev.Tenant)
+		p.skills.InvalidateTenant(ev.Tenant)
+		p.hub.ToolsListChanged(ev.Tenant)
+	default:
+		// The cache is keyed by slug and the event carries the id; a row
+		// that no longer resolves (deleted) is dropped tenant-wide.
+		if prof, err := p.profileRows.Get(context.Background(), ev.Tenant, ev.ID); err == nil {
+			p.profiles.InvalidateSlug(ev.Tenant, prof.Slug)
+			p.skills.InvalidateSlug(ev.Tenant, prof.Slug)
+			p.hub.NotifyProfileListChanged(ev.Tenant, prof.Slug)
+			return
+		}
+		p.profiles.InvalidateTenant(ev.Tenant)
+		p.skills.InvalidateTenant(ev.Tenant)
+		p.hub.ToolsListChanged(ev.Tenant)
+	}
+}
+
+// Flush implements invalidate.Target: drop every cached allow-list and
+// skill bundle, because events published while the listener was down are
+// lost.
+func (p *Plane) Flush() {
+	p.profiles.InvalidateAll()
+	p.skills.InvalidateAll()
+}
 
 // SessionCount is how many MCP sessions the plane's session store holds
 // right now, or -1 when the driver cannot say cheaply (redis). The memory
@@ -285,6 +331,10 @@ func New(deps Deps) (*Plane, error) {
 		sessions:        sessions,
 		orch:            orch,
 		notifier:        notifier,
+		profiles:        profiles,
+		profileRows:     deps.Store.AgentProfiles(),
+		skills:          skills,
+		hub:             hub,
 		sessionStore:    sessionStore,
 		sessionNotifier: sessionNotifier,
 	}, nil

@@ -789,6 +789,50 @@ type RevocationNotifier interface {
 	ListenKeyRevocations(ctx context.Context, onReady func(), onRevoke func(keyHash string)) error
 }
 
+// Invalidation announces that rows a gateway process may have cached were
+// written by any process.
+type Invalidation struct {
+	// Kind is "profile" (an agent profile, its tool grants or attached
+	// skills, or the skill registry), "credential", "source" (a credential
+	// source) or "key" (an API key).
+	Kind string `json:"kind"`
+	// Tenant is the owning tenant's id; empty for a platform row (a platform
+	// skill), which concerns every tenant.
+	Tenant string `json:"tenant"`
+	// ID names the row: a profile, credential or source id, or an API key's
+	// hash for Kind "key". Empty means "everything of that kind in the
+	// tenant" (a skill registry write).
+	ID string `json:"id"`
+}
+
+// Invalidation kinds.
+const (
+	InvalidateProfile    = "profile"
+	InvalidateCredential = "credential"
+	InvalidateSource     = "source"
+	InvalidateKey        = "key"
+)
+
+// InvalidationNotifier is an OPTIONAL capability of a Store (discovered with
+// a type assertion, like RevocationNotifier): a backend that can push
+// "this row changed" events between gateway processes implements it, so a
+// write on one replica evicts the caches of every other replica at once
+// instead of after their TTLs. A backend without it still works; caches
+// then expire on their own.
+//
+// The producer side is the backend's own concern: the event must be
+// published atomically with the write (a notification is delivered if and
+// only if the write committed).
+type InvalidationNotifier interface {
+	// ListenInvalidations blocks, delivering every event published after it
+	// is ready, until ctx is done or the underlying connection fails (any
+	// error return means "reconnect"). onReady is called each time the
+	// subscription becomes active, before any event is delivered; the caller
+	// flushes its caches there, since events published while no subscription
+	// was active are lost.
+	ListenInvalidations(ctx context.Context, onReady func(), onEvent func(Invalidation)) error
+}
+
 // CredentialStore manages Credential rows. List never populates
 // Ciphertext/Nonce (metadata only); only Get returns the full row.
 type CredentialStore interface {

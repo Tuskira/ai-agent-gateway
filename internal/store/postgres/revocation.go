@@ -24,6 +24,13 @@ var _ store.RevocationNotifier = (*Store)(nil)
 // Any error -- including the server closing the connection -- returns, and
 // the caller reconnects with backoff.
 func (s *Store) ListenKeyRevocations(ctx context.Context, onReady func(), onRevoke func(keyHash string)) error {
+	return s.listen(ctx, keyRevokedChannel, onReady, onRevoke)
+}
+
+// listen LISTENs on channel on one pinned connection and calls onPayload with
+// every non-empty payload, after onReady, until ctx ends or the connection
+// fails.
+func (s *Store) listen(ctx context.Context, channel string, onReady func(), onPayload func(payload string)) error {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("postgres: acquire listen connection: %w", err)
@@ -36,7 +43,7 @@ func (s *Store) ListenKeyRevocations(ctx context.Context, onReady func(), onRevo
 			return fmt.Errorf("postgres: unexpected driver connection %T", dc)
 		}
 		pc := sc.Conn()
-		if _, err := pc.Exec(ctx, "LISTEN "+keyRevokedChannel); err != nil {
+		if _, err := pc.Exec(ctx, "LISTEN "+channel); err != nil {
 			return fmt.Errorf("postgres: LISTEN: %w", err)
 		}
 		onReady()
@@ -45,8 +52,8 @@ func (s *Store) ListenKeyRevocations(ctx context.Context, onReady func(), onRevo
 			if err != nil {
 				return err
 			}
-			if n.Channel == keyRevokedChannel && n.Payload != "" {
-				onRevoke(n.Payload)
+			if n.Channel == channel && n.Payload != "" {
+				onPayload(n.Payload)
 			}
 		}
 	})

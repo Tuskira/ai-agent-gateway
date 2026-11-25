@@ -34,4 +34,4 @@ resources:
 # this only changes what base/, analytics/ and redis/ render.
 images:
   - name: ghcr.io/tuskira/ai-agent-gateway
-    newTag: "0.13.2"
+    newTag: "0.14.0"

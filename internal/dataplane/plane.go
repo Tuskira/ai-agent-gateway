@@ -98,6 +98,7 @@ type Plane struct {
 	sessions *session.Manager
 	orch     *orchestrator.Orchestrator
 	notifier orchestrator.Notifier
+	ops      *opsAdapter
 	// sessionStore and sessionNotifier are the pkg/session driver's
 	// halves, closed with the plane. sessionNotifier is nil for a
 	// single-replica driver.
@@ -271,8 +272,7 @@ func New(deps Deps) (*Plane, error) {
 		)
 	}
 
-	opsAdapter := newOpsAdapter(deps, toolRouter, backend, profiles, hub)
-	opsAdapter.notifier = notifier
+	opsAdapter := newOpsAdapter(deps, toolRouter, backend, profiles, hub, notifier)
 
 	return &Plane{
 		Handler:         handler,
@@ -280,6 +280,7 @@ func New(deps Deps) (*Plane, error) {
 		ConnectorOps:    opsAdapter,
 		CacheOps:        opsAdapter,
 		ProfileOps:      opsAdapter,
+		ops:             opsAdapter,
 		client:          backend,
 		sessions:        sessions,
 		orch:            orch,
@@ -314,6 +315,9 @@ func openSessionStore(cfg *config.Config) (pkgsession.Store, pkgsession.Notifier
 // driver has one).
 func (p *Plane) Close() error {
 	p.orch.Close()
+	if p.ops != nil {
+		p.ops.close()
+	}
 	err := p.client.Close()
 	if p.sessionNotifier != nil {
 		err = errors.Join(err, p.sessionNotifier.Close())

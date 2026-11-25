@@ -428,6 +428,7 @@ func (h Connectors) Create(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, r, "create connector", err)
 		return
 	}
+	h.connectorChanged(r, tid, c.ID)
 	httpx.WriteJSON(w, http.StatusCreated, newConnectorView(c))
 }
 
@@ -499,7 +500,7 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wasExempt := existing.RestrictExempt()
-	oldEndpoint, oldSlug, oldPrefix := existing.Endpoint, existing.Slug, existing.ToolPrefix
+	oldEndpoint, oldSlug, oldPrefix, wasEnabled := existing.Endpoint, existing.Slug, existing.ToolPrefix, existing.Enabled()
 	storedHeaders, _ := existing.Metadata["headers"].(map[string]any)
 	storedMeta := existing.Metadata
 	headersChanged := false
@@ -566,8 +567,14 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, r, "update connector", err)
 		return
 	}
+	newHeaders, _ := existing.Metadata["headers"].(map[string]any)
 	if existing.ToolPrefix != oldPrefix {
+		// A prefix change re-discovers synchronously and also covers every
+		// other change made by the same update.
 		h.toolNamesChanged(r.Context(), tid, existing)
+	} else if existing.Endpoint != oldEndpoint || existing.Slug != oldSlug || existing.Enabled() != wasEnabled ||
+		!sameHeaderConfigs(storedHeaders, newHeaders) {
+		h.connectorChanged(r, tid, existing.ID)
 	}
 	httpx.WriteJSON(w, http.StatusOK, newConnectorView(existing))
 }
@@ -607,6 +614,27 @@ func (h Connectors) toolNamesChanged(ctx context.Context, tenantID string, conn 
 	}
 	if n, ok := h.CacheOps.(ops.ToolListNotifier); ok {
 		n.NotifyToolsListChanged(tenantID)
+	}
+}
+
+// sameHeaderConfigs reports whether two metadata.headers maps are the same
+// configuration, treating a missing map and an empty one as equal.
+func sameHeaderConfigs(a, b map[string]any) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+// connectorChanged tells the data plane that a connector was created or
+// edited in a way that changes what it advertises (endpoint, headers, slug
+// or enabled): its cached tools are dropped, rediscovered in the background
+// and connected clients are told the tool list changed. It does nothing
+// when no data plane was wired in, or the wired ConnectorOps does not
+// refresh.
+func (h Connectors) connectorChanged(r *http.Request, tenantID, connectorID string) {
+	if rf, ok := h.ConnectorOps.(ops.ConnectorRefresher); ok {
+		rf.ConnectorChanged(context.WithoutCancel(r.Context()), tenantID, connectorID)
 	}
 }
 

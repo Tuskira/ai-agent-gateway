@@ -55,6 +55,18 @@ type ConnectorOps interface {
 	Discover(ctx context.Context, tenantID, connectorID string) ([]store.CachedTool, error)
 }
 
+// ConnectorRefresher is implemented by a ConnectorOps that can react to a
+// connector being created or edited: drop its cached tools, rediscover them
+// in the background and tell connected clients the tool list changed. The
+// connector handlers use it when ConnectorOps provides it (an
+// implementation without it simply gets no refresh).
+type ConnectorRefresher interface {
+	// ConnectorChanged returns at once; the work runs in the background and
+	// is bounded. It never reports an error: a failed rediscovery leaves
+	// the connector's cache empty and the next refresh fills it.
+	ConnectorChanged(ctx context.Context, tenantID, connectorID string)
+}
+
 // CacheConnectorStats summarizes one connector's cached tools.
 type CacheConnectorStats struct {
 	ConnectorID string

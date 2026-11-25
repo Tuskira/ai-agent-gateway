@@ -588,7 +588,7 @@ func (t *toolCacheStore) ListByTenant(_ context.Context, tenantID string) ([]*st
 	defer s.mu.Unlock()
 	var out []*store.CachedTool
 	for _, ct := range s.tools {
-		if ct.TenantID == tenantID && !connectorDeleted(s, ct.ConnectorID) {
+		if ct.TenantID == tenantID && !connectorDeleted(s, ct.ConnectorID) && !connectorDisabled(s, ct.ConnectorID) {
 			out = append(out, ct)
 		}
 	}
@@ -612,6 +612,15 @@ func (t *toolCacheStore) ListByTenant(_ context.Context, tenantID string) ([]*st
 func connectorDeleted(s *Store, connectorID string) bool {
 	conn, ok := s.connectors[connectorID]
 	return ok && conn.DeletedAt != nil
+}
+
+// connectorDisabled reports whether connectorID names a connector whose
+// metadata.enabled is false, mirroring internal/store/postgres's
+// connectorLive predicate for the tenant-wide tool cache reads. Caller must
+// hold s.mu.
+func connectorDisabled(s *Store, connectorID string) bool {
+	conn, ok := s.connectors[connectorID]
+	return ok && !conn.Enabled()
 }
 
 func (t *toolCacheStore) Search(ctx context.Context, tenantID, query string, limit int, includeStale bool) ([]*store.CachedTool, error) {

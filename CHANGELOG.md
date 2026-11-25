@@ -85,6 +85,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A new optional `pkg/ops.ToolListNotifier` lets a `CacheOps` push
   `tools/list_changed`.
 
+### Fixed
+
+- **A new or edited connector shows its tools at once.** After a connector is
+  created, or edited so that its endpoint, headers, slug or enabled flag
+  changes, the gateway drops its cached tools, rediscovers them in the
+  background (35 second bound) and sends `notifications/tools/list_changed`
+  to the tenant's open streams, so `tools/list` no longer waits for the next
+  refresh interval or serves the old tool set.
+- **A disabled connector's tools are no longer served from the tool cache.**
+  The tenant-wide cache reads (`tools/list`, `cache/search`, cache stats)
+  skip rows of a connector whose `metadata.enabled` is false; the rows are
+  kept and `GET /connectors/{id}/tools` still lists them.
 
 ## [0.13.2] - 2026-11-17
 

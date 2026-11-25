@@ -914,6 +914,24 @@ connector has been soft-deleted, so a deleted connector's tools never
 surface even if that invalidation fails (it is best-effort and only
 logged) or the process crashes between the two writes.
 
+**Creating or editing a connector refreshes its tools at once.** After
+`POST /api/v1/connectors`, and after a `PUT /api/v1/connectors/{id}` that
+changes the endpoint, the headers (a value, or one added or removed), the
+slug or `metadata.enabled`, the gateway drops that connector's cached
+tools, rediscovers them in the background (bounded to 35 seconds) and sends
+`notifications/tools/list_changed` to every open stream of the tenant, on
+every replica when sessions are shared through Redis. A new or repointed
+connector therefore shows its real tools in `tools/list` as soon as the
+discovery finishes, not after the next refresh interval. A disabled
+connector is not rediscovered. An edit that changes none of those (name,
+description, timeout) leaves the cache alone. If the rediscovery fails, the
+connector's cache stays empty until the next refresh or
+`POST /connectors/{id}/discover`.
+
+The tenant-wide cache reads (`tools/list` and `cache/search`) skip a
+disabled connector's rows, as they skip a deleted connector's; the rows
+stay, and `GET /connectors/{id}/tools` still shows them.
+
 ## Troubleshooting
 
 **Connector shows `unhealthy`.** A failed `initialize` (handshake or

@@ -233,6 +233,13 @@ func startPlaneWrapped(t *testing.T, st store.Store, secretSvc *secrets.Service,
 // caller built, for tests that register more providers than secret_store.
 func startPlaneWithRegistry(t *testing.T, st store.Store, registry *dpheaders.Registry, wrap func(http.Handler) http.Handler) (string, *dataplane.Plane) {
 	t.Helper()
+	return startPlaneConfigured(t, st, registry, wrap, nil)
+}
+
+// startPlaneConfigured is startPlaneWithRegistry with a hook to adjust the
+// config before the plane is built (the tool cache is off by default).
+func startPlaneConfigured(t *testing.T, st store.Store, registry *dpheaders.Registry, wrap func(http.Handler) http.Handler, mutate func(*config.Config)) (string, *dataplane.Plane) {
+	t.Helper()
 
 	cfg := config.Default()
 	cfg.Service.Version = "e2e"
@@ -240,6 +247,9 @@ func startPlaneWithRegistry(t *testing.T, st store.Store, registry *dpheaders.Re
 	// backends actually answer right now, and a cache would mask a
 	// routing change behind a stale hit.
 	cfg.ToolCache.Enabled = false
+	if mutate != nil {
+		mutate(cfg)
+	}
 
 	logSink := stdout.New(io.Discard)
 	t.Cleanup(func() { _ = logSink.Close() })

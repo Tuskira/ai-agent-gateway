@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane"
@@ -14,6 +15,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/headers"
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/mcp"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/ops"
 	// Registers the "memory" session driver dataplane.New opens by default.
 	_ "github.com/Tuskira/tusk-ai-secured-gateway/pkg/session/memory"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
@@ -270,5 +272,82 @@ func TestOpsAdapter_UnknownConnectorIsNotFound(t *testing.T) {
 	}
 	if err := plane.CacheOps.Invalidate(ctx, opsTenantID, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Invalidate error = %v, want wrapping store.ErrNotFound", err)
+	}
+}
+
+func toolNames(t *testing.T, st *dptest.Store, connectorID string) map[string]bool {
+	t.Helper()
+	rows, err := st.ToolCache().ListByConnector(context.Background(), opsTenantID, connectorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, r := range rows {
+		out[r.ToolName] = true
+	}
+	return out
+}
+
+func waitToolNames(t *testing.T, st *dptest.Store, connectorID string, want ...string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got := toolNames(t, st, connectorID)
+		ok := len(got) == len(want)
+		for _, w := range want {
+			ok = ok && got[w]
+		}
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cached tools = %v, want %v", got, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// ConnectorChanged drops the connector's cached tools at once and refills
+// them from the (new) endpoint in the background; a disabled connector's
+// cache is dropped and not refilled.
+func TestOpsAdapter_ConnectorChanged_RefreshesCache(t *testing.T) {
+	plane, st, _, conn := newOpsFixture(t)
+	ctx := context.Background()
+	refresher, ok := plane.ConnectorOps.(ops.ConnectorRefresher)
+	if !ok {
+		t.Fatal("the plane's ConnectorOps does not implement ops.ConnectorRefresher")
+	}
+
+	if _, err := plane.ConnectorOps.Discover(ctx, opsTenantID, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitToolNames(t, st, conn.ID, "echo", "ping")
+
+	// Repoint at a second backend with different tools.
+	second := dptest.NewBackend(dptest.BackendOptions{
+		Tools:          []mcp.Tool{{Name: "lookup", Description: "Look something up", InputSchema: dptest.ObjectSchema(nil)}},
+		RequireSession: true,
+	})
+	t.Cleanup(second.Close)
+	conn.Endpoint = second.URL
+	if err := st.Connectors().Update(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	refresher.ConnectorChanged(ctx, opsTenantID, conn.ID)
+	waitToolNames(t, st, conn.ID, "lookup")
+
+	// Disabled: the rows are dropped and nothing is rediscovered.
+	conn.Metadata = map[string]any{"enabled": false}
+	if err := st.Connectors().Update(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	before := second.Calls(mcp.MethodToolsList)
+	refresher.ConnectorChanged(ctx, opsTenantID, conn.ID)
+	if got := toolNames(t, st, conn.ID); len(got) != 0 {
+		t.Errorf("cached tools of a disabled connector = %v, want none", got)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := second.Calls(mcp.MethodToolsList) - before; n != 0 {
+		t.Errorf("a disabled connector was rediscovered (%d tools/list calls)", n)
 	}
 }

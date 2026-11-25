@@ -54,7 +54,7 @@ func (s *toolCacheStore) ListByConnector(ctx context.Context, tenantID, connecto
 }
 
 func (s *toolCacheStore) ListByTenant(ctx context.Context, tenantID string) ([]*store.CachedTool, error) {
-	const q = toolCacheSelect + ` WHERE tenant_id = $1 AND ` + connectorNotDeleted + ` ORDER BY connector_id, tool_namespace, tool_name`
+	const q = toolCacheSelect + ` WHERE tenant_id = $1 AND ` + connectorLive + ` ORDER BY connector_id, tool_namespace, tool_name`
 	return s.query(ctx, q, tenantID)
 }
 
@@ -80,7 +80,7 @@ func (s *toolCacheStore) Search(ctx context.Context, tenantID, query string, lim
 			OR description ILIKE '%' || $2 || '%'
 		)
 		` + staleFilter + `
-		AND ` + connectorNotDeleted + `
+		AND ` + connectorLive + `
 		ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC, tool_name
 		LIMIT $3`
 	return s.query(ctx, q, tenantID, query, limit)
@@ -130,6 +130,14 @@ const toolCacheSelect = `
 // instead. The EXISTS subquery drives off connectors' primary key, so
 // this stays an index lookup rather than a join-driven scan.
 const connectorNotDeleted = `EXISTS (SELECT 1 FROM connectors c WHERE c.id = tool_cache.connector_id AND c.deleted_at IS NULL)`
+
+// connectorLive is connectorNotDeleted plus "not disabled" (metadata.enabled
+// is not the JSON boolean false; the same rule as store.Connector.Enabled).
+// The tenant-wide reads, which feed tools/list and search, use it so a
+// disabled connector's tools are not advertised while its rows still exist;
+// ListByConnector keeps connectorNotDeleted so an operator can still see
+// what a disabled connector had cached.
+const connectorLive = `EXISTS (SELECT 1 FROM connectors c WHERE c.id = tool_cache.connector_id AND c.deleted_at IS NULL AND COALESCE(c.metadata->'enabled' <> 'false'::jsonb, TRUE))`
 
 func (s *toolCacheStore) query(ctx context.Context, q string, args ...any) ([]*store.CachedTool, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)

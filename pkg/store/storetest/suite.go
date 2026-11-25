@@ -1219,6 +1219,49 @@ func testToolCache(t *testing.T, s store.Store) {
 	if len(byConn) != 0 {
 		t.Errorf("ListByConnector(soft-deleted connector) = %+v, want empty", byConn)
 	}
+
+	// Disabling a connector (metadata.enabled false) hides its cached tools
+	// from the tenant-wide reads, which feed tools/list and search, but not
+	// from ListByConnector; enabling it brings them back. Only the JSON
+	// boolean false disables: any other value leaves the connector enabled.
+	connB2.Metadata = map[string]any{"enabled": false}
+	if err := s.Connectors().Update(ctx, connB2); err != nil {
+		t.Fatalf("disable connB2: %v", err)
+	}
+	byTenant, err = s.ToolCache().ListByTenant(ctx, tenantB.ID)
+	if err != nil {
+		t.Fatalf("ListByTenant with a disabled connector: %v", err)
+	}
+	if len(byTenant) != 0 {
+		t.Errorf("ListByTenant(tenantB) with connB2 disabled = %+v, want empty", byTenant)
+	}
+	hits, err = s.ToolCache().Search(ctx, tenantB.ID, "still-here", 10, true)
+	if err != nil {
+		t.Fatalf("Search with a disabled connector: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Errorf("Search hit a disabled connector's tool: %+v", hits)
+	}
+	byConn, err = s.ToolCache().ListByConnector(ctx, tenantB.ID, connB2.ID)
+	if err != nil {
+		t.Fatalf("ListByConnector for a disabled connector: %v", err)
+	}
+	if len(byConn) != 1 {
+		t.Errorf("ListByConnector(disabled connector) = %+v, want its row kept", byConn)
+	}
+	for _, v := range []any{true, "false", nil} {
+		connB2.Metadata = map[string]any{"enabled": v}
+		if err := s.Connectors().Update(ctx, connB2); err != nil {
+			t.Fatalf("set enabled=%v: %v", v, err)
+		}
+		byTenant, err = s.ToolCache().ListByTenant(ctx, tenantB.ID)
+		if err != nil {
+			t.Fatalf("ListByTenant (enabled=%v): %v", v, err)
+		}
+		if len(byTenant) != 1 {
+			t.Errorf("ListByTenant with enabled=%v = %+v, want connB2's row back", v, byTenant)
+		}
+	}
 }
 
 func containsCachedTool(list []*store.CachedTool, connectorID, toolName string) bool {

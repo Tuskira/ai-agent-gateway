@@ -3,8 +3,10 @@ package dataplane
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/cache"
@@ -51,17 +53,28 @@ type opsAdapter struct {
 	// opsAdapter without one get InvalidateProfile's cache invalidation
 	// with no live push, which is a documented no-op, not a panic.
 	hub *transport.Hub
-	// notifier pushes notifications/tools/list_changed to every stream
-	// open for a tenant, on this replica and (with the redis session
-	// driver) the others. Nil is a no-op, as for hub.
+	// notifier tells connected clients (on every replica, when the session
+	// driver has a notifier) that a tenant's tool list changed.
 	notifier orchestrator.Notifier
+	log      *slog.Logger
+
+	// bg bounds the background rediscovery ConnectorChanged starts; close
+	// cancels it and waits.
+	bg     context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
+
+// connectorRefreshTimeout bounds one background rediscovery.
+const connectorRefreshTimeout = 35 * time.Second
 
 var (
 	_ ops.ConnectorOps     = (*opsAdapter)(nil)
 	_ ops.CacheOps         = (*opsAdapter)(nil)
 	_ ops.ProfileOps       = (*opsAdapter)(nil)
 	_ ops.ToolListNotifier = (*opsAdapter)(nil)
+
+	_ ops.ConnectorRefresher = (*opsAdapter)(nil)
 )
 
 // newOpsAdapter builds the ops adapter. toolRouter, backend and enforcer
@@ -69,9 +82,14 @@ var (
 // probe/discover/invalidate run through the API and one triggered by a
 // live MCP request agree about a connector's health state, cool-down
 // window and cached profile resolutions.
-func newOpsAdapter(deps Deps, toolRouter *router.Router, backend *client.Client, enforcer *profile.Enforcer, hub *transport.Hub) *opsAdapter {
+func newOpsAdapter(deps Deps, toolRouter *router.Router, backend *client.Client, enforcer *profile.Enforcer, hub *transport.Hub, notifier orchestrator.Notifier) *opsAdapter {
 	ttl := deps.Config.ToolCache.L2TTL
+	bg, cancel := context.WithCancel(context.Background())
 	return &opsAdapter{
+		notifier:       notifier,
+		log:            deps.Logger,
+		bg:             bg,
+		cancel:         cancel,
 		connectors:     deps.Store.Connectors(),
 		profiles:       deps.Store.AgentProfiles(),
 		toolCacheStore: deps.Store.ToolCache(),
@@ -252,6 +270,52 @@ func (a *opsAdapter) Discover(ctx context.Context, tenantID, connectorID string)
 		out = append(out, *row)
 	}
 	return out, nil
+}
+
+// ConnectorChanged implements ops.ConnectorRefresher: after a connector is
+// created or edited, drop its cached tools (so nothing stale is served in
+// the meantime), rediscover them in the background, and tell connected
+// clients the tool list changed. A disabled connector is not rediscovered:
+// it is not callable, and its tools are not listed.
+func (a *opsAdapter) ConnectorChanged(ctx context.Context, tenantID, connectorID string) {
+	if err := a.toolCacheStore.DeleteByConnector(ctx, connectorID); err != nil {
+		a.log.Warn("clear tool cache after connector change failed", "connector_id", connectorID, "error", err)
+	}
+
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		// Whatever happens below, clients must re-list: the connector's
+		// tools just changed (or went away).
+		defer a.notifyToolsListChanged(tenantID)
+
+		rctx, cancel := context.WithTimeout(a.bg, connectorRefreshTimeout)
+		defer cancel()
+
+		conn, err := a.getConnector(rctx, tenantID, connectorID)
+		if err != nil {
+			a.log.Warn("rediscover after connector change: lookup failed", "connector_id", connectorID, "error", err)
+			return
+		}
+		if !conn.Enabled() {
+			return
+		}
+		if _, err := a.Discover(rctx, tenantID, connectorID); err != nil {
+			a.log.Warn("rediscover after connector change failed", "connector_id", connectorID, "error", err)
+		}
+	}()
+}
+
+func (a *opsAdapter) notifyToolsListChanged(tenantID string) {
+	if a.notifier != nil {
+		a.notifier.ToolsListChanged(tenantID)
+	}
+}
+
+// close stops background rediscoveries and waits for them to return.
+func (a *opsAdapter) close() {
+	a.cancel()
+	a.wg.Wait()
 }
 
 // Stats implements ops.CacheOps.

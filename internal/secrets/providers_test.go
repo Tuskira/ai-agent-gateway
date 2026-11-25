@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,7 @@ func TestSecretStoreProvider_Invalidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
-	if err := cs.Rotate(ctx, "tenant-a", "okta-prod", ciphertext, nonce, row.KeyID, row.FieldNames); err != nil {
+	if err := cs.Rotate(ctx, "tenant-a", "okta-prod", ciphertext, nonce, row.KeyID, row.FieldNames, store.UnlockedOnly); err != nil {
 		t.Fatalf("raw Rotate: %v", err)
 	}
 

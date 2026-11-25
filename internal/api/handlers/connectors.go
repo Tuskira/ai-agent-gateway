@@ -397,6 +397,10 @@ func (h Connectors) Create(w http.ResponseWriter, r *http.Request) {
 		writeConnectorValidationErr(w, err)
 		return
 	}
+	newHeaders, _ := meta["headers"].(map[string]any)
+	if h.guardLockedHeaders(w, r, tid, newHeaders, nil) {
+		return
+	}
 	if req.Description != nil {
 		meta["description"] = *req.Description
 	}
@@ -497,6 +501,7 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 	wasExempt := existing.RestrictExempt()
 	oldEndpoint, oldSlug, oldPrefix := existing.Endpoint, existing.Slug, existing.ToolPrefix
 	storedHeaders, _ := existing.Metadata["headers"].(map[string]any)
+	storedMeta := existing.Metadata
 	headersChanged := false
 	existing.Name = name
 	existing.Endpoint = endpoint
@@ -519,6 +524,20 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 			writeConnectorValidationErr(w, err)
 			return
 		}
+		newHeaders, _ := existing.Metadata["headers"].(map[string]any)
+		if h.guardLockedHeaders(w, r, tid, newHeaders, storedHeaders) {
+			return
+		}
+	}
+	// A header a platform admin saved for a platform-locked credential sends
+	// that secret to this connector's endpoint, so only a platform admin may
+	// re-point the connector or change its metadata (headers, TLS settings,
+	// ...); anyone allowed to edit it may still toggle enabled and change
+	// the description.
+	if hasPlatformHeader(storedHeaders) && (existing.Endpoint != oldEndpoint || metadataChangedBeyondToggle(existing.Metadata, storedMeta)) && !h.isPlatformAdmin(r) {
+		httpx.WriteError(w, http.StatusForbidden, httpx.TypePermission,
+			"this connector sends a credential "+managedByPlatformMsg+"; only a platform admin may change its endpoint or metadata other than enabled and description")
+		return
 	}
 	if req.Description != nil {
 		if existing.Metadata == nil {

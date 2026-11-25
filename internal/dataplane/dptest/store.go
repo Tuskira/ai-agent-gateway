@@ -354,7 +354,47 @@ func (c *credentialSourceStore) List(_ context.Context, tenantID string) ([]*sto
 	return out, nil
 }
 
-func (c *credentialSourceStore) Update(_ context.Context, src *store.CredentialSource) error {
+func (c *credentialSourceStore) Update(_ context.Context, src *store.CredentialSource, guard store.LockGuard) error {
+	s := (*Store)(c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.sources[src.ID]
+	if !ok || existing.TenantID != src.TenantID || existing.DeletedAt != nil {
+		return store.ErrNotFound
+	}
+	if existing.Locked && !bool(guard) {
+		return store.ErrLocked
+	}
+	if c.liveByName(src.TenantID, src.Name, src.ID) {
+		return store.ErrConflict
+	}
+	src.UpdatedAt = time.Now()
+	updated := copySource(src)
+	updated.Provider = existing.Provider
+	updated.CreatedAt = existing.CreatedAt
+	updated.Locked = existing.Locked // only SetLocked writes it
+	src.Locked = existing.Locked
+	s.sources[src.ID] = updated
+	return nil
+}
+
+func (c *credentialSourceStore) SoftDelete(_ context.Context, tenantID, id string, guard store.LockGuard) error {
+	s := (*Store)(c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	src, ok := s.sources[id]
+	if !ok || src.TenantID != tenantID || src.DeletedAt != nil {
+		return store.ErrNotFound
+	}
+	if src.Locked && !bool(guard) {
+		return store.ErrLocked
+	}
+	now := time.Now()
+	src.DeletedAt = &now
+	return nil
+}
+
+func (c *credentialSourceStore) UpdateLocked(_ context.Context, src *store.CredentialSource) error {
 	s := (*Store)(c)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -366,6 +406,7 @@ func (c *credentialSourceStore) Update(_ context.Context, src *store.CredentialS
 		return store.ErrConflict
 	}
 	src.UpdatedAt = time.Now()
+	src.Locked = true
 	updated := copySource(src)
 	updated.Provider = existing.Provider
 	updated.CreatedAt = existing.CreatedAt
@@ -373,7 +414,7 @@ func (c *credentialSourceStore) Update(_ context.Context, src *store.CredentialS
 	return nil
 }
 
-func (c *credentialSourceStore) SoftDelete(_ context.Context, tenantID, id string) error {
+func (c *credentialSourceStore) SetLocked(_ context.Context, tenantID, id string, locked bool) error {
 	s := (*Store)(c)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -381,8 +422,8 @@ func (c *credentialSourceStore) SoftDelete(_ context.Context, tenantID, id strin
 	if !ok || src.TenantID != tenantID || src.DeletedAt != nil {
 		return store.ErrNotFound
 	}
-	now := time.Now()
-	src.DeletedAt = &now
+	src.Locked = locked
+	src.UpdatedAt = time.Now()
 	return nil
 }
 

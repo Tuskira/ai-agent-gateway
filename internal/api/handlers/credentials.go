@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -28,10 +30,17 @@ type createCredentialRequest struct {
 	Name    string            `json:"name"`
 	Type    string            `json:"type"`
 	Payload map[string]string `json:"payload"`
+	// Locked marks the credential platform-managed; setting it needs
+	// platform.admin.
+	Locked bool `json:"locked"`
 }
 
+// rotateCredentialRequest is the PUT body. payload replaces the secret;
+// locked (platform.admin only) sets or clears the platform-managed flag.
+// At least one must be present.
 type rotateCredentialRequest struct {
 	Payload map[string]string `json:"payload"`
+	Locked  *bool             `json:"locked"`
 }
 
 type credentialView struct {
@@ -40,6 +49,11 @@ type credentialView struct {
 	Type       string   `json:"type"`
 	FieldNames []string `json:"field_names"`
 	KeyID      string   `json:"key_id"`
+	// Locked is true for a platform-managed credential: not changeable
+	// without platform.admin, and its value is sent only where the platform
+	// chose (a locked source, a header a platform admin saved, a platform
+	// model).
+	Locked bool `json:"locked"`
 	// UsedBy is every connector in the tenant whose metadata.headers
 	// references this credential via an external/secret_store header
 	// (see credentialUsage). Empty, never null, when nothing references
@@ -71,6 +85,7 @@ func newCredentialView(c *store.Credential, usedBy []connectorRef) credentialVie
 		Type:       c.Type,
 		FieldNames: fields,
 		KeyID:      c.KeyID,
+		Locked:     c.Locked,
 		UsedBy:     usedBy,
 		CreatedAt:  formatTime(c.CreatedAt),
 		RotatedAt:  formatTimePtr(c.RotatedAt),
@@ -164,8 +179,18 @@ func (h Credentials) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cred, err := h.Secrets.Create(r.Context(), tid, req.Name, req.Type, req.Payload, principalSubject(r))
+	if h.denySetLocked(w, r, req.Locked, false) {
+		return
+	}
+
+	cred, err := h.Secrets.CreateLocked(r.Context(), tid, req.Name, req.Type, req.Payload, principalSubject(r), req.Locked)
 	if err != nil {
+		if req.Locked && errors.Is(err, store.ErrConflict) {
+			// The name is taken, possibly by the tenant itself. Never take
+			// it over silently: the caller decides, with an explicit PUT.
+			httpx.Conflict(w, fmt.Sprintf("a credential named %q already exists in this tenant; to take it over, PUT /api/v1/credentials/%s with \"locked\": true and a new payload", req.Name, req.Name))
+			return
+		}
 		writeStoreErr(w, r, "create credential", err)
 		return
 	}
@@ -228,7 +253,12 @@ func (h Credentials) Get(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, newCredentialView(cred, usage[cred.Name]))
 }
 
-// Rotate handles PUT /api/v1/credentials/{name}.
+// Rotate handles PUT /api/v1/credentials/{name}. With both payload and
+// locked, a lock is applied before the new payload is written and an
+// unlock after it, so the row is never unlocked while holding a value the
+// platform set. The early 403s are friendly answers; the store writes carry
+// the lock check themselves, so a lock set by a platform admin between
+// this read and the write is never bypassed.
 func (h Credentials) Rotate(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -240,13 +270,41 @@ func (h Credentials) Rotate(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &req) {
 		return
 	}
-	if err := validatePayload(req.Payload); err != nil {
-		httpx.ValidationError(w, err.Error())
+	existing, err := h.Store.Credentials().Get(r.Context(), tid, name)
+	if err != nil {
+		writeStoreErr(w, r, "rotate credential", err)
 		return
 	}
-
-	if err := h.Secrets.Rotate(r.Context(), tid, name, req.Payload); err != nil {
-		writeStoreErr(w, r, "rotate credential", err)
+	if h.denyLockedChange(w, r, existing.Locked) {
+		return
+	}
+	if req.Locked != nil && h.denySetLocked(w, r, *req.Locked, existing.Locked) {
+		return
+	}
+	rotate := req.Payload != nil || req.Locked == nil
+	if rotate {
+		if err := validatePayload(req.Payload); err != nil {
+			httpx.ValidationError(w, err.Error())
+			return
+		}
+	}
+	setLocked := func(locked bool) bool {
+		if err := h.Secrets.SetLocked(r.Context(), tid, name, locked); err != nil {
+			writeStoreErr(w, r, "set credential locked", err)
+			return false
+		}
+		return true
+	}
+	if req.Locked != nil && *req.Locked && !existing.Locked && !setLocked(true) {
+		return
+	}
+	if rotate {
+		if err := h.Secrets.Rotate(r.Context(), tid, name, req.Payload, store.LockGuard(h.isPlatformAdmin(r))); err != nil {
+			writeStoreErr(w, r, "rotate credential", err)
+			return
+		}
+	}
+	if req.Locked != nil && !*req.Locked && existing.Locked && !setLocked(false) {
 		return
 	}
 
@@ -271,7 +329,16 @@ func (h Credentials) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	name := chi.URLParam(r, "name")
 
-	if err := h.Secrets.Delete(r.Context(), tid, name); err != nil {
+	existing, err := h.Store.Credentials().Get(r.Context(), tid, name)
+	if err != nil {
+		writeStoreErr(w, r, "delete credential", err)
+		return
+	}
+	if h.denyLockedChange(w, r, existing.Locked) {
+		return
+	}
+
+	if err := h.Secrets.Delete(r.Context(), tid, name, store.LockGuard(h.isPlatformAdmin(r))); err != nil {
 		writeStoreErr(w, r, "delete credential", err)
 		return
 	}

@@ -101,9 +101,16 @@ export function SourcesTab({ createOpen, onCreateOpenChange }: SourcesTabProps) 
       header: 'Name',
       size: 200,
       cell: ({ row }) => (
-        <span className="truncate font-mono font-semibold text-foreground">
-          {row.original.name}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="truncate font-mono font-semibold text-foreground">
+            {row.original.name}
+          </span>
+          {row.original.locked ? (
+            <span className="inline-flex h-5 shrink-0 items-center rounded-r-pill border border-border bg-bg-subtle px-2 text-[11px] text-text-subtle">
+              Platform-managed
+            </span>
+          ) : null}
+        </div>
       ),
     },
     {
@@ -196,7 +203,12 @@ export function SourcesTab({ createOpen, onCreateOpenChange }: SourcesTabProps) 
   ]
 
   const rowActions: RowAction<CredentialSource>[] = [
-    { label: 'Edit', icon: <Pencil aria-hidden="true" />, onClick: setEditTarget },
+    {
+      label: 'Edit',
+      icon: <Pencil aria-hidden="true" />,
+      hidden: (s) => s.locked === true,
+      onClick: setEditTarget,
+    },
     {
       label: 'Test connection',
       icon: <Plug aria-hidden="true" />,
@@ -205,14 +217,14 @@ export function SourcesTab({ createOpen, onCreateOpenChange }: SourcesTabProps) 
     {
       label: 'Disable',
       icon: <Power aria-hidden="true" />,
-      hidden: (s) => !s.enabled,
+      hidden: (s) => s.locked === true || !s.enabled,
       disabled: () => updateSource.isPending,
       onClick: (s) => toggleEnabled(s, false),
     },
     {
       label: 'Enable',
       icon: <Power aria-hidden="true" />,
-      hidden: (s) => s.enabled,
+      hidden: (s) => s.locked === true || s.enabled,
       disabled: () => updateSource.isPending,
       onClick: (s) => toggleEnabled(s, true),
     },
@@ -221,6 +233,7 @@ export function SourcesTab({ createOpen, onCreateOpenChange }: SourcesTabProps) 
       icon: <Trash2 aria-hidden="true" />,
       variant: 'destructive',
       separatorBefore: true,
+      hidden: (s) => s.locked === true,
       onClick: (s) => {
         setDeleteError(null)
         setDeleteTarget(s)

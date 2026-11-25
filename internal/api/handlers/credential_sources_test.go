@@ -11,6 +11,7 @@ import (
 
 	dataplaneheaders "github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/headers"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/secrets"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
 // newSourceTestDeps is newTestDeps plus the external_service provider and
@@ -170,7 +171,7 @@ func TestCredentialSources_Test(t *testing.T) {
 	if res := test(); res.OK || !strings.Contains(res.Error, "401") {
 		t.Errorf("test with a rejected token = %+v", res)
 	}
-	if err := d.Secrets.Rotate(context.Background(), "tenant-a", "vault-auth", map[string]string{"token": "gw-token"}); err != nil {
+	if err := d.Secrets.Rotate(context.Background(), "tenant-a", "vault-auth", map[string]string{"token": "gw-token"}, store.UnlockedOnly); err != nil {
 		t.Fatal(err)
 	}
 	if res := test(); !res.OK || res.Error != "" {

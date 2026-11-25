@@ -392,6 +392,26 @@ func TestMCPCatalog_Add_ReusesOnlyItsOwnUnusedCredential(t *testing.T) {
 	}
 }
 
+func TestMCPCatalog_Add_NeverRotatesALockedCredential(t *testing.T) {
+	d, _ := catalogFixture(t)
+	ctx := context.Background()
+
+	// An unused platform-locked credential of the catalog's own type with
+	// the default name must be skipped like a hand-made one, not rotated.
+	if _, err := d.Secrets.CreateLocked(ctx, "tenant-a", "mcp-tok", catalogCredentialType, map[string]string{"authorization": "Bearer platform"}, "platform", true); err != nil {
+		t.Fatal(err)
+	}
+	decodeAdd(t, doAdd(d, "tenant-a", "tok", `{"fields":{"token":"tenant"}}`))
+	locked, _ := d.Secrets.Get(store.WithLockedAccess(ctx, true), "tenant-a", "mcp-tok")
+	if locked["authorization"] != "Bearer platform" {
+		t.Errorf("locked credential was rotated: %v", locked)
+	}
+	next, err := d.Secrets.Get(ctx, "tenant-a", "mcp-tok-2")
+	if err != nil || next["authorization"] != "Bearer tenant" {
+		t.Errorf("mcp-tok-2 = %v (err %v)", next, err)
+	}
+}
+
 func TestMCPCatalog_Add_ReportsProbeAndDiscovery(t *testing.T) {
 	d, _ := catalogFixture(t)
 	fs := d.Store.(*fakeStore)

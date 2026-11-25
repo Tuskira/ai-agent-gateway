@@ -46,6 +46,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("Connectors", func(t *testing.T) { testConnectors(t, newStore(t)) })
 	t.Run("ConnectorToolPrefix", func(t *testing.T) { testConnectorToolPrefix(t, newStore(t)) })
 	t.Run("CredentialSources", func(t *testing.T) { testCredentialSources(t, newStore(t)) })
+	t.Run("PlatformLocked", func(t *testing.T) { testPlatformLocked(t, newStore(t)) })
 	t.Run("MCPCatalog", func(t *testing.T) { testMCPCatalog(t, newStore(t)) })
 	t.Run("AgentProfiles", func(t *testing.T) { testAgentProfiles(t, newStore(t)) })
 	t.Run("ToolCache", func(t *testing.T) { testToolCache(t, newStore(t)) })
@@ -559,7 +560,7 @@ func testCredentials(t *testing.T, s store.Store) {
 	}
 
 	// Rotate updates ciphertext/nonce/key_id and sets RotatedAt.
-	if err := s.Credentials().Rotate(ctx, tenantA.ID, name, []byte("new-cipher"), []byte("new-nonce"), "k2", []string{"client_id", "client_secret"}); err != nil {
+	if err := s.Credentials().Rotate(ctx, tenantA.ID, name, []byte("new-cipher"), []byte("new-nonce"), "k2", []string{"client_id", "client_secret"}, store.UnlockedOnly); err != nil {
 		t.Fatalf("Rotate: %v", err)
 	}
 	got, err = s.Credentials().Get(ctx, tenantA.ID, name)
@@ -571,13 +572,13 @@ func testCredentials(t *testing.T, s store.Store) {
 	}
 
 	// Delete removes it.
-	if err := s.Credentials().Delete(ctx, tenantA.ID, name); err != nil {
+	if err := s.Credentials().Delete(ctx, tenantA.ID, name, store.UnlockedOnly); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := s.Credentials().Get(ctx, tenantA.ID, name); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Get after delete error = %v, want ErrNotFound", err)
 	}
-	if err := s.Credentials().Delete(ctx, tenantA.ID, name); !errors.Is(err, store.ErrNotFound) {
+	if err := s.Credentials().Delete(ctx, tenantA.ID, name, store.UnlockedOnly); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Delete(already deleted) error = %v, want ErrNotFound", err)
 	}
 }
@@ -772,13 +773,13 @@ func testCredentialSources(t *testing.T, s store.Store) {
 	if list, err := cs.List(ctx, tenantB.ID); err != nil || len(list) != 0 {
 		t.Errorf("List(tenantB) = %v, %v; want empty", list, err)
 	}
-	if err := cs.SoftDelete(ctx, tenantB.ID, src.ID); !errors.Is(err, store.ErrNotFound) {
+	if err := cs.SoftDelete(ctx, tenantB.ID, src.ID, store.UnlockedOnly); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("SoftDelete(tenantB) error = %v, want ErrNotFound", err)
 	}
 	cross := *byID
 	cross.TenantID = tenantB.ID
 	cross.Name = unique("hijack")
-	if err := cs.Update(ctx, &cross); !errors.Is(err, store.ErrNotFound) {
+	if err := cs.Update(ctx, &cross, store.UnlockedOnly); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Update(tenantB) error = %v, want ErrNotFound", err)
 	}
 
@@ -810,7 +811,7 @@ func testCredentialSources(t *testing.T, s store.Store) {
 	src.Config = map[string]any{"url": "https://creds2.example.com", "auth_credential": "vault-auth"}
 	src.Enabled = false
 	src.Provider = "something_else"
-	if err := cs.Update(ctx, src); err != nil {
+	if err := cs.Update(ctx, src, store.UnlockedOnly); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	byID, err = cs.Get(ctx, tenantA.ID, src.ID)
@@ -824,7 +825,7 @@ func testCredentialSources(t *testing.T, s store.Store) {
 		t.Errorf("Update changed Provider to %q; it is immutable", byID.Provider)
 	}
 	src.Name = second.Name
-	if err := cs.Update(ctx, src); !errors.Is(err, store.ErrConflict) {
+	if err := cs.Update(ctx, src, store.UnlockedOnly); !errors.Is(err, store.ErrConflict) {
 		t.Errorf("Update(colliding name) error = %v, want ErrConflict", err)
 	}
 	src.Name = newName
@@ -838,7 +839,7 @@ func testCredentialSources(t *testing.T, s store.Store) {
 	}
 
 	// SoftDelete hides the row and frees its name.
-	if err := cs.SoftDelete(ctx, tenantA.ID, src.ID); err != nil {
+	if err := cs.SoftDelete(ctx, tenantA.ID, src.ID, store.UnlockedOnly); err != nil {
 		t.Fatalf("SoftDelete: %v", err)
 	}
 	if _, err := cs.Get(ctx, tenantA.ID, src.ID); !errors.Is(err, store.ErrNotFound) {
@@ -847,7 +848,7 @@ func testCredentialSources(t *testing.T, s store.Store) {
 	if _, err := cs.GetByName(ctx, tenantA.ID, newName); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetByName after SoftDelete error = %v, want ErrNotFound", err)
 	}
-	if err := cs.SoftDelete(ctx, tenantA.ID, src.ID); !errors.Is(err, store.ErrNotFound) {
+	if err := cs.SoftDelete(ctx, tenantA.ID, src.ID, store.UnlockedOnly); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("second SoftDelete error = %v, want ErrNotFound", err)
 	}
 	list, _ = cs.List(ctx, tenantA.ID)
@@ -2809,5 +2810,216 @@ func testPingMigrate(t *testing.T, s store.Store) {
 	}
 	if err := s.Ping(ctx); err != nil {
 		t.Fatalf("Ping after re-Migrate: %v", err)
+	}
+}
+
+// testPlatformLocked covers the locked flag on credentials and credential
+// sources: default false, persisted by Create, flipped by SetLocked (a
+// credential) or Update (a source), returned by Get and List, and kept
+// through Rotate / source Update.
+func testPlatformLocked(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	tenant := mustCreateTenant(t, ctx, s, "locked-a")
+	other := mustCreateTenant(t, ctx, s, "locked-b")
+
+	plain := &store.Credential{TenantID: tenant.ID, Name: unique("plain"), Type: "env", Ciphertext: []byte("c"), Nonce: []byte("n"), KeyID: "k1"}
+	if err := s.Credentials().Create(ctx, plain); err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	got, err := s.Credentials().Get(ctx, tenant.ID, plain.Name)
+	if err != nil || got.Locked {
+		t.Fatalf("new credential Locked = %v (err %v), want false by default", got != nil && got.Locked, err)
+	}
+
+	locked := &store.Credential{TenantID: tenant.ID, Name: unique("locked"), Type: "env", Ciphertext: []byte("c"), Nonce: []byte("n"), KeyID: "k1", Locked: true}
+	if err := s.Credentials().Create(ctx, locked); err != nil {
+		t.Fatalf("create locked credential: %v", err)
+	}
+	if got, err = s.Credentials().Get(ctx, tenant.ID, locked.Name); err != nil || !got.Locked {
+		t.Fatalf("Create(Locked) then Get: locked = %v, err %v", got != nil && got.Locked, err)
+	}
+	list, err := s.Credentials().List(ctx, tenant.ID)
+	if err != nil {
+		t.Fatalf("list credentials: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, c := range list {
+		seen[c.Name] = c.Locked
+	}
+	if v, ok := seen[locked.Name]; !ok || !v {
+		t.Errorf("List: locked credential locked = %v (present %v), want true", v, ok)
+	}
+	if v, ok := seen[plain.Name]; !ok || v {
+		t.Errorf("List: plain credential locked = %v (present %v), want false", v, ok)
+	}
+
+	// A stale read: the caller saw the row unlocked, then a platform admin
+	// locked it. Guarded writes must refuse and leave the row as it was.
+	stale, err := s.Credentials().Get(ctx, tenant.ID, plain.Name)
+	if err != nil || stale.Locked {
+		t.Fatalf("Get before lock: locked=%v err=%v", stale != nil && stale.Locked, err)
+	}
+	if err := s.Credentials().SetLocked(ctx, tenant.ID, plain.Name, true); err != nil {
+		t.Fatalf("SetLocked(true): %v", err)
+	}
+	if err := s.Credentials().Rotate(ctx, tenant.ID, plain.Name, []byte("evil"), []byte("n2"), "k2", []string{"a"}, store.UnlockedOnly); !errors.Is(err, store.ErrLocked) {
+		t.Errorf("Rotate(UnlockedOnly) on a locked row = %v, want ErrLocked", err)
+	}
+	if err := s.Credentials().Delete(ctx, tenant.ID, plain.Name, store.UnlockedOnly); !errors.Is(err, store.ErrLocked) {
+		t.Errorf("Delete(UnlockedOnly) on a locked row = %v, want ErrLocked", err)
+	}
+	if got, err = s.Credentials().Get(ctx, tenant.ID, plain.Name); err != nil || !got.Locked || string(got.Ciphertext) != "c" || got.KeyID != "k1" {
+		t.Fatalf("locked row after refused writes = %+v, %v; want unchanged and locked", got, err)
+	}
+	// AllowLocked (platform admin, operator rekey) writes it and keeps the flag.
+	if err := s.Credentials().Rotate(ctx, tenant.ID, plain.Name, []byte("c2"), []byte("n2"), "k2", []string{"a"}, store.AllowLocked); err != nil {
+		t.Fatalf("Rotate(AllowLocked): %v", err)
+	}
+	if got, _ = s.Credentials().Get(ctx, tenant.ID, plain.Name); !got.Locked || string(got.Ciphertext) != "c2" {
+		t.Errorf("after Rotate(AllowLocked) locked=%v ciphertext=%q, want true/c2", got.Locked, got.Ciphertext)
+	}
+	if err := s.Credentials().Rotate(ctx, tenant.ID, unique("missing"), []byte("c"), []byte("n"), "k", nil, store.UnlockedOnly); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Rotate(missing) = %v, want ErrNotFound", err)
+	}
+	if err := s.Credentials().Delete(ctx, tenant.ID, unique("missing"), store.UnlockedOnly); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Delete(missing) = %v, want ErrNotFound", err)
+	}
+	if err := s.Credentials().SetLocked(ctx, tenant.ID, plain.Name, false); err != nil {
+		t.Fatalf("SetLocked(false): %v", err)
+	}
+	if got, _ = s.Credentials().Get(ctx, tenant.ID, plain.Name); got.Locked {
+		t.Error("SetLocked(false) did not clear the flag")
+	}
+	if err := s.Credentials().Rotate(ctx, tenant.ID, plain.Name, []byte("c3"), []byte("n3"), "k2", []string{"a"}, store.UnlockedOnly); err != nil {
+		t.Errorf("Rotate(UnlockedOnly) on an unlocked row: %v", err)
+	}
+	if err := s.Credentials().Delete(ctx, tenant.ID, locked.Name, store.AllowLocked); err != nil {
+		t.Errorf("Delete(AllowLocked) on a locked row: %v", err)
+	}
+	if _, err := s.Credentials().Get(ctx, tenant.ID, locked.Name); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Get after Delete(AllowLocked) = %v, want ErrNotFound", err)
+	}
+	if err := s.Credentials().SetLocked(ctx, other.ID, plain.Name, true); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetLocked on another tenant's credential = %v, want ErrNotFound", err)
+	}
+	if got, _ = s.Credentials().Get(ctx, tenant.ID, plain.Name); got.Locked {
+		t.Error("cross-tenant SetLocked changed the row")
+	}
+	if err := s.Credentials().SetLocked(ctx, tenant.ID, unique("missing"), true); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetLocked(missing) = %v, want ErrNotFound", err)
+	}
+
+	cs := s.CredentialSources()
+	src := &store.CredentialSource{TenantID: tenant.ID, Name: unique("src"), Provider: "external_service", Enabled: true, Locked: true}
+	if err := cs.Create(ctx, src); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	byID, err := cs.Get(ctx, tenant.ID, src.ID)
+	if err != nil || !byID.Locked {
+		t.Fatalf("source Get: locked = %v, err %v, want true", byID != nil && byID.Locked, err)
+	}
+	if byName, err := cs.GetByName(ctx, tenant.ID, src.Name); err != nil || !byName.Locked {
+		t.Errorf("source GetByName: locked = %v, err %v, want true", byName != nil && byName.Locked, err)
+	}
+	srcs, err := cs.List(ctx, tenant.ID)
+	if err != nil {
+		t.Fatalf("list sources: %v", err)
+	}
+	found := false
+	for _, x := range srcs {
+		if x.ID == src.ID {
+			found = true
+			if !x.Locked {
+				t.Error("source List: locked = false, want true")
+			}
+		}
+	}
+	if !found {
+		t.Error("source List missing the locked source")
+	}
+	// A stale read of an unlocked source, then a platform lock: the
+	// caller's Update (which still carries Locked=false) must neither
+	// apply nor clear the lock, and SoftDelete must refuse.
+	plainSrc := &store.CredentialSource{TenantID: tenant.ID, Name: unique("src-plain"), Provider: "external_service", Config: map[string]any{"url": "https://a.example"}, Enabled: true}
+	if err := cs.Create(ctx, plainSrc); err != nil {
+		t.Fatalf("create unlocked source: %v", err)
+	}
+	staleSrc, err := cs.Get(ctx, tenant.ID, plainSrc.ID)
+	if err != nil || staleSrc.Locked {
+		t.Fatalf("source Get before lock: %+v, %v", staleSrc, err)
+	}
+	if err := cs.SetLocked(ctx, tenant.ID, plainSrc.ID, true); err != nil {
+		t.Fatalf("source SetLocked(true): %v", err)
+	}
+	staleSrc.Config = map[string]any{"url": "https://evil.example"}
+	staleSrc.Enabled = false
+	if err := cs.Update(ctx, staleSrc, store.UnlockedOnly); !errors.Is(err, store.ErrLocked) {
+		t.Errorf("source Update(UnlockedOnly) on a locked row = %v, want ErrLocked", err)
+	}
+	if err := cs.SoftDelete(ctx, tenant.ID, plainSrc.ID, store.UnlockedOnly); !errors.Is(err, store.ErrLocked) {
+		t.Errorf("source SoftDelete(UnlockedOnly) on a locked row = %v, want ErrLocked", err)
+	}
+	if byID, err = cs.Get(ctx, tenant.ID, plainSrc.ID); err != nil || !byID.Locked || !byID.Enabled || byID.Config["url"] != "https://a.example" {
+		t.Fatalf("locked source after refused writes = %+v, %v; want unchanged and locked", byID, err)
+	}
+	// Update never writes Locked, even with AllowLocked and Locked=false.
+	staleSrc.Locked = false
+	if err := cs.Update(ctx, staleSrc, store.AllowLocked); err != nil {
+		t.Fatalf("source Update(AllowLocked): %v", err)
+	}
+	if byID, _ = cs.Get(ctx, tenant.ID, plainSrc.ID); !byID.Locked || byID.Enabled || byID.Config["url"] != "https://evil.example" {
+		t.Errorf("after Update(AllowLocked) locked=%v enabled=%v url=%v, want true/false/evil", byID.Locked, byID.Enabled, byID.Config["url"])
+	}
+	if err := cs.SetLocked(ctx, tenant.ID, plainSrc.ID, false); err != nil {
+		t.Fatalf("source SetLocked(false): %v", err)
+	}
+	if byID, _ = cs.Get(ctx, tenant.ID, plainSrc.ID); byID.Locked {
+		t.Error("source SetLocked(false) did not clear the flag")
+	}
+	if err := cs.SetLocked(ctx, other.ID, plainSrc.ID, true); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("source SetLocked on another tenant's row = %v, want ErrNotFound", err)
+	}
+	if err := cs.SoftDelete(ctx, tenant.ID, plainSrc.ID, store.UnlockedOnly); err != nil {
+		t.Fatalf("source SoftDelete(UnlockedOnly) on an unlocked row: %v", err)
+	}
+	if err := cs.SetLocked(ctx, tenant.ID, plainSrc.ID, true); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("source SetLocked on a soft-deleted row = %v, want ErrNotFound", err)
+	}
+	if err := cs.SoftDelete(ctx, tenant.ID, src.ID, store.AllowLocked); err != nil {
+		t.Errorf("source SoftDelete(AllowLocked) on a locked row: %v", err)
+	}
+	// UpdateLocked writes the config and the lock in one go, whatever the
+	// row's lock was, on live rows of the tenant only.
+	takeover := &store.CredentialSource{TenantID: tenant.ID, Name: unique("src-takeover"), Provider: "external_service", Config: map[string]any{"url": "https://tenant.example"}, Enabled: false}
+	if err := cs.Create(ctx, takeover); err != nil {
+		t.Fatalf("create source to take over: %v", err)
+	}
+	cross := *takeover
+	cross.TenantID = other.ID
+	if err := cs.UpdateLocked(ctx, &cross); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("UpdateLocked on another tenant's row = %v, want ErrNotFound", err)
+	}
+	takeover.Config = map[string]any{"url": "https://platform.example"}
+	takeover.Enabled = true
+	if err := cs.UpdateLocked(ctx, takeover); err != nil {
+		t.Fatalf("UpdateLocked: %v", err)
+	}
+	if byID, err = cs.Get(ctx, tenant.ID, takeover.ID); err != nil || !byID.Locked || !byID.Enabled || byID.Config["url"] != "https://platform.example" {
+		t.Errorf("after UpdateLocked = %+v, %v; want locked, enabled, platform url", byID, err)
+	}
+	if err := cs.UpdateLocked(ctx, takeover); err != nil {
+		t.Errorf("UpdateLocked on an already locked row: %v", err)
+	}
+	if err := cs.SoftDelete(ctx, tenant.ID, takeover.ID, store.AllowLocked); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.UpdateLocked(ctx, takeover); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("UpdateLocked on a soft-deleted row = %v, want ErrNotFound", err)
+	}
+
+	// A soft-deleted name is free again, also for a locked source.
+	reuse := &store.CredentialSource{TenantID: tenant.ID, Name: plainSrc.Name, Provider: "external_service", Enabled: true, Locked: true}
+	if err := cs.Create(ctx, reuse); err != nil {
+		t.Errorf("create locked source on a soft-deleted name: %v", err)
 	}
 }

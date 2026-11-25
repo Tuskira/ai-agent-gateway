@@ -32,7 +32,47 @@ var (
 	// uniqueness constraint (e.g. a duplicate tenant slug, API key hash,
 	// or (tenant, name)/(tenant, slug) pair).
 	ErrConflict = errors.New("store: conflict")
+
+	// ErrLocked is returned when a write that may not touch platform-locked
+	// rows (LockGuard UnlockedOnly) targets a row that is locked, and,
+	// wrapped, when a locked credential is read for a caller that has no
+	// locked access (see WithLockedAccess). The row is never changed.
+	ErrLocked = errors.New("store: locked")
 )
+
+// LockGuard says whether a credential or credential source write may
+// change a platform-locked row. The check is part of the write itself (for
+// Postgres, the UPDATE/DELETE's WHERE clause), so a lock set between a
+// caller's read and its write is never bypassed or cleared.
+type LockGuard bool
+
+const (
+	// UnlockedOnly refuses the write with ErrLocked when the row is
+	// locked. It is the zero value: callers without platform.admin.
+	UnlockedOnly LockGuard = false
+	// AllowLocked writes whether or not the row is locked: platform.admin
+	// callers and operator tooling (master-key rekey).
+	AllowLocked LockGuard = true
+)
+
+type lockedAccessKey struct{}
+
+// WithLockedAccess returns ctx saying whether a read on its behalf may
+// resolve a platform-locked credential's secret value. Credential readers
+// (internal/secrets.Service) refuse a locked credential with ErrLocked
+// unless ctx carries allowed=true. Only configuration a platform admin
+// controls may set it: a locked credential source, a header a platform
+// admin saved, a platform-wide model, or a request made by a platform
+// admin. Passing false explicitly drops any allowance ctx carried.
+func WithLockedAccess(ctx context.Context, allowed bool) context.Context {
+	return context.WithValue(ctx, lockedAccessKey{}, allowed)
+}
+
+// LockedAccess reports whether ctx allows resolving a locked credential.
+func LockedAccess(ctx context.Context) bool {
+	v, _ := ctx.Value(lockedAccessKey{}).(bool)
+	return v
+}
 
 // ---------------------------------------------------------------------------
 // Models
@@ -252,6 +292,12 @@ type Credential struct {
 
 	FieldNames []string // field names only, for the UI; never values
 
+	// Locked marks a platform-managed credential: a caller without
+	// platform.admin cannot rotate, replace or delete it, and its value is
+	// read only for a ctx with WithLockedAccess (configuration a platform
+	// admin controls), never for configuration a tenant admin wrote.
+	Locked bool
+
 	CreatedBy string
 	CreatedAt time.Time
 	RotatedAt *time.Time
@@ -269,6 +315,10 @@ type CredentialSource struct {
 	Provider string
 	Config   map[string]any
 	Enabled  bool
+	// Locked marks a platform-managed source: connector headers may use
+	// it, but only platform.admin may edit, disable, re-point or delete it.
+	// Only a locked source may authenticate with a locked credential.
+	Locked bool
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -746,9 +796,16 @@ type CredentialStore interface {
 	Get(ctx context.Context, tenantID, name string) (*Credential, error)
 	List(ctx context.Context, tenantID string) ([]*Credential, error)
 	// Rotate replaces the encrypted payload (and the field names it
-	// contains) and sets RotatedAt.
-	Rotate(ctx context.Context, tenantID, name string, ciphertext, nonce []byte, keyID string, fieldNames []string) error
-	Delete(ctx context.Context, tenantID, name string) error
+	// contains) and sets RotatedAt. It never changes Locked. With guard
+	// UnlockedOnly a locked row is left as is and ErrLocked returned.
+	Rotate(ctx context.Context, tenantID, name string, ciphertext, nonce []byte, keyID string, fieldNames []string, guard LockGuard) error
+	// Delete removes the row; with guard UnlockedOnly a locked row is
+	// kept and ErrLocked returned.
+	Delete(ctx context.Context, tenantID, name string, guard LockGuard) error
+	// SetLocked sets the platform-managed flag (ErrNotFound if the
+	// credential does not exist). Create persists Credential.Locked; no
+	// other method writes it.
+	SetLocked(ctx context.Context, tenantID, name string, locked bool) error
 }
 
 // CredentialSourceStore manages CredentialSource rows. Names are unique
@@ -759,9 +816,24 @@ type CredentialSourceStore interface {
 	Get(ctx context.Context, tenantID, id string) (*CredentialSource, error)
 	GetByName(ctx context.Context, tenantID, name string) (*CredentialSource, error)
 	List(ctx context.Context, tenantID string) ([]*CredentialSource, error)
-	// Update writes Name, Config and Enabled; Provider is immutable.
-	Update(ctx context.Context, s *CredentialSource) error
-	SoftDelete(ctx context.Context, tenantID, id string) error
+	// Update writes Name, Config and Enabled; Provider is immutable and
+	// Locked is never written (see SetLocked). With guard UnlockedOnly a
+	// locked row is left as is and ErrLocked returned.
+	Update(ctx context.Context, s *CredentialSource, guard LockGuard) error
+	// SoftDelete hides the row; with guard UnlockedOnly a locked row is
+	// kept and ErrLocked returned.
+	SoftDelete(ctx context.Context, tenantID, id string, guard LockGuard) error
+	// SetLocked sets the platform-managed flag of a live source
+	// (ErrNotFound if there is none). Create persists
+	// CredentialSource.Locked; apart from UpdateLocked no other method
+	// writes it.
+	SetLocked(ctx context.Context, tenantID, id string, locked bool) error
+	// UpdateLocked writes Name, Config and Enabled and sets locked=true in
+	// one statement, whatever the row's lock was (a platform admin taking a
+	// source over). No reader ever sees the source locked with the config
+	// it had before, so a locked source never authenticates to a URL the
+	// tenant chose.
+	UpdateLocked(ctx context.Context, s *CredentialSource) error
 }
 
 // ConnectorStore manages Connector rows. SoftDelete hides a row from Get/

@@ -81,6 +81,11 @@ export default function CredentialsPage() {
           <span className="inline-flex h-5 shrink-0 items-center rounded-r-pill border border-border bg-bg-subtle px-2 text-[11px] text-text-subtle">
             Secret store
           </span>
+          {row.original.locked ? (
+            <span className="inline-flex h-5 shrink-0 items-center rounded-r-pill border border-border bg-bg-subtle px-2 text-[11px] text-text-subtle">
+              Platform-managed
+            </span>
+          ) : null}
         </div>
       ),
     },
@@ -151,14 +156,21 @@ export default function CredentialsPage() {
   // Edit and Rotate value both open the rotate dialog: a credential's value is
   // the only thing about it that can change.
   const rowActions: RowAction<Credential>[] = [
-    { label: 'Edit', icon: <Pencil aria-hidden="true" />, onClick: setRotateTarget },
+    {
+      label: 'Edit',
+      icon: <Pencil aria-hidden="true" />,
+      hidden: (c) => c.locked === true,
+      onClick: setRotateTarget,
+    },
     {
       label: 'Rotate value',
       icon: <RefreshCw aria-hidden="true" />,
+      hidden: (c) => c.locked === true,
       onClick: setRotateTarget,
     },
     {
       label: 'Delete',
+      hidden: (c) => c.locked === true,
       icon: <Trash2 aria-hidden="true" />,
       variant: 'destructive',
       separatorBefore: true,

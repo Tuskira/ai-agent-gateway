@@ -234,7 +234,7 @@ func (o *Orchestrator) handleResourcesUnsubscribe(ctx context.Context, in Reques
 		defer o.upstream.Release(sess, connectorID, subscriptionNeed(uri))
 		conn, _ = o.deps.Connectors.Get(ctx, in.Principal.TenantID, connectorID)
 	} else {
-		conn, _ = o.deps.Connectors.GetBySlug(ctx, in.Principal.TenantID, slug)
+		conn, _ = o.deps.Router.Lookup(ctx, in.Principal.TenantID, slug)
 	}
 	if conn == nil {
 		return Result{Response: mcp.NewSuccessResponse(in.JSONRPC.ID, struct{}{})}

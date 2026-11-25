@@ -256,12 +256,17 @@ func (h Analytics) MCPsUsage(w http.ResponseWriter, r *http.Request) {
 		writeAnalyticsErr(w, r, "compute mcp usage", err)
 		return
 	}
-	slugs := map[string]string{} // lowercased slug or name -> canonical slug
+	slugs := map[string]string{} // lowercased slug, name or tool prefix -> canonical slug
 	if h.Store != nil && len(usage) > 0 {
 		if conns, err := h.Store.Connectors().List(r.Context(), tid); err == nil {
 			for _, c := range conns {
 				slugs[strings.ToLower(c.Name)] = c.Slug
 				slugs[strings.ToLower(c.Slug)] = c.Slug
+				if c.ToolPrefix != "" {
+					// Tools of a connector with a tool_prefix are observed as
+					// "<prefix>__<tool>".
+					slugs[strings.ToLower(c.ToolPrefix)] = c.Slug
+				}
 			}
 		}
 	}

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -15,6 +17,7 @@ import (
 	applog "github.com/Tuskira/tusk-ai-secured-gateway/internal/log"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/netguard"
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/ops"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
@@ -36,6 +39,29 @@ const maxConnectorSlugLen = 100
 // Slug) isn't restricted to lowercase.
 const reservedConnectorIdentifier = "gateway"
 
+const maxConnectorToolPrefixLen = 100
+
+// toolPrefixRE: dot/dash-separated alphanumeric words joined by single
+// underscores. A single underscore only, so "__" (the separator between a
+// connector's namespace and a tool name) can never appear in a prefix, and
+// no "/" or space either.
+var toolPrefixRE = regexp.MustCompile(`^[A-Za-z0-9.-]+(_[A-Za-z0-9.-]+)*$`)
+
+// validateToolPrefix checks a non-empty tool_prefix. An empty one means
+// "no prefix" and is not validated.
+func validateToolPrefix(prefix string) error {
+	if len(prefix) > maxConnectorToolPrefixLen {
+		return fmt.Errorf("tool_prefix must be at most %d characters", maxConnectorToolPrefixLen)
+	}
+	if !toolPrefixRE.MatchString(prefix) {
+		return fmt.Errorf("tool_prefix %q must be letters, digits, '.' and '-', with words joined by single underscores", prefix)
+	}
+	if isReservedConnectorIdentifier(prefix) {
+		return fmt.Errorf("tool_prefix %q is reserved for the gateway's own native tools", prefix)
+	}
+	return nil
+}
+
 func isReservedConnectorIdentifier(s string) bool {
 	return strings.EqualFold(strings.TrimSpace(s), reservedConnectorIdentifier)
 }
@@ -55,15 +81,23 @@ type connectorRequest struct {
 	// Slug, when non-empty, overrides the name-derived default. Must be
 	// lowercase [a-z0-9-]+ (see validateSlug) and unique per tenant.
 	Slug string `json:"slug,omitempty"`
+	// ToolPrefix, when set, is the namespace the connector's tools,
+	// prompts and resources are advertised and routed under instead of
+	// its slug (see validateToolPrefix). On update, nil keeps the stored
+	// value and "" clears it.
+	ToolPrefix *string `json:"tool_prefix,omitempty"`
 }
 
 type connectorView struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	Endpoint  string `json:"endpoint"`
-	TimeoutMS int    `json:"timeout_ms"`
-	Status    string `json:"status"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Slug     string `json:"slug"`
+	Endpoint string `json:"endpoint"`
+	// ToolPrefix is the namespace the connector's tools are advertised
+	// under instead of its slug; "" when unset.
+	ToolPrefix string `json:"tool_prefix"`
+	TimeoutMS  int    `json:"timeout_ms"`
+	Status     string `json:"status"`
 	// Capabilities is whatever the last successful health probe recorded
 	// from the backend's MCP initialize result: "tools"/"resources"/
 	// "prompts" -> bool, "protocol_version" -> string, "server_info" ->
@@ -91,6 +125,7 @@ func newConnectorView(c *store.Connector) connectorView {
 		ID:           c.ID,
 		Name:         c.Name,
 		Slug:         c.Slug,
+		ToolPrefix:   c.ToolPrefix,
 		Endpoint:     c.Endpoint,
 		TimeoutMS:    c.TimeoutMS,
 		Status:       c.Status,
@@ -283,6 +318,12 @@ func (h Connectors) validateAndBuild(ctx context.Context, req connectorRequest) 
 			return
 		}
 	}
+	if req.ToolPrefix != nil && *req.ToolPrefix != "" {
+		if verr := validateToolPrefix(*req.ToolPrefix); verr != nil {
+			err = verr
+			return
+		}
+	}
 	meta = req.Metadata
 	if meta == nil {
 		meta = map[string]any{}
@@ -376,6 +417,9 @@ func (h Connectors) Create(w http.ResponseWriter, r *http.Request) {
 		TimeoutMS: timeoutMS,
 		Metadata:  meta,
 	}
+	if req.ToolPrefix != nil {
+		c.ToolPrefix = *req.ToolPrefix
+	}
 	if err := h.Store.Connectors().Create(r.Context(), c); err != nil {
 		writeStoreErr(w, r, "create connector", err)
 		return
@@ -451,7 +495,7 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wasExempt := existing.RestrictExempt()
-	oldEndpoint, oldSlug := existing.Endpoint, existing.Slug
+	oldEndpoint, oldSlug, oldPrefix := existing.Endpoint, existing.Slug, existing.ToolPrefix
 	storedHeaders, _ := existing.Metadata["headers"].(map[string]any)
 	headersChanged := false
 	existing.Name = name
@@ -485,13 +529,16 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Slug != "" {
 		existing.Slug = req.Slug
 	}
+	if req.ToolPrefix != nil {
+		existing.ToolPrefix = *req.ToolPrefix
+	}
 	// metadata is replaced as a whole, so a body that leaves out a stored
 	// restrict_exempt true clears it: that is a change too. An exempt
 	// connector is one a contained key may still reach, so repointing it
 	// (a new endpoint or slug) or changing the headers it sends (its stored
 	// token goes with it) takes the same permission as setting the flag.
 	isExempt := existing.RestrictExempt()
-	rerouted := existing.Endpoint != oldEndpoint || existing.Slug != oldSlug || headersChanged
+	rerouted := existing.Endpoint != oldEndpoint || existing.Slug != oldSlug || existing.ToolPrefix != oldPrefix || headersChanged
 	if (isExempt != wasExempt || ((wasExempt || isExempt) && rerouted)) && !h.allowRestrictExemptChange(w, r) {
 		return
 	}
@@ -500,7 +547,48 @@ func (h Connectors) Update(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, r, "update connector", err)
 		return
 	}
+	if existing.ToolPrefix != oldPrefix {
+		h.toolNamesChanged(r.Context(), tid, existing)
+	}
 	httpx.WriteJSON(w, http.StatusOK, newConnectorView(existing))
+}
+
+// toolNamesRefreshTimeout bounds the re-discovery a tool_prefix change
+// triggers, so a slow or dead backend cannot hold the PUT.
+const toolNamesRefreshTimeout = 10 * time.Second
+
+// toolNamesChanged makes a changed tool_prefix take effect now: the
+// connector's cached tool rows carry the old namespace, so they are
+// dropped and rediscovered (a tenant's tools/list is served from the cache
+// once any connector of it is cached, so a dropped connector would
+// otherwise be missing from it until the next background refresh), the
+// tenant's cached profile resolutions are dropped (their grants were
+// resolved against the old namespace), and every open MCP stream is told
+// tools/list_changed. All best-effort: the update itself already
+// succeeded, and the cache and the profile enforcer expire on their own
+// TTLs. A disabled connector's rows are dropped but not rediscovered: its
+// backend is not dialled while it is off.
+func (h Connectors) toolNamesChanged(ctx context.Context, tenantID string, conn *store.Connector) {
+	connectorID := conn.ID
+	if h.CacheOps != nil {
+		if err := h.CacheOps.Invalidate(ctx, tenantID, connectorID); err != nil {
+			applog.From(ctx).Warn("invalidate tool cache after tool_prefix change failed", "connector_id", connectorID, "error", err)
+		} else if conn.Enabled() {
+			rctx, cancel := context.WithTimeout(ctx, toolNamesRefreshTimeout)
+			if _, err := h.CacheOps.Refresh(rctx, tenantID, connectorID); err != nil {
+				applog.From(ctx).Warn("refresh tool cache after tool_prefix change failed", "connector_id", connectorID, "error", err)
+			}
+			cancel()
+		}
+	}
+	if h.ProfileOps != nil {
+		if err := h.ProfileOps.InvalidateTenantProfiles(ctx, tenantID); err != nil {
+			applog.From(ctx).Warn("invalidate profiles after tool_prefix change failed", "connector_id", connectorID, "error", err)
+		}
+	}
+	if n, ok := h.CacheOps.(ops.ToolListNotifier); ok {
+		n.NotifyToolsListChanged(tenantID)
+	}
 }
 
 // Delete handles DELETE /api/v1/connectors/{id} (soft delete).

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -434,6 +435,10 @@ func (s *fakeConnectorStore) Create(_ context.Context, c *store.Connector) error
 		if existing.TenantID == c.TenantID && existing.Slug == c.Slug && existing.DeletedAt == nil {
 			return store.ErrConflict
 		}
+		if existing.TenantID == c.TenantID && existing.DeletedAt == nil && c.ToolPrefix != "" &&
+			(strings.EqualFold(existing.ToolPrefix, c.ToolPrefix) || strings.EqualFold(existing.Slug, c.ToolPrefix)) {
+			return store.ErrConflict
+		}
 	}
 	s.seq++
 	c.ID = fmt.Sprintf("connector-%d", s.seq)
@@ -464,6 +469,18 @@ func (s *fakeConnectorStore) GetBySlug(_ context.Context, tenantID, slug string)
 	defer s.mu.Unlock()
 	for _, c := range s.byID {
 		if c.TenantID == tenantID && c.Slug == slug && c.DeletedAt == nil {
+			cp := *c
+			return &cp, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (s *fakeConnectorStore) GetByToolPrefix(_ context.Context, tenantID, prefix string) (*store.Connector, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.byID {
+		if c.TenantID == tenantID && c.ToolPrefix != "" && strings.EqualFold(c.ToolPrefix, prefix) && c.DeletedAt == nil {
 			cp := *c
 			return &cp, nil
 		}

@@ -53,6 +53,18 @@ const schema = z.object({
     .trim()
     .min(1, 'Slug is required')
     .regex(/^[a-z0-9-]+$/, 'Lowercase letters, numbers, and dashes only'),
+  // Same rule as the gateway's: letters, digits, "." and "-", words joined
+  // by single underscores, at most 100 characters, and not "gateway".
+  toolPrefix: z
+    .string()
+    .trim()
+    .max(100, 'At most 100 characters')
+    .refine(
+      (v) => v === '' || /^[A-Za-z0-9.-]+(_[A-Za-z0-9.-]+)*$/.test(v),
+      'Letters, numbers, dots and dashes, with words joined by single underscores',
+    )
+    .refine((v) => v.toLowerCase() !== 'gateway', '"gateway" is reserved')
+    .optional(),
   description: z.string().optional(),
   endpoint: z.string().trim().min(1, 'Endpoint is required'),
   // Kept as a string in the form (native number inputs round-trip through
@@ -186,6 +198,7 @@ function ConnectorFormBody({
     defaultValues: {
       name: connector?.name ?? initialName,
       slug: connector?.slug ?? (initialName ? slugify(initialName) : ''),
+      toolPrefix: connector?.tool_prefix ?? '',
       description: connector?.description ?? '',
       endpoint: connector?.endpoint ?? '',
       timeoutMs: connector ? String(connector.timeout_ms) : undefined,
@@ -224,6 +237,8 @@ function ConnectorFormBody({
     const input = {
       name: values.name,
       slug: values.slug,
+      // An empty field clears the prefix on edit; on create it is left out.
+      tool_prefix: isEdit ? (values.toolPrefix ?? '') : values.toolPrefix || undefined,
       description: values.description || undefined,
       endpoint: values.endpoint,
       timeout_ms: values.timeoutMs ? Number(values.timeoutMs) : undefined,
@@ -315,6 +330,29 @@ function ConnectorFormBody({
                 )}
               />
             </div>
+            <FormField
+              control={form.control}
+              name="toolPrefix"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Tool prefix</FormLabel>
+                  <FormControl>
+                    <Input
+                      className="font-mono"
+                      placeholder="Optional, e.g. virustotal.threat_intel"
+                      {...field}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-text-subtle">
+                    Tools are advertised as{' '}
+                    <span className="font-mono">prefix__tool</span> instead of{' '}
+                    <span className="font-mono">slug__tool</span>. Leave empty to use the
+                    slug. Changing it changes the tool names agents and profiles see.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name="description"

@@ -316,11 +316,15 @@ func scrubOverridden(schema mcp.InputSchema, overrides map[string]any) mcp.Input
 	return out
 }
 
-// Qualifier is the prefix tools of conn are advertised under: the slug
-// (lowercase, [a-z0-9-]) so the qualified name stays a valid MCP tool
-// name even when the display name has spaces or capitals. Older rows
-// without a slug fall back to the name.
+// Qualifier is the prefix tools of conn are advertised under: its
+// tool_prefix when the operator set one, else the slug (lowercase,
+// [a-z0-9-]) so the qualified name stays a valid MCP tool name even when
+// the display name has spaces or capitals. Older rows without a slug fall
+// back to the name.
 func Qualifier(conn *store.Connector) string {
+	if conn.ToolPrefix != "" {
+		return conn.ToolPrefix
+	}
 	if conn.Slug != "" {
 		return conn.Slug
 	}

@@ -283,6 +283,14 @@ type Connector struct {
 	Slug     string
 	Endpoint string
 
+	// ToolPrefix, when set, is the namespace the connector's tools,
+	// prompts and resources are advertised and routed under instead of
+	// Slug. "" (the default) means no prefix. It is unique among the
+	// tenant's live connectors, case-insensitively, and never equals
+	// another live connector's slug: Create and Update return ErrConflict
+	// otherwise.
+	ToolPrefix string
+
 	TimeoutMS int
 	Status    string // healthy | unhealthy | unknown
 
@@ -757,11 +765,19 @@ type CredentialSourceStore interface {
 }
 
 // ConnectorStore manages Connector rows. SoftDelete hides a row from Get/
-// GetBySlug/List without removing it.
+// GetBySlug/GetByToolPrefix/List without removing it.
+//
+// A connector's slug and tool prefix share one namespace per tenant: Create
+// and Update return ErrConflict when the slug or prefix collides with
+// another live connector's slug or prefix (compared case-insensitively
+// for a prefix), and the check is atomic with the write.
 type ConnectorStore interface {
 	Create(ctx context.Context, c *Connector) error
 	Get(ctx context.Context, tenantID, id string) (*Connector, error)
 	GetBySlug(ctx context.Context, tenantID, slug string) (*Connector, error)
+	// GetByToolPrefix returns the live connector whose ToolPrefix is
+	// prefix (compared case-insensitively), or ErrNotFound.
+	GetByToolPrefix(ctx context.Context, tenantID, prefix string) (*Connector, error)
 	List(ctx context.Context, tenantID string) ([]*Connector, error)
 	Update(ctx context.Context, c *Connector) error
 	SoftDelete(ctx context.Context, tenantID, id string) error

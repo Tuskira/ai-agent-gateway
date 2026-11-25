@@ -915,7 +915,7 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 	// The profile gate sits AFTER routing because the grant is per
 	// (connector, tool): "search" on one connector is a different grant
 	// from "search" on another, and only routing says which one this is.
-	tc := ToolCall{ConnectorID: route.Connector.ID, Server: route.Connector.Slug, Tool: route.ToolName, Outcome: ToolCallAllowed}
+	tc := ToolCall{ConnectorID: route.Connector.ID, Server: loggedServer(route.Connector), Tool: route.ToolName, Outcome: ToolCallAllowed}
 	if allow != nil {
 		tc.Profile = allow.Name
 		switch {
@@ -989,6 +989,16 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 	}
 }
 
+// loggedServer is the connector name a tool call is logged under: the name
+// its tools are advertised by (the tool_prefix when one is set), else its
+// slug as before.
+func loggedServer(conn *store.Connector) string {
+	if conn.ToolPrefix != "" {
+		return conn.ToolPrefix
+	}
+	return conn.Slug
+}
+
 // restrictedToolCall names a restricted key's refused tools/call the way
 // a routed call is named -- server is the connector's slug, connector id
 // its id, tool the unprefixed name -- so its event is as complete as an
@@ -1012,7 +1022,7 @@ func (o *Orchestrator) restrictedToolCall(ctx context.Context, in Request, quali
 	}
 	tc = ToolCall{Server: namespace, Tool: tool, Outcome: ToolCallRestricted}
 	if conn, err := o.deps.Router.Lookup(ctx, in.Principal.TenantID, namespace); err == nil {
-		tc.ConnectorID, tc.Server = conn.ID, conn.Slug
+		tc.ConnectorID, tc.Server = conn.ID, loggedServer(conn)
 		exempt = conn.Enabled() && conn.RestrictExempt()
 	}
 	return tc, true, exempt

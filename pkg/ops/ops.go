@@ -94,6 +94,15 @@ type CacheOps interface {
 	Invalidate(ctx context.Context, tenantID string, connectorID string) error
 }
 
+// ToolListNotifier is an optional extra of a CacheOps: it pushes
+// notifications/tools/list_changed to every MCP stream open for the
+// tenant, so agents connected right now re-list tools (for example after a
+// connector's tool_prefix changed the names it is advertised under). The
+// API calls it only when its CacheOps also implements this.
+type ToolListNotifier interface {
+	NotifyToolsListChanged(tenantID string)
+}
+
 // ProfileOps invalidates the MCP plane's agent-profile enforcer cache
 // (internal/dataplane/profile.Enforcer) on behalf of the control-plane
 // API, mirroring CacheOps for the tool cache. A profile/skill write that

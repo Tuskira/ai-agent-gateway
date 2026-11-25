@@ -11,6 +11,7 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -223,6 +224,18 @@ func (c *connectorStore) GetBySlug(_ context.Context, tenantID, slug string) (*s
 	defer s.mu.Unlock()
 	for _, conn := range s.connectors {
 		if conn.TenantID == tenantID && conn.Slug == slug && conn.DeletedAt == nil {
+			return conn, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (c *connectorStore) GetByToolPrefix(_ context.Context, tenantID, prefix string) (*store.Connector, error) {
+	s := (*Store)(c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, conn := range s.connectors {
+		if conn.TenantID == tenantID && conn.ToolPrefix != "" && strings.EqualFold(conn.ToolPrefix, prefix) && conn.DeletedAt == nil {
 			return conn, nil
 		}
 	}

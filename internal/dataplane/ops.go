@@ -9,6 +9,7 @@ import (
 
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/cache"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/client"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/orchestrator"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/profile"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/router"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/transport"
@@ -50,12 +51,17 @@ type opsAdapter struct {
 	// opsAdapter without one get InvalidateProfile's cache invalidation
 	// with no live push, which is a documented no-op, not a panic.
 	hub *transport.Hub
+	// notifier pushes notifications/tools/list_changed to every stream
+	// open for a tenant, on this replica and (with the redis session
+	// driver) the others. Nil is a no-op, as for hub.
+	notifier orchestrator.Notifier
 }
 
 var (
-	_ ops.ConnectorOps = (*opsAdapter)(nil)
-	_ ops.CacheOps     = (*opsAdapter)(nil)
-	_ ops.ProfileOps   = (*opsAdapter)(nil)
+	_ ops.ConnectorOps     = (*opsAdapter)(nil)
+	_ ops.CacheOps         = (*opsAdapter)(nil)
+	_ ops.ProfileOps       = (*opsAdapter)(nil)
+	_ ops.ToolListNotifier = (*opsAdapter)(nil)
 )
 
 // newOpsAdapter builds the ops adapter. toolRouter, backend and enforcer
@@ -385,6 +391,13 @@ func (a *opsAdapter) Invalidate(ctx context.Context, tenantID, connectorID strin
 		}
 	}
 	return nil
+}
+
+// NotifyToolsListChanged implements ops.ToolListNotifier.
+func (a *opsAdapter) NotifyToolsListChanged(tenantID string) {
+	if a.notifier != nil {
+		a.notifier.ToolsListChanged(tenantID)
+	}
 }
 
 // InvalidateProfile implements ops.ProfileOps: it drops profileID's

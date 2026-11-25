@@ -252,3 +252,18 @@ func TestAnalytics_MCPsUsage_PassesAliasesToReader(t *testing.T) {
 		t.Errorf("aliases = %v", fake.gotAliases)
 	}
 }
+
+// A connector with a tool_prefix is observed as "<prefix>__<tool>", so its
+// prefix is an alias for its slug, like its name is.
+func TestAnalytics_MCPsUsage_ToolPrefixIsAnAlias(t *testing.T) {
+	fake := &fakeAnalyticsReader{mcpUsage: []analytics.MCPToolUsage{{Server: "gw", Tool: "Vendor.Feed__x", Calls: 1}}}
+	h := Analytics{Deps: newAnalyticsTestDeps(fake)}
+	if err := h.Store.Connectors().Create(context.Background(), &store.Connector{TenantID: "tenant-a", Name: "Feed", Slug: "feed", ToolPrefix: "Vendor.Feed", Endpoint: "https://f.example/mcp"}); err != nil {
+		t.Fatal(err)
+	}
+	req := withPrincipal(httptest.NewRequest(http.MethodGet, "/analytics/mcps/usage", nil), "tenant-a", "agent")
+	serve(http.MethodGet, "/analytics/mcps/usage", h.MCPsUsage, req)
+	if fake.gotAliases["vendor.feed"] != "feed" || fake.gotAliases["feed"] != "feed" {
+		t.Errorf("aliases = %v, want the prefix and the slug both mapped to the slug", fake.gotAliases)
+	}
+}

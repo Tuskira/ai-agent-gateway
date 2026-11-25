@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-25
+
 ### Added
 
 - **Optional per-connector `tool_prefix`.** A connector can now be
@@ -2440,7 +2442,8 @@ First release: phase 1 of the open-source AI gateway.
   `bootstrap-key` transcript.
 - CI badge in `README.md`.
 
-[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/Tuskira/ai-agent-gateway/compare/v0.12.0...v0.13.0

@@ -186,12 +186,18 @@ func (r *Router) Lookup(ctx context.Context, tenantID, name string) (*store.Conn
 	return r.findConnector(ctx, tenantID, name)
 }
 
-// findConnector looks a connector up by slug first (the indexed unique
-// key) and falls back to a name match within the tenant, because the
-// tool prefix is the connector's NAME and a deployment may have named
-// and slugged a connector differently.
+// findConnector looks a connector up by tool_prefix first, then by slug
+// (the indexed unique key), and falls back to a name match within the
+// tenant, because pre-slug rows are qualified by their NAME and a
+// deployment may have named and slugged a connector differently. A
+// connector with a tool_prefix is advertised under it, so a prefix match
+// is the one the caller means; a prefix never equals another live
+// connector's slug (the store refuses it), so the order cannot shadow one.
 func (r *Router) findConnector(ctx context.Context, tenantID, name string) (*store.Connector, error) {
-	conn, err := r.connectors.GetBySlug(ctx, tenantID, name)
+	conn, err := r.connectors.GetByToolPrefix(ctx, tenantID, name)
+	if errors.Is(err, store.ErrNotFound) {
+		conn, err = r.connectors.GetBySlug(ctx, tenantID, name)
+	}
 	switch {
 	case err == nil:
 		if !conn.Enabled() {

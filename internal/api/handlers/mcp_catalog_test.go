@@ -439,3 +439,34 @@ func toJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+// POST /mcp-catalog/{slug}/add takes the same optional tool_prefix as
+// POST /connectors: it is stored and returned, validated (400), and refused
+// when it collides with another connector (409).
+func TestMCPCatalog_Add_ToolPrefix(t *testing.T) {
+	d, _ := catalogFixture(t)
+
+	w := doAdd(d, "tenant-a", "open", `{"tool_prefix":"Vendor.Open_feed"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("add with tool_prefix: %d %s", w.Code, w.Body.String())
+	}
+	if got := decodeAdd(t, w).Connector.ToolPrefix; got != "Vendor.Open_feed" {
+		t.Errorf("connector tool_prefix = %q", got)
+	}
+
+	for _, bad := range []string{"a b", "a__b", "gateway", "GATEWAY"} {
+		if w := doAdd(d, "tenant-a", "tok", `{"tool_prefix":"`+bad+`","fields":{"token":"t"}}`); w.Code != http.StatusBadRequest {
+			t.Errorf("tool_prefix %q: %d, want 400", bad, w.Code)
+		}
+	}
+	// Same prefix in another case, and a prefix equal to another connector's slug.
+	for _, clash := range []string{"vendor.open_FEED", "open"} {
+		if w := doAdd(d, "tenant-a", "tok", `{"tool_prefix":"`+clash+`","fields":{"token":"t"}}`); w.Code != http.StatusConflict {
+			t.Errorf("tool_prefix %q: %d %s, want 409", clash, w.Code, w.Body.String())
+		}
+	}
+	// Another tenant is not affected.
+	if w := doAdd(d, "tenant-b", "tok", `{"tool_prefix":"Vendor.Open_feed","fields":{"token":"t"}}`); w.Code != http.StatusCreated {
+		t.Errorf("other tenant, same prefix: %d %s", w.Code, w.Body.String())
+	}
+}

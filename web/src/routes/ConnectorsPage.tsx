@@ -182,6 +182,7 @@ export default function ConnectorsPage() {
             </div>
             <div className="truncate text-[11.5px] text-text-subtle">
               {c.slug}
+              {c.tool_prefix ? ` · prefix ${c.tool_prefix}` : ''}
               {toolCount !== undefined ? ` · ${toolCount} tools` : ''}
             </div>
           </div>

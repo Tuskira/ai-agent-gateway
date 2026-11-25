@@ -308,6 +308,9 @@ func (nopConnectors) Get(context.Context, string, string) (*store.Connector, err
 func (nopConnectors) GetBySlug(context.Context, string, string) (*store.Connector, error) {
 	return nil, store.ErrNotFound
 }
+func (nopConnectors) GetByToolPrefix(context.Context, string, string) (*store.Connector, error) {
+	return nil, store.ErrNotFound
+}
 func (nopConnectors) List(context.Context, string) ([]*store.Connector, error) { return nil, nil }
 func (nopConnectors) Update(context.Context, *store.Connector) error           { return store.ErrNotFound }
 func (nopConnectors) SoftDelete(context.Context, string, string) error         { return store.ErrNotFound }

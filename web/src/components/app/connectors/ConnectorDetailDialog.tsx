@@ -178,6 +178,14 @@ export function ConnectorDetailDialog({
                         {connector?.endpoint}
                       </div>
                     </div>
+                    {connector?.tool_prefix ? (
+                      <div className="min-w-0">
+                        <div className="text-[11.5px] text-text-subtle">Tool prefix</div>
+                        <div className="mt-1.5 font-mono text-xs break-all text-foreground">
+                          {connector.tool_prefix}
+                        </div>
+                      </div>
+                    ) : null}
                     <div>
                       <div className="text-[11.5px] text-text-subtle">Timeout</div>
                       <div className="mt-1.5 text-[13px] text-foreground">

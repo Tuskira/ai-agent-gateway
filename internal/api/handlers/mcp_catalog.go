@@ -232,6 +232,9 @@ type addCatalogRequest struct {
 	// Slug is how a tenant adds the same entry a second time.
 	Name string `json:"name,omitempty"`
 	Slug string `json:"slug,omitempty"`
+	// ToolPrefix, when set, is the connector's tool_prefix (see
+	// validateToolPrefix).
+	ToolPrefix string `json:"tool_prefix,omitempty"`
 	// Fields holds the values for the entry's auth.fields, by field name.
 	Fields map[string]string `json:"fields,omitempty"`
 	// URL replaces the entry's URL; only accepted when url_overridable.
@@ -298,6 +301,13 @@ func (h MCPCatalog) Add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ToolPrefix != "" {
+		if err := validateToolPrefix(req.ToolPrefix); err != nil {
+			httpx.ValidationError(w, err.Error())
+			return
+		}
+	}
+
 	endpoint, credFields, err := resolveCatalogInputs(r.Context(), entry, req)
 	if err != nil {
 		httpx.ValidationError(w, err.Error())
@@ -356,7 +366,7 @@ func (h MCPCatalog) Add(w http.ResponseWriter, r *http.Request) {
 
 	c := &store.Connector{
 		TenantID: tid, Name: name, Slug: slug, Endpoint: endpoint, TimeoutMS: h.connectorTimeoutMS(),
-		Metadata: meta, CatalogID: entry.ID,
+		Metadata: meta, CatalogID: entry.ID, ToolPrefix: req.ToolPrefix,
 	}
 	if err := h.Store.Connectors().Create(r.Context(), c); err != nil {
 		if createdCred != "" {

@@ -351,3 +351,66 @@ describe('ConnectorFormDialog (v8 two-column create/edit)', () => {
     })
   })
 })
+
+const PREFIXED_CONNECTOR = {
+  id: 'c10',
+  name: 'Threat Intel',
+  slug: 'threat-intel',
+  tool_prefix: 'virustotal.threat_intel',
+  endpoint: 'http://ti:8001/mcp',
+  timeout_ms: 30000,
+  status: 'healthy',
+  metadata: {},
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+}
+
+describe('ConnectorFormDialog tool_prefix', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('shows the stored prefix in the list and the field, and sends it back unchanged', async () => {
+    const fetchMock = connectorsFetch(PREFIXED_CONNECTOR, ['admin'])
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderPageWithAuth()
+
+    expect(await screen.findByText(/prefix virustotal\.threat_intel/)).toBeInTheDocument()
+    await chooseRowAction(user, 'Threat Intel', 'Edit')
+    const field = await screen.findByLabelText('Tool prefix')
+    expect(field).toHaveValue('virustotal.threat_intel')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    await waitFor(() => {
+      expect(putBody(fetchMock, 'c10').tool_prefix).toBe('virustotal.threat_intel')
+    })
+  })
+
+  it('clears the prefix with an empty field, and refuses an invalid one', async () => {
+    const fetchMock = connectorsFetch(PREFIXED_CONNECTOR, ['admin'])
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderPageWithAuth()
+
+    await chooseRowAction(user, 'Threat Intel', 'Edit')
+    const field = await screen.findByLabelText('Tool prefix')
+    await user.clear(field)
+    await user.type(field, 'bad__prefix')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    expect(await screen.findByText(/joined by single underscores/)).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(
+        ([, init]) => (init as RequestInit | undefined)?.method === 'PUT',
+      ),
+    ).toBe(false)
+
+    await user.clear(field)
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    await waitFor(() => {
+      expect(putBody(fetchMock, 'c10').tool_prefix).toBe('')
+    })
+  })
+})

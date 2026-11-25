@@ -528,3 +528,32 @@ func TestMonitoredGrant(t *testing.T) {
 		t.Error("an allow grant must not be monitored")
 	}
 }
+
+func TestGrantsOnAPrefixedConnectorMatchByBareAndPrefixQualifiedName(t *testing.T) {
+	f := newFixture(t, profile.Options{})
+	f.connA.ToolPrefix = "alpha.intel_feed"
+	if err := f.store.Connectors().Update(context.Background(), f.connA); err != nil {
+		t.Fatal(err)
+	}
+	f.createProfile(t, "Reader", []store.ProfileTool{
+		{ConnectorID: f.connA.ID, ToolName: "search"},
+		{ConnectorID: f.connA.ID, ToolName: "alpha.intel_feed__lookup"},
+		{ConnectorID: f.connB.ID, ToolName: "search"},
+	})
+
+	allow, err := f.enforcer.Resolve(context.Background(), tenant, "Reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"search", "lookup"} {
+		if !allow.Allows(f.connA.ID, tool) {
+			t.Errorf("grant %q on the prefixed connector was denied", tool)
+		}
+	}
+	if allow.Allows(f.connA.ID, "write") {
+		t.Error("an ungranted tool on the prefixed connector was allowed")
+	}
+	if !allow.Allows(f.connB.ID, "search") {
+		t.Error("the unprefixed connector's grant was lost")
+	}
+}

@@ -110,6 +110,14 @@ var userIdentitiesMigration string
 //go:embed migrations/000014_strict_models.up.sql
 var strictModelsMigration string
 
+// connectorToolPrefixMigration (000015) adds the optional per-connector
+// connectors.tool_prefix and its per-tenant case-insensitive unique index
+// over live rows. Its sibling 000015_connector_tool_prefix.down.sql is for
+// a hand rollback only.
+//
+//go:embed migrations/000015_connector_tool_prefix.up.sql
+var connectorToolPrefixMigration string
+
 // migrations are applied in version order; each is recorded in
 // schema_migrations once applied. Append new migrations here (with the next
 // version) — never edit one that has already shipped.
@@ -131,6 +139,7 @@ var migrations = []struct {
 	{12, containmentMigration},
 	{13, userIdentitiesMigration},
 	{14, strictModelsMigration},
+	{15, connectorToolPrefixMigration},
 }
 
 // migrationLockKey is an arbitrary constant used as a Postgres advisory

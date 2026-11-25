@@ -44,6 +44,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("StrictModels", func(t *testing.T) { testStrictModels(t, newStore(t)) })
 	t.Run("Credentials", func(t *testing.T) { testCredentials(t, newStore(t)) })
 	t.Run("Connectors", func(t *testing.T) { testConnectors(t, newStore(t)) })
+	t.Run("ConnectorToolPrefix", func(t *testing.T) { testConnectorToolPrefix(t, newStore(t)) })
 	t.Run("CredentialSources", func(t *testing.T) { testCredentialSources(t, newStore(t)) })
 	t.Run("MCPCatalog", func(t *testing.T) { testMCPCatalog(t, newStore(t)) })
 	t.Run("AgentProfiles", func(t *testing.T) { testAgentProfiles(t, newStore(t)) })

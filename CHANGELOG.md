@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional per-connector `tool_prefix`.** A connector can now be
+  advertised and routed under a prefix of your choosing instead of its
+  slug: tools become `<tool_prefix>__<tool>`, prompts likewise, resources
+  `gw://<tool_prefix>/…`, and the access log and tool-call events name the
+  prefix. It lets you keep tool names stable when you move connectors from
+  another gateway or rename a slug, without breaking agents, prompts and
+  allow-lists that pin them. Set it with `tool_prefix` on `POST` and `PUT`
+  `/api/v1/connectors` (on `PUT`, omitted keeps it and `""` clears it) and
+  on `POST /api/v1/mcp-catalog/{slug}/add`, or in the console's MCP form;
+  every connector view returns it (`""` when unset). Letters, digits, `.`
+  and `-`, words joined by single underscores, 1-100 characters, not
+  `gateway`; unique per tenant ignoring case and never equal to another
+  connector's slug (`409`; checked atomically with the write). A name is
+  resolved by prefix, then slug, then name. Changing a prefix re-discovers
+  the connector's cached tools, drops cached profile resolutions and sends
+  `tools/list_changed`. Stored in Postgres (migration `000015`).
+  Connectors without a prefix behave exactly as before. See
+  [docs/connectors-and-credentials.md](docs/connectors-and-credentials.md#tool-prefix).
+
+### Changed
+
+- **Store plugin seam: `store.Connector` gained `ToolPrefix` and
+  `store.ConnectorStore` gained `GetByToolPrefix`.** An out-of-tree
+  `store.Store` backend must add the method (case-insensitive lookup among
+  live connectors; `ErrNotFound` when none), persist the field, and make
+  `Create`/`Update` return `ErrConflict` when a prefix equals another live
+  connector's prefix or slug (or a slug equals another's prefix), atomically
+  with the write. `pkg/store/storetest` has a new `ConnectorToolPrefix`
+  conformance subtest that checks all of it, including concurrent creates.
+  A new optional `pkg/ops.ToolListNotifier` lets a `CacheOps` push
+  `tools/list_changed`.
+
 ## [0.13.2] - 2026-11-17
 
 ### Fixed

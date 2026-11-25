@@ -343,3 +343,42 @@ func TestDisabledConnectorIsNeitherResolvedNorCallable(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveRoutesByToolPrefix(t *testing.T) {
+	conn := &store.Connector{TenantID: tenant, Name: "VT", Slug: "vt", ToolPrefix: "virustotal.threat_intel", Endpoint: "http://vt", Status: router.StatusHealthy}
+	other := healthy("beta")
+	r, _ := newRouter(t, time.Now, 0, conn, other)
+
+	route, err := r.Resolve(context.Background(), tenant, "virustotal.threat_intel__scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.Connector.ID != conn.ID || route.ToolName != "scan" {
+		t.Fatalf("route = %+v, want connector %s tool scan", route, conn.ID)
+	}
+	// The match is case-insensitive, like the prefix's uniqueness.
+	if route, err = r.Resolve(context.Background(), tenant, "VirusTotal.Threat_Intel__scan"); err != nil || route.Connector.ID != conn.ID {
+		t.Fatalf("case-insensitive prefix: %+v, %v", route, err)
+	}
+	// The slug and name keep routing after a prefix is set (the order is
+	// prefix, slug, name), and connectors without a prefix are untouched.
+	if route, err = r.Resolve(context.Background(), tenant, "vt__scan"); err != nil || route.Connector.ID != conn.ID {
+		t.Fatalf("slug of a prefixed connector: %+v, %v", route, err)
+	}
+	if route, err = r.Resolve(context.Background(), tenant, "beta__search"); err != nil || route.Connector.ID != other.ID {
+		t.Fatalf("unprefixed connector: %+v, %v", route, err)
+	}
+	// Another tenant cannot reach it by prefix.
+	if _, err = r.Resolve(context.Background(), "tenant-b", "virustotal.threat_intel__scan"); !errors.Is(err, router.ErrConnectorNotFound) {
+		t.Fatalf("other tenant = %v, want ErrConnectorNotFound", err)
+	}
+}
+
+func TestResolveRefusesADisabledConnectorByPrefix(t *testing.T) {
+	conn := &store.Connector{TenantID: tenant, Name: "vt", Slug: "vt", ToolPrefix: "vt.pfx", Endpoint: "http://vt", Status: router.StatusHealthy,
+		Metadata: map[string]any{"enabled": false}}
+	r, _ := newRouter(t, time.Now, 0, conn)
+	if _, err := r.Lookup(context.Background(), tenant, "vt.pfx"); !errors.Is(err, router.ErrConnectorNotFound) {
+		t.Fatalf("Lookup(disabled, by prefix) = %v, want ErrConnectorNotFound", err)
+	}
+}

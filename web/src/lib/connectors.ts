@@ -78,6 +78,9 @@ export interface Connector {
   id: string
   name: string
   slug: string
+  /** Optional namespace the connector's tools are advertised under instead
+   * of its slug; `""` or absent when unset. */
+  tool_prefix?: string
   description?: string
   endpoint: string
   timeout_ms: number
@@ -109,6 +112,8 @@ export interface ConnectorHealth {
 export interface ConnectorInput {
   name: string
   slug?: string
+  /** On update, absent keeps the stored prefix and `""` clears it. */
+  tool_prefix?: string
   description?: string
   endpoint: string
   timeout_ms?: number

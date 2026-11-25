@@ -272,6 +272,7 @@ func New(deps Deps) (*Plane, error) {
 	}
 
 	opsAdapter := newOpsAdapter(deps, toolRouter, backend, profiles, hub)
+	opsAdapter.notifier = notifier
 
 	return &Plane{
 		Handler:         handler,

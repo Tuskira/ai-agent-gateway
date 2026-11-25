@@ -4,7 +4,9 @@ A **connector** is an MCP server registered with the gateway (the console's
 **MCPs** page; the API and permissions (`connector.*`) keep the name
 connector). The gateway presents one flat tool namespace across every
 connector in a tenant, named
-`"<connector slug>__<tool name>"` (`internal/dataplane/client.QualifyTool`).
+`"<connector slug>__<tool name>"` (`internal/dataplane/client.QualifyTool`),
+or `"<tool_prefix>__<tool name>"` for a connector that has a
+[`tool_prefix`](#tool-prefix).
 
 ## Register a connector
 
@@ -41,6 +43,10 @@ and "field absent" are indistinguishable, so this is the safer default for
 a field that usually holds hand-authored header configs). `slug` is kept
 unless the request sends a new one. Changing it renames every tool, prompt
 and resource URI the connector exposes (`<slug>__<tool>`, `gw://<slug>/…`).
+`tool_prefix` is optional on both `POST` and `PUT` (see
+[Tool prefix](#tool-prefix)); on `PUT`, leaving it out keeps the stored
+value and `""` clears it.
+
 Reads mask secret material: a `static` header's `value` and every value in
 a header's `config` come back as `"***"`, and sending `"***"` back on `PUT`
 keeps the stored value.
@@ -662,11 +668,62 @@ still be called by its qualified name.
 ## Slug-qualified tool names
 
 Every advertised tool name is `"<qualifier>__<tool>"`, where the qualifier
-is the connector's `slug` (falling back to `name` for pre-slug rows) —
+is the connector's [`tool_prefix`](#tool-prefix) when it has one, else its
+`slug` (falling back to `name` for pre-slug rows) —
 `internal/dataplane/client.Qualifier`. The split on `tools/call` is on the
 **first** `__`, so a backend tool can itself contain `__`
 (`get__all__groups`) as long as no connector name does (the admin API's
 `slugify` already enforces `[a-z0-9-]+`, which cannot contain `_`).
+
+### Tool prefix
+
+A connector can carry an optional `tool_prefix` that replaces its slug as
+the qualifier. It keeps tool names stable when you move connectors from
+another gateway, or rename a slug, without breaking agents, prompts and
+allow-lists that pin tool names:
+
+```sh
+curl -X POST http://localhost:8081/api/v1/connectors \
+  -H "Authorization: Bearer $GATEWAY_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "VirusTotal", "endpoint": "https://vt-mcp.internal/mcp",
+       "tool_prefix": "virustotal.threat_intel"}'
+# tools/list now advertises  virustotal.threat_intel__<tool>
+```
+
+- **Where it applies.** Tool names, prompt names, resource URIs
+  (`gw://<tool_prefix>/…`) and the server name of tool-call events. The
+  access log's `tool_name` is the name the caller sent, so it carries the
+  prefix whenever the caller used the advertised name. `tools/call`,
+  `prompts/get` and `resources/read` accept the prefix.
+- **Routing order.** A name is resolved by `tool_prefix` first, then by
+  `slug`, then by `name` (the existing fallback). The prefix match ignores
+  case, like the uniqueness rule. A connector with a prefix is still
+  reachable by its slug, but only the prefix is advertised.
+- **Allow-lists.** Profile grants name the tool, not the qualifier: a
+  grant stored as `search` matches `<tool_prefix>__search`, and a grant
+  stored already qualified with the connector's current prefix
+  (`<tool_prefix>__search`) is normalised to the same thing. A grant stored
+  qualified with the old slug (`<slug>__search`) does not match once a
+  prefix is set; store grants by bare tool name.
+- **Format.** 1–100 characters; letters, digits, `.` and `-`, with words
+  joined by **single** underscores (`^[A-Za-z0-9.-]+(_[A-Za-z0-9.-]+)*$`),
+  so `__` (the namespace separator) never appears, and no `/` or space.
+  `gateway` (any case) is reserved. Not setting it, or sending `""`, is
+  today's behaviour.
+- **Uniqueness.** Unique among the tenant's live connectors, ignoring
+  case, and never equal to another live connector's slug (and a slug can
+  not be set to another connector's prefix): `409` otherwise. The check is
+  atomic with the write, so two concurrent requests cannot both succeed.
+  Deleting a connector frees its prefix.
+- **Changing it.** A change renames every tool, prompt and resource URI of
+  the connector. The gateway drops and re-discovers the connector's cached
+  tools, drops the tenant's cached profile resolutions, and sends
+  `notifications/tools/list_changed` on open streams, so clients re-list at
+  once. An agent that pinned the old names has to move to the new ones.
+- **MCP catalog.** `POST /mcp-catalog/{slug}/add` accepts `tool_prefix`
+  too.
+- **Console.** The MCP form has a *Tool prefix* field; the list and the
+  detail view show it when set.
 
 ### Prompt names and resource URIs
 

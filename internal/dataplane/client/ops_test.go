@@ -118,3 +118,22 @@ func TestServerRequestPolicy_Allows(t *testing.T) {
 		})
 	}
 }
+
+func TestQualifier(t *testing.T) {
+	cases := []struct {
+		name string
+		conn *store.Connector
+		want string
+	}{
+		{"prefix wins over slug and name", &store.Connector{Name: "VT", Slug: "vt", ToolPrefix: "virustotal.threat_intel"}, "virustotal.threat_intel"},
+		{"slug when there is no prefix", &store.Connector{Name: "VT", Slug: "vt"}, "vt"},
+		{"name when there is no slug either", &store.Connector{Name: "VT"}, "VT"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Qualifier(tc.conn); got != tc.want {
+				t.Errorf("Qualifier = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -183,3 +183,22 @@ func TestConnectors_RestrictExempt_RepointNeedsAdmin(t *testing.T) {
 		t.Errorf("editor, plain connector: status %d body %s", w.Code, w.Body.String())
 	}
 }
+
+// metadata.headers_required must be a boolean; any other value is a 400, and
+// true or false is stored as given.
+func TestConnectors_HeadersRequired_MustBeBoolean(t *testing.T) {
+	h := Connectors{Deps: restrictExemptDeps()}
+	for _, v := range []string{`"true"`, `1`, `null`, `{}`} {
+		body := `{"name":"hr","endpoint":"https://hr.example.com/mcp","metadata":{"headers_required":` + v + `}}`
+		w := serve(http.MethodPost, "/connectors", h.Create, connectorReq(http.MethodPost, "/connectors", body, "admin"))
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "metadata.headers_required must be a boolean") {
+			t.Errorf("%s: status %d body %s; want 400", v, w.Code, w.Body.String())
+		}
+		assertErrorType(t, w, "validation_error")
+	}
+	body := `{"name":"hr","endpoint":"https://hr.example.com/mcp","metadata":{"headers_required":true}}`
+	w := serve(http.MethodPost, "/connectors", h.Create, connectorReq(http.MethodPost, "/connectors", body, "admin"))
+	if w.Code != http.StatusCreated || !strings.Contains(w.Body.String(), `"headers_required":true`) {
+		t.Errorf("true: status %d body %s; want 201 echoing the flag", w.Code, w.Body.String())
+	}
+}

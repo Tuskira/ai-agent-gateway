@@ -32,6 +32,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,22 @@ const (
 // error, because a model can act on the former and not the latter.
 var ErrTimeout = errors.New("client: backend call timed out")
 
+// HeaderUnavailableError is returned, before anything is sent to the
+// backend, when a connector that requires its headers (metadata
+// headers_required, or connectors.fail_on_unresolved_headers) has a header
+// that could not be resolved. Its message names the header, never the
+// cause: the cause is logged.
+type HeaderUnavailableError struct {
+	Header string
+	Err    error
+}
+
+func (e *HeaderUnavailableError) Error() string {
+	return "credential header " + e.Header + " unavailable"
+}
+
+func (e *HeaderUnavailableError) Unwrap() error { return e.Err }
+
 // Options configures a Client.
 type Options struct {
 	// Headers resolves a connector's metadata.headers entries. Nil
@@ -79,6 +96,11 @@ type Options struct {
 	// connector's metadata.tls.insecure_skip_verify overrides it for
 	// that connector alone.
 	TLS config.ConnectorTLS
+	// FailOnUnresolvedHeaders makes every connector fail a call whose
+	// configured header cannot be resolved, as a connector with
+	// metadata.headers_required does. Default false: the header is
+	// skipped.
+	FailOnUnresolvedHeaders bool
 	// Logger receives the client's own log lines.
 	Logger *slog.Logger
 	// sleep waits between retry attempts; tests replace it so a retry
@@ -92,6 +114,8 @@ type Client struct {
 	defaultTimeout time.Duration
 	logger         *slog.Logger
 	sleep          func(ctx context.Context, d time.Duration) error
+
+	failOnUnresolved bool
 
 	tlsCfg config.ConnectorTLS
 
@@ -118,12 +142,13 @@ func New(opts Options) *Client {
 	}
 
 	return &Client{
-		headers:        opts.Headers,
-		defaultTimeout: opts.DefaultTimeout,
-		logger:         opts.Logger,
-		sleep:          opts.sleep,
-		tlsCfg:         opts.TLS,
-		clients:        make(map[bool]*http.Client, 2),
+		headers:          opts.Headers,
+		defaultTimeout:   opts.DefaultTimeout,
+		logger:           opts.Logger,
+		sleep:            opts.sleep,
+		failOnUnresolved: opts.FailOnUnresolvedHeaders,
+		tlsCfg:           opts.TLS,
+		clients:          make(map[bool]*http.Client, 2),
 	}
 }
 
@@ -459,7 +484,13 @@ func (c *Client) newRequest(ctx context.Context, method string, call Call, versi
 // optional enrichment header keeps working. The backend decides whether
 // the missing header matters, by answering 401.
 //
-// The one exception is a connector that still carries a disabled
+// A connector with metadata.headers_required true (or any connector when
+// connectors.fail_on_unresolved_headers is on) is stricter: the first
+// header that cannot be resolved fails the call with a
+// *HeaderUnavailableError and nothing is sent to the backend. Headers are
+// tried in name order so the error names the same header every time.
+//
+// The other exception is a connector that still carries a disabled
 // bearer_token forwarding header (connectors.allow_bearer_token_forwarding
 // is off): the call fails with a clear error. Skipping the header would
 // make the connector fail with a confusing backend 401 instead.
@@ -475,10 +506,22 @@ func (c *Client) applyConnectorHeaders(ctx context.Context, httpReq *http.Reques
 	// Providers may read which connector they resolve for (the registry
 	// adds the header name and any credential source).
 	ctx = pkgheaders.WithResolveInfo(ctx, pkgheaders.ResolveInfo{ConnectorID: call.Connector.ID, ConnectorSlug: call.Connector.Slug})
-	for name, cfg := range configs {
+	required := c.failOnUnresolved || call.Connector.HeadersRequired()
+	names := make([]string, 0, len(configs))
+	for name := range configs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		cfg := configs[name]
 		value, err := c.headers.Resolve(ctx, name, cfg, call.Inbound)
 		if errors.Is(err, dpheaders.ErrBearerForwardingDisabled) {
 			return fmt.Errorf("client: connector %q: %w", call.Connector.Name, err)
+		}
+		if err != nil && required && !skippedOnSystemCall(ctx, cfg) {
+			c.logger.Warn("failed to resolve connector header; refusing the call",
+				"connector_id", call.Connector.ID, "header", name, "error", err)
+			return &HeaderUnavailableError{Header: name, Err: err}
 		}
 		if err != nil {
 			c.logger.Warn("failed to resolve connector header; skipping it",
@@ -488,6 +531,22 @@ func (c *Client) applyConnectorHeaders(ctx context.Context, httpReq *http.Reques
 		httpReq.Header.Set(name, value)
 	}
 	return nil
+}
+
+// skippedOnSystemCall reports whether a header that failed to resolve is
+// still skipped on a system-initiated call (health probe, discovery, tool
+// cache refresh), even for a connector that requires its headers: those
+// calls have no caller, so a header derived from the caller (token_field,
+// incoming_field) can never resolve on them, and refusing would stop the
+// connector from ever being probed, discovered or refreshed. Every other
+// header type (an external credential, a static value) is still required.
+func skippedOnSystemCall(ctx context.Context, cfg map[string]any) bool {
+	principal, ok := pkgauth.PrincipalFrom(ctx)
+	if !ok || principal == nil || principal.AuthMethod != "system" {
+		return false
+	}
+	typ, _ := cfg["type"].(string)
+	return typ == "token_field" || typ == "incoming_field"
 }
 
 // headerConfigs extracts connector.metadata.headers as a map of per-header
@@ -662,6 +721,12 @@ func retryable(err error, status int) bool {
 		return false
 	}
 	if isTimeout(err) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var hu *HeaderUnavailableError
+	if errors.As(err, &hu) {
+		// Nothing was sent; asking the credential service again within
+		// milliseconds gains nothing.
 		return false
 	}
 	switch {

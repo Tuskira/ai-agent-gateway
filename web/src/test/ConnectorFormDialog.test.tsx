@@ -147,6 +147,31 @@ describe('ConnectorFormDialog restrict_exempt', () => {
   })
 })
 
+describe('ConnectorFormDialog headers_required', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('sends a stored headers_required back, because a PUT replaces metadata', async () => {
+    const fetchMock = connectorsFetch(
+      { ...EXEMPT_CONNECTOR, id: 'c10', name: 'Strict', slug: 'strict', metadata: { headers_required: true } },
+      ['admin'],
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderPageWithAuth()
+
+    await chooseRowAction(user, 'Strict', 'Edit')
+    await user.click(await screen.findByRole('button', { name: /save changes/i }))
+    await waitFor(() => {
+      expect(putBody(fetchMock, 'c10').metadata.headers_required).toBe(true)
+    })
+  })
+})
+
 describe('ConnectorFormDialog (v8 two-column create/edit)', () => {
   beforeEach(() => {
     sessionStorage.clear()

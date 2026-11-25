@@ -206,10 +206,11 @@ func New(deps Deps) (*Plane, error) {
 	cfg := deps.Config
 
 	backend := client.New(client.Options{
-		Headers:        deps.Headers,
-		DefaultTimeout: cfg.Connectors.DefaultTimeout(),
-		TLS:            cfg.Connectors.TLS,
-		Logger:         deps.Logger,
+		Headers:                 deps.Headers,
+		DefaultTimeout:          cfg.Connectors.DefaultTimeout(),
+		TLS:                     cfg.Connectors.TLS,
+		FailOnUnresolvedHeaders: cfg.Connectors.FailOnUnresolvedHeaders,
+		Logger:                  deps.Logger,
 	})
 
 	sessionStore, sessionNotifier, err := openSessionStore(cfg)

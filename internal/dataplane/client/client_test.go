@@ -367,6 +367,53 @@ func TestAnUnresolvableHeaderIsSkippedNotFatal(t *testing.T) {
 	}
 }
 
+func TestAnUnresolvableHeaderFailsTheCallWhenRequired(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		writeOK(w, 1)
+	}))
+	defer srv.Close()
+
+	headers := map[string]any{
+		"X-Good": map[string]any{"type": "static", "value": "ok"},
+		"X-Bad":  map[string]any{"type": "no-such-resolver"},
+	}
+	for name, tc := range map[string]struct {
+		meta map[string]any
+		opts bool
+	}{
+		"connector metadata": {map[string]any{"headers": headers, "headers_required": true}, false},
+		"client option":      {map[string]any{"headers": headers}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			hits.Store(0)
+			conn := connector(srv.URL)
+			conn.Metadata = tc.meta
+			var slept int
+			c := New(Options{
+				Headers:                 dpheaders.NewRegistry(),
+				FailOnUnresolvedHeaders: tc.opts,
+				sleep:                   func(context.Context, time.Duration) error { slept++; return nil },
+			})
+			_, err := c.Do(authedContext(), pingCall(conn))
+			var hu *HeaderUnavailableError
+			if !errors.As(err, &hu) || hu.Header != "X-Bad" {
+				t.Fatalf("Do = %v, want a HeaderUnavailableError for X-Bad", err)
+			}
+			if err.Error() != "credential header X-Bad unavailable" {
+				t.Errorf("message = %q", err.Error())
+			}
+			if hits.Load() != 0 {
+				t.Errorf("backend received %d requests; want 0", hits.Load())
+			}
+			if slept != 0 {
+				t.Errorf("the refusal was retried %d times", slept)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // protocol negotiation and response decoding
 // ---------------------------------------------------------------------------

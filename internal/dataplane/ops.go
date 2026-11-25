@@ -2,6 +2,7 @@ package dataplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -185,6 +186,23 @@ func (a *opsAdapter) writeConnectorCache(ctx context.Context, tenantID string, c
 	return a.cache.Put(ctx, tenantID, entries)
 }
 
+// isHeaderUnavailable reports whether err is a refusal because a required
+// connector header could not be resolved (client.HeaderUnavailableError).
+func isHeaderUnavailable(err error) bool {
+	var hu *client.HeaderUnavailableError
+	return errors.As(err, &hu)
+}
+
+// markUnhealthyUnlessHeader marks conn unhealthy after a failed backend
+// call, except when the call never reached the backend because a required
+// header could not be resolved.
+func (a *opsAdapter) markUnhealthyUnlessHeader(ctx context.Context, conn *store.Connector, err error) {
+	if isHeaderUnavailable(err) {
+		return
+	}
+	_ = a.router.MarkUnhealthy(ctx, conn)
+}
+
 // Probe implements ops.ConnectorOps.
 func (a *opsAdapter) Probe(ctx context.Context, tenantID, connectorID string) (ops.ProbeResult, error) {
 	conn, err := a.getConnector(ctx, tenantID, connectorID)
@@ -199,8 +217,12 @@ func (a *opsAdapter) Probe(ctx context.Context, tenantID, connectorID string) (o
 	checkedAt := time.Now().UTC()
 
 	if callErr != nil {
-		if err := a.router.MarkUnhealthy(ctx, conn); err != nil {
-			return ops.ProbeResult{}, fmt.Errorf("ops: probe: persist unhealthy status: %w", err)
+		// A required header that could not be resolved says nothing about
+		// the backend, which was never reached: report it, persist nothing.
+		if !isHeaderUnavailable(callErr) {
+			if err := a.router.MarkUnhealthy(ctx, conn); err != nil {
+				return ops.ProbeResult{}, fmt.Errorf("ops: probe: persist unhealthy status: %w", err)
+			}
 		}
 		return ops.ProbeResult{
 			Status:    router.StatusUnhealthy,
@@ -250,7 +272,7 @@ func (a *opsAdapter) Discover(ctx context.Context, tenantID, connectorID string)
 
 	entries, err := a.discoverEntries(ctx, conn)
 	if err != nil {
-		_ = a.router.MarkUnhealthy(ctx, conn)
+		a.markUnhealthyUnlessHeader(ctx, conn, err)
 		return nil, fmt.Errorf("ops: discover connector %q: %w", conn.Name, err)
 	}
 	if err := a.router.MarkHealthy(ctx, conn); err != nil {
@@ -398,7 +420,7 @@ func (a *opsAdapter) Refresh(ctx context.Context, tenantID, connectorID string) 
 		}
 		entries, err := a.discoverEntries(ctx, conn)
 		if err != nil {
-			_ = a.router.MarkUnhealthy(ctx, conn)
+			a.markUnhealthyUnlessHeader(ctx, conn, err)
 			return 0, fmt.Errorf("ops: refresh cache: connector %q: %w", conn.Name, err)
 		}
 		if err := a.writeConnectorCache(ctx, tenantID, conn, entries); err != nil {
@@ -421,7 +443,7 @@ func (a *opsAdapter) Refresh(ctx context.Context, tenantID, connectorID string) 
 	for _, conn := range all {
 		entries, err := a.discoverEntries(ctx, conn)
 		if err != nil {
-			_ = a.router.MarkUnhealthy(ctx, conn)
+			a.markUnhealthyUnlessHeader(ctx, conn, err)
 			continue
 		}
 		if err := a.writeConnectorCache(ctx, tenantID, conn, entries); err != nil {

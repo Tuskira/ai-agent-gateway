@@ -176,6 +176,9 @@ func (o *Orchestrator) handleResourcesSubscribe(ctx context.Context, in Request)
 	backend, err := o.ensureBackend(ctx, in, conn)
 	if err != nil {
 		o.log.Warn("failed to prepare backend session", "connector_id", conn.ID, "error", err)
+		if e := headerUnavailable(err); e != nil {
+			return o.fail(in, e)
+		}
 		return o.fail(in, mcp.NewError(mcp.ErrorCodeToolExecution, "connector handshake failed: "+err.Error(), nil))
 	}
 

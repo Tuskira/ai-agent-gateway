@@ -186,7 +186,14 @@ func (p *ExternalServiceProvider) Resolve(ctx context.Context, cfg map[string]an
 	if sourceKey == "" {
 		sourceKey = src.Name
 	}
-	key := sourceKey + "|" + credentialID + "|" + field
+	// The connector is part of the key: the service is told which connector
+	// asks (connector_slug), so two connectors naming the same credential_id
+	// and field may be answered differently and must not share a value.
+	connectorKey := info.ConnectorID
+	if connectorKey == "" {
+		connectorKey = info.ConnectorSlug
+	}
+	key := sourceKey + "|" + connectorKey + "|" + credentialID + "|" + field
 	if v, ok := p.cached(tenant, key); ok {
 		return prefix + v, nil
 	}

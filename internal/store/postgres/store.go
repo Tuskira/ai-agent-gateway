@@ -118,6 +118,13 @@ var strictModelsMigration string
 //go:embed migrations/000015_connector_tool_prefix.up.sql
 var connectorToolPrefixMigration string
 
+// platformLockedMigration (000016) adds the locked flag to credentials and
+// credential_sources. Its sibling 000016_platform_locked.down.sql is for a
+// hand rollback only.
+//
+//go:embed migrations/000016_platform_locked.up.sql
+var platformLockedMigration string
+
 // migrations are applied in version order; each is recorded in
 // schema_migrations once applied. Append new migrations here (with the next
 // version) — never edit one that has already shipped.
@@ -140,6 +147,7 @@ var migrations = []struct {
 	{13, userIdentitiesMigration},
 	{14, strictModelsMigration},
 	{15, connectorToolPrefixMigration},
+	{16, platformLockedMigration},
 }
 
 // migrationLockKey is an arbitrary constant used as a Postgres advisory

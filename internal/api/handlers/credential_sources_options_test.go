@@ -12,6 +12,7 @@ import (
 
 	dataplaneheaders "github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/headers"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/secrets"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
 // optionsService is a credential service for the options route: it
@@ -176,7 +177,7 @@ func TestCredentialSources_Options(t *testing.T) {
 	})
 
 	t.Run("a rejected or missing token is reported", func(t *testing.T) {
-		if err := d.Secrets.Rotate(ctx, "tenant-a", "vault-auth", map[string]string{"token": "wrong"}); err != nil {
+		if err := d.Secrets.Rotate(ctx, "tenant-a", "vault-auth", map[string]string{"token": "wrong"}, store.UnlockedOnly); err != nil {
 			t.Fatal(err)
 		}
 		var res optionsResult
@@ -184,7 +185,7 @@ func TestCredentialSources_Options(t *testing.T) {
 		if !strings.Contains(res.Error, "401") {
 			t.Errorf("rejected token result = %+v", res)
 		}
-		if err := d.Secrets.Rotate(ctx, "tenant-a", "vault-auth", map[string]string{"token": "gw-token"}); err != nil {
+		if err := d.Secrets.Rotate(ctx, "tenant-a", "vault-auth", map[string]string{"token": "gw-token"}, store.UnlockedOnly); err != nil {
 			t.Fatal(err)
 		}
 

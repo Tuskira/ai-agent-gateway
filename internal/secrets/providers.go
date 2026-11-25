@@ -31,8 +31,9 @@ type SecretStoreProvider struct {
 }
 
 var (
-	_ headers.ExternalProvider = (*SecretStoreProvider)(nil)
-	_ headers.Invalidator      = (*SecretStoreProvider)(nil)
+	_ headers.ExternalProvider     = (*SecretStoreProvider)(nil)
+	_ headers.Invalidator          = (*SecretStoreProvider)(nil)
+	_ headers.CredentialReferencer = (*SecretStoreProvider)(nil)
 )
 
 // NewSecretStoreProvider builds the "secret_store" provider over svc.
@@ -66,6 +67,18 @@ func (p *SecretStoreProvider) Validate(cfg map[string]any) error {
 	return err
 }
 
+// ReferencedCredentials returns the credential cfg names, if any.
+func (p *SecretStoreProvider) ReferencedCredentials(cfg map[string]any) []string {
+	if name, _ := cfg["credential"].(string); name != "" {
+		return []string{name}
+	}
+	return nil
+}
+
+// Resolve reads the caller's own tenant's credential. A platform-locked
+// credential resolves only when ctx allows it (the header registry grants
+// that for a header a platform admin saved); otherwise it fails with an
+// error wrapping store.ErrLocked.
 func (p *SecretStoreProvider) Resolve(ctx context.Context, cfg map[string]any) (string, error) {
 	credential, field, err := secretStoreArgs(cfg)
 	if err != nil {

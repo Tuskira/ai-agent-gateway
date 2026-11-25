@@ -19,6 +19,9 @@ export interface Credential {
   type: string
   field_names: string[]
   key_id: string
+  /** Platform-managed: read-only for a tenant admin; usable only through
+   * platform-managed sources, headers and models. */
+  locked?: boolean
   used_by?: CredentialUsedBy[]
   created_at: string
   rotated_at?: string | null

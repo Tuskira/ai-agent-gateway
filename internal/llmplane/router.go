@@ -270,7 +270,11 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				var creds map[string]string
 				if t.Credential != "" {
 					var err error
-					if creds, err = rt.registry.credential(r.Context(), tenantOf(r.Context()), t.Credential); err != nil {
+					// A platform-locked credential is usable only by a
+					// platform model (seeded by the operator); a tenant
+					// model's base_url is the tenant admin's to change.
+					credCtx := store.WithLockedAccess(r.Context(), route.model.TenantID == "")
+					if creds, err = rt.registry.credential(credCtx, tenantOf(r.Context()), t.Credential); err != nil {
 						return nil, err
 					}
 				}

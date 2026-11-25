@@ -22,6 +22,7 @@ import (
 
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	pkgheaders "github.com/Tuskira/tusk-ai-secured-gateway/pkg/headers"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 
 	"golang.org/x/net/http/httpguts"
 )
@@ -280,6 +281,29 @@ func (reg *Registry) RegisterExternal(p pkgheaders.ExternalProvider) error {
 	return nil
 }
 
+// ReferencedCredentials returns the secret-store credentials one header
+// config names directly, as reported by its external provider when that
+// implements pkgheaders.CredentialReferencer. Anything else names none.
+func (reg *Registry) ReferencedCredentials(cfg map[string]any) []string {
+	if reg == nil {
+		return nil
+	}
+	if typ, _ := cfg["type"].(string); typ != "external" {
+		return nil
+	}
+	id, _ := cfg["provider"].(string)
+	p, ok := reg.provider(id)
+	if !ok {
+		return nil
+	}
+	ref, ok := p.(pkgheaders.CredentialReferencer)
+	if !ok {
+		return nil
+	}
+	sub, _ := cfg["config"].(map[string]any)
+	return ref.ReferencedCredentials(sub)
+}
+
 // Providers returns every registered ExternalProvider, sorted by
 // ProviderID for a stable GET /headers/providers response.
 func (reg *Registry) Providers() []pkgheaders.ExternalProvider {
@@ -351,6 +375,12 @@ func (reg *Registry) Resolve(ctx context.Context, headerName string, cfg map[str
 	if r != nil {
 		ctx = withIncomingRequest(ctx, r)
 	}
+
+	// Only a header a platform admin saved may resolve a platform-locked
+	// credential (see pkgheaders.AllowLockedKey); set explicitly so no
+	// allowance leaks in from the caller's ctx.
+	allow, _ := cfg[pkgheaders.AllowLockedKey].(bool)
+	ctx = store.WithLockedAccess(ctx, allow)
 
 	ctx, err := reg.withSource(ctx, headerName, cfg)
 	if err != nil {

@@ -49,6 +49,25 @@ type Invalidator interface {
 	Invalidate(ctx context.Context, principalID, connectorSlug string)
 }
 
+// CredentialReferencer is implemented by an ExternalProvider whose header
+// config names credentials of the gateway's own secret store directly (for
+// example secret_store's "credential"). The control API asks it which
+// credentials a header would resolve, so that a header saved by a caller
+// without platform.admin can be refused when one of them is
+// platform-locked; at request time such a credential resolves only for a
+// header a platform admin saved.
+type CredentialReferencer interface {
+	ReferencedCredentials(cfg map[string]any) []string
+}
+
+// AllowLockedKey is the server-owned key of a header config (next to
+// "type" and "provider") that marks a header saved by a platform admin
+// while it named a platform-locked credential. Only then may the header
+// resolve that credential. The control API strips it from every header a
+// request adds or changes and sets it only for a platform-admin caller, so
+// a tenant cannot forge it; a header kept unchanged keeps it.
+const AllowLockedKey = "allow_locked"
+
 // CredentialFetcher resolves one field of a named credential for a tenant.
 // It is the seam through which providers that need raw secret material
 // (e.g. gcp_wif's credential_config) reach the secret store, without a
@@ -81,6 +100,10 @@ type Source struct {
 	Name     string
 	Provider string
 	Enabled  bool
+	// Locked is true for a platform-locked source: only a platform admin
+	// can change it, so a provider may let it authenticate with a
+	// platform-locked credential (see store.WithLockedAccess).
+	Locked bool
 	// Config is the source's non-secret settings, shaped by the provider's
 	// SourceSchema.
 	Config map[string]any

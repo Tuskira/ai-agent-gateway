@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -125,11 +126,19 @@ func (h Models) validate(r *http.Request, tenantID string, req modelRequest) err
 		if err := validateName(fmt.Sprintf("targets[%d].credential", i), t.Credential); err != nil {
 			return err
 		}
-		if _, err := h.Store.Credentials().Get(r.Context(), tenantID, t.Credential); err != nil {
+		cred, err := h.Store.Credentials().Get(r.Context(), tenantID, t.Credential)
+		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return fmt.Errorf("targets[%d]: credential %q does not exist in this tenant", i, t.Credential)
 			}
 			return fmt.Errorf("%w: targets[%d] credential %q: %w", errCredentialLookup, i, t.Credential, err)
+		}
+		// A tenant model's base_url can be changed by a tenant admin, so a
+		// platform-locked credential would go wherever they point it. The
+		// LLM plane refuses it at call time too; only platform models
+		// (seeded by the operator) may use one.
+		if cred.Locked {
+			return fmt.Errorf("targets[%d]: credential %q is %s and cannot be used by a tenant model: %w", i, t.Credential, managedByPlatformMsg, store.ErrLocked)
 		}
 	}
 	if req.Price != nil {
@@ -169,6 +178,10 @@ func (h Models) Create(w http.ResponseWriter, r *http.Request) {
 	if err := h.validate(r, tid, req); err != nil {
 		if errors.Is(err, errCredentialLookup) {
 			writeStoreErr(w, r, "validate model", err)
+			return
+		}
+		if errors.Is(err, store.ErrLocked) {
+			httpx.WriteError(w, http.StatusForbidden, httpx.TypePermission, strings.TrimSuffix(err.Error(), ": "+store.ErrLocked.Error()))
 			return
 		}
 		httpx.ValidationError(w, err.Error())
@@ -266,6 +279,10 @@ func (h Models) Update(w http.ResponseWriter, r *http.Request) {
 	if err := h.validate(r, tid, req); err != nil {
 		if errors.Is(err, errCredentialLookup) {
 			writeStoreErr(w, r, "validate model", err)
+			return
+		}
+		if errors.Is(err, store.ErrLocked) {
+			httpx.WriteError(w, http.StatusForbidden, httpx.TypePermission, strings.TrimSuffix(err.Error(), ": "+store.ErrLocked.Error()))
 			return
 		}
 		httpx.ValidationError(w, err.Error())

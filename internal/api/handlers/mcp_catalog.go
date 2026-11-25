@@ -370,7 +370,7 @@ func (h MCPCatalog) Add(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.Store.Connectors().Create(r.Context(), c); err != nil {
 		if createdCred != "" {
-			if derr := h.Secrets.Delete(r.Context(), tid, createdCred); derr != nil {
+			if derr := h.Secrets.Delete(r.Context(), tid, createdCred, store.UnlockedOnly); derr != nil {
 				applog.From(r.Context()).Warn("remove credential after failed catalog add", "credential", createdCred, "error", derr)
 			}
 		}
@@ -556,7 +556,13 @@ func (h MCPCatalog) storeCatalogCredential(ctx context.Context, tid, slug, heade
 			return "", false, rerr
 		}
 		if reusable {
-			if err := h.Secrets.Rotate(ctx, tid, name, payload); err != nil {
+			// UnlockedOnly: a platform lock set after the reuse check
+			// stops the write; the next free name is tried instead.
+			err := h.Secrets.Rotate(ctx, tid, name, payload, store.UnlockedOnly)
+			if errors.Is(err, store.ErrLocked) {
+				continue
+			}
+			if err != nil {
 				return "", false, err
 			}
 			return name, false, nil
@@ -574,7 +580,7 @@ func (h MCPCatalog) reusableCatalogCredential(ctx context.Context, tid, name str
 		if c.Name != name {
 			continue
 		}
-		if c.Type != catalogCredentialType {
+		if c.Type != catalogCredentialType || c.Locked {
 			return false, nil
 		}
 		conns, err := h.Store.Connectors().List(ctx, tid)

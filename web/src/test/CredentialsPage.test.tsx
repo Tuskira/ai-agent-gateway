@@ -64,6 +64,28 @@ describe('CredentialsPage', () => {
     expect(screen.getByText('token')).toBeInTheDocument()
   })
 
+  it('marks a platform-managed credential read-only', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.endsWith('/api/v1/credentials'))
+          return jsonResponse({
+            items: [CREDENTIAL, { ...CREDENTIAL, id: 'cred2', name: 'plat', locked: true }],
+            total: 2,
+          })
+        if (url.endsWith('/api/v1/models')) return jsonResponse({ items: [], total: 0 })
+        throw new Error(`Unhandled fetch in test: ${url}`)
+      }),
+    )
+    renderPage()
+
+    expect(await screen.findByText('Platform-managed')).toBeInTheDocument()
+    expect(screen.getAllByText('Platform-managed')).toHaveLength(1)
+    // Only the unlocked row has a row-actions menu.
+    expect(screen.getAllByRole('button', { name: /actions for/i })).toHaveLength(1)
+  })
+
   it('links a used credential to its connector, and shows (unused) otherwise', async () => {
     vi.stubGlobal(
       'fetch',

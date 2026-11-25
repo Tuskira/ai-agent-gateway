@@ -17,6 +17,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/netguard"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/headers"
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/store"
 )
 
 // ExternalServiceProviderID is the provider id of ExternalServiceProvider,
@@ -190,7 +191,7 @@ func (p *ExternalServiceProvider) Resolve(ctx context.Context, cfg map[string]an
 		return prefix + v, nil
 	}
 
-	token, err := p.token(ctx, tenant, authCredential)
+	token, err := p.token(ctx, tenant, authCredential, src.Locked)
 	if err != nil {
 		return "", fmt.Errorf("external_service: source %q: %w", src.Name, err)
 	}
@@ -337,7 +338,7 @@ func (p *ExternalServiceProvider) optionsCall(ctx context.Context, src headers.S
 	if src.TenantID == "" {
 		return nil, errors.New("source has no tenant")
 	}
-	token, err := p.token(ctx, src.TenantID, authCredential)
+	token, err := p.token(ctx, src.TenantID, authCredential, src.Locked)
 	if err != nil {
 		return nil, err
 	}
@@ -389,10 +390,16 @@ func (p *ExternalServiceProvider) store(tenant, key, value string, ttl time.Dura
 	m[key] = externalServiceEntry{value: value, expires: p.now().Add(ttl)}
 }
 
-func (p *ExternalServiceProvider) token(ctx context.Context, tenant, credential string) (string, error) {
+// token reads the source's auth_credential. A platform-locked credential is
+// usable only by a platform-locked source: an unlocked source's url can be
+// changed by a tenant admin, who could then receive the token. The
+// allowance is set from the source alone, never inherited from ctx (a
+// header a platform admin saved must not lend it to an unlocked source).
+func (p *ExternalServiceProvider) token(ctx context.Context, tenant, credential string, sourceLocked bool) (string, error) {
 	if p.fetch == nil {
 		return "", errors.New("no secret store configured")
 	}
+	ctx = store.WithLockedAccess(ctx, sourceLocked)
 	token, err := p.fetch(ctx, tenant, credential, externalServiceTokenField)
 	if err != nil {
 		return "", fmt.Errorf("auth_credential %q: %w", credential, err)

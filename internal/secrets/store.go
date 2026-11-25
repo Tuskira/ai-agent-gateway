@@ -37,7 +37,10 @@ type Service struct {
 }
 
 type cacheEntry struct {
-	value     string
+	value string
+	// locked is the credential's platform-locked flag when the value was
+	// cached, so a cache hit is refused exactly as a store read would be.
+	locked    bool
 	expiresAt time.Time
 }
 
@@ -58,6 +61,12 @@ func NewService(cs store.CredentialStore, ring *KeyRing) *Service {
 // decrypting. A (tenantID, name) that already exists returns an error
 // wrapping store.ErrConflict.
 func (s *Service) Create(ctx context.Context, tenantID, name, typ string, payload map[string]string, createdBy string) (*store.Credential, error) {
+	return s.CreateLocked(ctx, tenantID, name, typ, payload, createdBy, false)
+}
+
+// CreateLocked is Create with the platform-managed flag set at insert, so
+// a locked credential is never visible unlocked.
+func (s *Service) CreateLocked(ctx context.Context, tenantID, name, typ string, payload map[string]string, createdBy string, locked bool) (*store.Credential, error) {
 	ciphertext, nonce, err := s.seal(payload)
 	if err != nil {
 		return nil, err
@@ -72,6 +81,7 @@ func (s *Service) Create(ctx context.Context, tenantID, name, typ string, payloa
 		KeyID:      s.ring.ActiveKeyID,
 		FieldNames: fieldNames(payload),
 		CreatedBy:  createdBy,
+		Locked:     locked,
 	}
 	if err := s.store.Create(ctx, cred); err != nil {
 		return nil, fmt.Errorf("secrets: create credential %q: %w", name, err)
@@ -82,37 +92,65 @@ func (s *Service) Create(ctx context.Context, tenantID, name, typ string, payloa
 // Get returns the decrypted payload of the credential named name for
 // tenantID, decrypting with whichever key id the row was last written
 // under (cred.KeyID) -- which need not be the ring's current active key.
+//
+// A platform-locked credential is refused (an error wrapping
+// store.ErrLocked, nothing decrypted) unless ctx carries
+// store.WithLockedAccess(ctx, true). This is the one place every
+// credential-by-name read goes through (header providers, model targets,
+// test routes), so configuration a tenant admin wrote can never make the
+// gateway send a locked secret to an endpoint of the tenant's choosing.
 func (s *Service) Get(ctx context.Context, tenantID, name string) (map[string]string, error) {
+	payload, _, err := s.get(ctx, tenantID, name)
+	return payload, err
+}
+
+func (s *Service) get(ctx context.Context, tenantID, name string) (map[string]string, bool, error) {
 	cred, err := s.store.Get(ctx, tenantID, name)
 	if err != nil {
-		return nil, fmt.Errorf("secrets: get credential %q: %w", name, err)
+		return nil, false, fmt.Errorf("secrets: get credential %q: %w", name, err)
+	}
+	if err := checkLockedAccess(ctx, name, cred.Locked); err != nil {
+		return nil, false, err
 	}
 
 	plaintext, err := s.ring.Decrypt(cred.KeyID, cred.Ciphertext, cred.Nonce)
 	if err != nil {
-		return nil, fmt.Errorf("secrets: decrypt credential %q: %w", name, err)
+		return nil, false, fmt.Errorf("secrets: decrypt credential %q: %w", name, err)
 	}
 
 	var payload map[string]string
 	if err := json.Unmarshal(plaintext, &payload); err != nil {
-		return nil, fmt.Errorf("secrets: unmarshal credential %q: %w", name, err)
+		return nil, false, fmt.Errorf("secrets: unmarshal credential %q: %w", name, err)
 	}
-	return payload, nil
+	return payload, cred.Locked, nil
+}
+
+// checkLockedAccess refuses a locked credential unless ctx allows it.
+func checkLockedAccess(ctx context.Context, name string, locked bool) error {
+	if locked && !store.LockedAccess(ctx) {
+		return fmt.Errorf("secrets: credential %q is managed by the platform and cannot be used here: %w", name, store.ErrLocked)
+	}
+	return nil
 }
 
 // GetField returns one field of the credential named name for tenantID. It
 // returns an error wrapping ErrFieldNotFound if the decrypted payload has
 // no such field.
 func (s *Service) GetField(ctx context.Context, tenantID, name, field string) (string, error) {
-	payload, err := s.Get(ctx, tenantID, name)
+	v, _, err := s.getField(ctx, tenantID, name, field)
+	return v, err
+}
+
+func (s *Service) getField(ctx context.Context, tenantID, name, field string) (string, bool, error) {
+	payload, locked, err := s.get(ctx, tenantID, name)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	v, ok := payload[field]
 	if !ok {
-		return "", fmt.Errorf("secrets: credential %q has no field %q: %w", name, field, ErrFieldNotFound)
+		return "", false, fmt.Errorf("secrets: credential %q has no field %q: %w", name, field, ErrFieldNotFound)
 	}
-	return v, nil
+	return v, locked, nil
 }
 
 // Seal JSON-encodes and encrypts payload under the ring's active key --
@@ -133,23 +171,36 @@ func (s *Service) Seal(payload map[string]string) (ciphertext, nonce []byte, key
 // Rotate re-encrypts name's payload (which may differ from what was
 // originally stored) under the ring's active key and persists it,
 // replacing the row's ciphertext/nonce/key_id/field_names and setting
-// RotatedAt.
-func (s *Service) Rotate(ctx context.Context, tenantID, name string, payload map[string]string) error {
+// RotatedAt. guard says whether a platform-locked row may be rotated
+// (store.ErrLocked otherwise; the check is part of the write).
+func (s *Service) Rotate(ctx context.Context, tenantID, name string, payload map[string]string, guard store.LockGuard) error {
 	ciphertext, nonce, err := s.seal(payload)
 	if err != nil {
 		return err
 	}
-	if err := s.store.Rotate(ctx, tenantID, name, ciphertext, nonce, s.ring.ActiveKeyID, fieldNames(payload)); err != nil {
+	if err := s.store.Rotate(ctx, tenantID, name, ciphertext, nonce, s.ring.ActiveKeyID, fieldNames(payload), guard); err != nil {
 		return fmt.Errorf("secrets: rotate credential %q: %w", name, err)
 	}
 	s.Invalidate(tenantID, name)
 	return nil
 }
 
-// Delete removes the credential named name for tenantID.
-func (s *Service) Delete(ctx context.Context, tenantID, name string) error {
-	if err := s.store.Delete(ctx, tenantID, name); err != nil {
+// Delete removes the credential named name for tenantID. guard says
+// whether a platform-locked row may be deleted (store.ErrLocked otherwise).
+func (s *Service) Delete(ctx context.Context, tenantID, name string, guard store.LockGuard) error {
+	if err := s.store.Delete(ctx, tenantID, name, guard); err != nil {
 		return fmt.Errorf("secrets: delete credential %q: %w", name, err)
+	}
+	s.Invalidate(tenantID, name)
+	return nil
+}
+
+// SetLocked sets or clears the platform-locked flag of the credential
+// named name and drops its cached values, so the new flag applies to the
+// next read on this replica.
+func (s *Service) SetLocked(ctx context.Context, tenantID, name string, locked bool) error {
+	if err := s.store.SetLocked(ctx, tenantID, name, locked); err != nil {
+		return fmt.Errorf("secrets: set credential %q locked: %w", name, err)
 	}
 	s.Invalidate(tenantID, name)
 	return nil
@@ -195,7 +246,8 @@ func (s *Service) ReEncryptAll(ctx context.Context, tenantID string) (int, error
 		if err != nil {
 			return rewritten, fmt.Errorf("secrets: re-encrypt credential %q: %w", c.Name, err)
 		}
-		if err := s.store.Rotate(ctx, tenantID, c.Name, ciphertext, nonce, s.ring.ActiveKeyID, full.FieldNames); err != nil {
+		// Operator tooling: a locked row is re-encrypted like any other.
+		if err := s.store.Rotate(ctx, tenantID, c.Name, ciphertext, nonce, s.ring.ActiveKeyID, full.FieldNames, store.AllowLocked); err != nil {
 			return rewritten, fmt.Errorf("secrets: persist re-encrypted credential %q: %w", c.Name, err)
 		}
 		s.Invalidate(tenantID, c.Name)
@@ -211,15 +263,18 @@ func (s *Service) ReEncryptAll(ctx context.Context, tenantID string) (int, error
 func (s *Service) Fetcher() headers.CredentialFetcher {
 	return func(ctx context.Context, tenantID, name, field string) (string, error) {
 		key := cacheKey(tenantID, name, field)
-		if v, ok := s.cacheGet(key); ok {
+		if v, locked, ok := s.cacheGet(key); ok {
+			if err := checkLockedAccess(ctx, name, locked); err != nil {
+				return "", err
+			}
 			return v, nil
 		}
 
-		v, err := s.GetField(ctx, tenantID, name, field)
+		v, locked, err := s.getField(ctx, tenantID, name, field)
 		if err != nil {
 			return "", err
 		}
-		s.cacheSet(key, v)
+		s.cacheSet(key, v, locked)
 		return v, nil
 	}
 }
@@ -251,24 +306,24 @@ func (s *Service) evictCachePrefix(prefix string) {
 	}
 }
 
-func (s *Service) cacheGet(key string) (string, bool) {
+func (s *Service) cacheGet(key string) (value string, locked, ok bool) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	e, ok := s.cache[key]
 	if !ok {
-		return "", false
+		return "", false, false
 	}
 	if time.Now().After(e.expiresAt) {
 		delete(s.cache, key)
-		return "", false
+		return "", false, false
 	}
-	return e.value, true
+	return e.value, e.locked, true
 }
 
-func (s *Service) cacheSet(key, value string) {
+func (s *Service) cacheSet(key, value string, locked bool) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	s.cache[key] = cacheEntry{value: value, expiresAt: time.Now().Add(s.cacheTTL)}
+	s.cache[key] = cacheEntry{value: value, locked: locked, expiresAt: time.Now().Add(s.cacheTTL)}
 }
 
 func cacheKey(tenantID, name, field string) string {

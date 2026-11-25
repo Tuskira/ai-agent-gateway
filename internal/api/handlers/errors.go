@@ -20,6 +20,11 @@ func writeStoreErr(w http.ResponseWriter, r *http.Request, action string, err er
 		httpx.NotFound(w, "not found")
 	case errors.Is(err, store.ErrConflict):
 		httpx.Conflict(w, "already exists")
+	case errors.Is(err, store.ErrLocked):
+		// A guarded write found the row platform-locked (possibly locked
+		// after the handler's own check), or a locked credential was read
+		// for a caller without locked access.
+		httpx.WriteError(w, http.StatusForbidden, httpx.TypePermission, managedByPlatformMsg)
 	default:
 		applog.From(r.Context()).Error(action+" failed", "error", err)
 		httpx.Internal(w, "internal error")

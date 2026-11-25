@@ -17,6 +17,8 @@ export interface CredentialSource {
   /** Non-secret settings shaped by the provider's `source_schema`. */
   config: Record<string, unknown>
   enabled: boolean
+  /** Platform-managed: usable in headers, read-only for a tenant admin. */
+  locked?: boolean
   /** Connectors whose headers name this source. */
   used_by: CredentialSourceUsedBy[]
   created_at: string

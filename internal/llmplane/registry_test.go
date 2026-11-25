@@ -60,10 +60,11 @@ func (m *memCredentials) Get(_ context.Context, tenantID, name string) (*store.C
 }
 
 func (m *memCredentials) List(context.Context, string) ([]*store.Credential, error) { return nil, nil }
-func (m *memCredentials) Rotate(context.Context, string, string, []byte, []byte, string, []string) error {
+func (m *memCredentials) Rotate(context.Context, string, string, []byte, []byte, string, []string, store.LockGuard) error {
 	return nil
 }
-func (m *memCredentials) Delete(context.Context, string, string) error { return nil }
+func (m *memCredentials) Delete(context.Context, string, string, store.LockGuard) error { return nil }
+func (m *memCredentials) SetLocked(context.Context, string, string, bool) error         { return nil }
 
 // registryFixture is a registry over an in-memory model store and a real
 // secrets.Service, plus a recording capture sink.

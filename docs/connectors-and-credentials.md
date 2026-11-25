@@ -416,7 +416,8 @@ At most 1000 options are returned.
 
 `GET /api/v1/credential-sources` lists the tenant's sources, each with
 `used_by`: the connectors whose headers name it. `PUT
-/api/v1/credential-sources/{id}` changes `name`, `config` or `enabled`; the
+/api/v1/credential-sources/{id}` changes `name`, `config`, `enabled` or (with
+`platform.admin`) `locked`; the
 provider is fixed. Renaming or deleting a source that a connector header
 still names is `409 conflict`; point the headers elsewhere first.
 
@@ -478,6 +479,74 @@ in place (re-encrypts under the ring's current active key, sets
 process that served the `PUT`; other gateway processes keep their cached
 copy for up to 5 minutes, or until a backend answers 401 (see
 Troubleshooting).
+
+### Platform-locked credentials and sources
+
+A platform operator can provision credential plumbing that a tenant admin
+may use but may not change, take over or send somewhere else. Both
+`/credentials` and `/credential-sources` accept `locked: true` on `POST`
+(and `locked` on `PUT`); setting or clearing it needs `platform.admin`
+(`403 permission_error` otherwise). Views show `locked`.
+
+**Change.** For a locked credential or source, a caller without
+`platform.admin` gets `403` "managed by the platform" on `PUT` (rotate,
+rename, re-point, `enabled: false`) and `DELETE`. The lock check is part of
+the database write itself, so a lock a platform admin sets while a tenant's
+request is in flight is never bypassed or cleared: that request also gets
+the `403`. Only the `locked` field of a `PUT` writes the flag. For a
+credential, `locked: true` with a new payload locks first; `locked: false`
+unlocks last. Locking an unlocked source needs its `config` in the same
+`PUT` (`400` otherwise), and the config and the lock are written in one
+statement, so a source is never locked while it still points where the
+tenant chose.
+
+**Use.** A locked credential's value is only ever sent where the platform
+chose:
+
+- Through a **locked source** whose `config.auth_credential` names it. A
+  connector header of the tenant's may name such a source (that is the
+  point). An unlocked source cannot authenticate with a locked credential:
+  a tenant admin gets `403` creating or updating one, a platform admin gets
+  `400` ("must be locked too"), and at request time it fails to resolve.
+- Through a connector header (`secret_store`, or any provider that names
+  credentials directly) **saved by a platform admin**. The gateway stamps
+  such a header with `"allow_locked": true`; only a stamped header resolves
+  a locked credential. The key is server-owned: it is removed from every
+  header a request adds or changes and set only for a `platform.admin`
+  caller, so a tenant cannot forge it; migration 000016 removes it from
+  every header stored before. A platform admin's save re-checks every
+  header of the connector. A tenant admin gets `403` saving a header that
+  names a locked credential, and on a connector that has a stamped header
+  gets `403` changing its endpoint or any metadata other than `enabled` and
+  `description` (headers, `tls`, ...); disable and enable still work. A
+  header the tenant saved earlier stops resolving the moment its credential
+  is locked.
+- Through a **platform model** (seeded from the operator's configuration).
+  A tenant model, whose `base_url` a tenant admin can change, cannot name a
+  locked credential: `POST`/`PUT /models` and catalog connect answer `403`
+  for every caller, and the LLM plane refuses it at call time.
+- The model catalog's provider test and price routes read a locked
+  credential only for a `platform.admin` caller.
+
+Every read of a credential's value goes through one check in the secret
+store, so these rules also hold for a header saved before the credential
+was locked, and for cached values (the cache keeps the lock flag with the
+value; a lock change drops this process's cache at once, other processes
+within the 5-minute cache TTL).
+
+**Taken names.** A tenant admin may already have used the name the
+platform wants. A platform `POST` with `locked: true` then answers `409`
+and says how to take the row over; it never takes it over silently. The
+takeover is explicit: `PUT /credentials/{name}` (or
+`PUT /credential-sources/{id}`) with `locked: true` and the platform's own
+payload (or, required for a source, config). From then on the tenant cannot change or delete it,
+and every connector header, source or model the tenant had pointed at that
+name stops receiving the value (see **Use**). A soft-deleted source's name
+is free again.
+
+The console shows a "Platform-managed" badge and hides the edit actions on
+locked rows. `gateway secrets rekey` (operator tooling) re-encrypts locked
+rows like any other.
 
 **Master-key rotation** is a separate, ring-level operation from
 credential rotation above:

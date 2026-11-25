@@ -294,10 +294,15 @@ func (nopCredentials) Get(context.Context, string, string) (*store.Credential, e
 	return nil, store.ErrNotFound
 }
 func (nopCredentials) List(context.Context, string) ([]*store.Credential, error) { return nil, nil }
-func (nopCredentials) Rotate(context.Context, string, string, []byte, []byte, string, []string) error {
+func (nopCredentials) Rotate(context.Context, string, string, []byte, []byte, string, []string, store.LockGuard) error {
 	return store.ErrNotFound
 }
-func (nopCredentials) Delete(context.Context, string, string) error { return store.ErrNotFound }
+func (nopCredentials) Delete(context.Context, string, string, store.LockGuard) error {
+	return store.ErrNotFound
+}
+func (nopCredentials) SetLocked(context.Context, string, string, bool) error {
+	return store.ErrNotFound
+}
 
 type nopConnectors struct{}
 

@@ -605,7 +605,9 @@ func (h ModelCatalog) Test(w http.ResponseWriter, r *http.Request) {
 
 	key := req.APIKey
 	if req.Credential != "" {
-		payload, err := h.Secrets.Get(r.Context(), tid, req.Credential)
+		// The catalog's URL is the operator's, but a platform-locked
+		// credential is still read only for a platform admin.
+		payload, err := h.Secrets.Get(store.WithLockedAccess(r.Context(), h.isPlatformAdmin(r)), tid, req.Credential)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				httpx.ValidationError(w, "credential not found")
@@ -848,6 +850,13 @@ func (h ModelCatalog) Connect(w http.ResponseWriter, r *http.Request) {
 			httpx.ValidationError(w, err.Error())
 			return
 		}
+		// The connected rows are tenant models, whose base_url a tenant
+		// admin may change later: never wire a platform-locked credential
+		// into them (the LLM plane refuses it at call time as well).
+		if existing, err := h.Store.Credentials().Get(r.Context(), tid, req.Credential.Name); err == nil && existing.Locked {
+			httpx.WriteError(w, http.StatusForbidden, httpx.TypePermission, fmt.Sprintf("credential %q is %s and cannot be used by a tenant model", req.Credential.Name, managedByPlatformMsg))
+			return
+		}
 		credSpec.Existing = req.Credential.Name
 	} else {
 		name := req.Credential.New.Name
@@ -947,7 +956,9 @@ func (h ModelCatalog) resolvePriceAPIKey(w http.ResponseWriter, r *http.Request,
 	}
 	switch {
 	case haveCred:
-		payload, err := h.Secrets.Get(r.Context(), tid, req.Credential)
+		// The catalog's URL is the operator's, but a platform-locked
+		// credential is still read only for a platform admin.
+		payload, err := h.Secrets.Get(store.WithLockedAccess(r.Context(), h.isPlatformAdmin(r)), tid, req.Credential)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				httpx.ValidationError(w, "credential not found")

@@ -27,6 +27,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tools/list_changed`. Stored in Postgres (migration `000015`).
   Connectors without a prefix behave exactly as before. See
   [docs/connectors-and-credentials.md](docs/connectors-and-credentials.md#tool-prefix).
+- **Platform-locked credentials and credential sources.** `/credentials`
+  and `/credential-sources` take `locked` (migration 000016, default
+  `false`; setting or clearing it needs `platform.admin`). A caller without
+  `platform.admin` can still use a locked row in connector headers but gets
+  `403` "managed by the platform" on rotate, update, disable and delete, and
+  `403` when registering or updating a source whose `config.auth_credential`
+  names a locked credential. Views show `locked`; the console shows a
+  "Platform-managed" badge and hides the edit actions on locked rows.
+- **A locked credential is used only where the platform chose.** Its value
+  resolves only through a locked credential source, a connector header a
+  platform admin saved (stamped `allow_locked`, a server-owned key), a
+  platform model, or a platform admin's own request. A tenant admin gets
+  `403` naming one in a connector header, a source or a tenant model, and
+  cannot re-point a connector that carries a stamped header or change its
+  metadata beyond `enabled`/`description`. Migration 000016 removes any
+  `allow_locked` stored before. Locking an unlocked source needs its
+  `config` in the same request; both are written in one statement. A header,
+  source or model the tenant set up before the lock stops receiving the
+  value. A platform `POST` of a name the tenant already uses is `409` with
+  how to take it over (`PUT` with `locked: true`).
+- **A platform lock cannot be lost to a concurrent tenant write.**
+  Credential rotate and delete and source update and delete check the lock
+  in the same SQL statement (`store.ErrLocked`), and a source update never
+  writes `locked`; `CredentialSourceStore.SetLocked` and `UpdateLocked` do.
+  **Breaking for store backends:** `CredentialStore.Rotate`/`Delete` and
+  `CredentialSourceStore.Update`/`SoftDelete` take a `store.LockGuard`, and
+  `CredentialSourceStore` gains `SetLocked` and `UpdateLocked`.
 
 ### Changed
 

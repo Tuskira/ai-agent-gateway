@@ -31,12 +31,17 @@ type createCredentialSourceRequest struct {
 	Provider string         `json:"provider"`
 	Config   map[string]any `json:"config"`
 	Enabled  *bool          `json:"enabled"`
+	// Locked marks the source platform-managed; setting it needs
+	// platform.admin.
+	Locked bool `json:"locked"`
 }
 
 type updateCredentialSourceRequest struct {
 	Name    *string        `json:"name"`
 	Config  map[string]any `json:"config"`
 	Enabled *bool          `json:"enabled"`
+	// Locked sets or clears the platform-managed flag (platform.admin only).
+	Locked *bool `json:"locked"`
 }
 
 type credentialSourceView struct {
@@ -45,6 +50,9 @@ type credentialSourceView struct {
 	Provider string         `json:"provider"`
 	Config   map[string]any `json:"config"`
 	Enabled  bool           `json:"enabled"`
+	// Locked is true for a platform-managed source: connector headers may
+	// use it, but it cannot be changed without platform.admin.
+	Locked bool `json:"locked"`
 	// UsedBy is every connector whose headers name this source. Empty,
 	// never null, when nothing references it.
 	UsedBy    []connectorRef `json:"used_by"`
@@ -84,6 +92,7 @@ func newCredentialSourceView(s *store.CredentialSource, usedBy []connectorRef) c
 		Provider:  s.Provider,
 		Config:    cfg,
 		Enabled:   s.Enabled,
+		Locked:    s.Locked,
 		UsedBy:    usedBy,
 		CreatedAt: formatTime(s.CreatedAt),
 		UpdatedAt: formatTime(s.UpdatedAt),
@@ -144,6 +153,40 @@ func (h CredentialSources) sourceProvider(id string) (pkgheaders.ExternalProvide
 	return p, sp, nil
 }
 
+// denyLockedAuthCredential refuses a source config whose auth_credential
+// names a platform-locked credential of the tenant: 403 for a caller
+// without platform.admin (a tenant must not point a source at a URL of its
+// choosing and have the gateway send the platform's token there), and 400
+// for a platform admin when the source would not be locked itself (an
+// unlocked source can be re-pointed by the tenant later; at request time
+// such a source cannot read the credential anyway). It reports whether it
+// refused.
+func (h CredentialSources) denyLockedAuthCredential(w http.ResponseWriter, r *http.Request, tid string, cfg map[string]any, sourceLocked bool) bool {
+	name, _ := cfg["auth_credential"].(string)
+	if name == "" {
+		return false
+	}
+	cred, err := h.Store.Credentials().Get(r.Context(), tid, name)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return false
+		}
+		writeStoreErr(w, r, "check credential source auth credential", err)
+		return true
+	}
+	if !cred.Locked {
+		return false
+	}
+	if h.denyLockedChange(w, r, true) {
+		return true
+	}
+	if !sourceLocked {
+		httpx.ValidationError(w, fmt.Sprintf("auth_credential %q is managed by the platform; a source that uses it must be locked too (\"locked\": true)", name))
+		return true
+	}
+	return false
+}
+
 // invalidate drops cached values the source's provider holds for the
 // caller's tenant, so an edited or deleted source takes effect at once.
 func (h CredentialSources) invalidate(r *http.Request, providerID string) {
@@ -169,6 +212,9 @@ func (h CredentialSources) Create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &req) {
 		return
 	}
+	if h.denySetLocked(w, r, req.Locked, false) {
+		return
+	}
 	req.Name = strings.TrimSpace(req.Name)
 	if err := validateName("name", req.Name); err != nil {
 		httpx.ValidationError(w, err.Error())
@@ -190,6 +236,9 @@ func (h CredentialSources) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.ValidationError(w, "config: "+err.Error())
 		return
 	}
+	if h.denyLockedAuthCredential(w, r, tid, req.Config, req.Locked) {
+		return
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -201,8 +250,15 @@ func (h CredentialSources) Create(w http.ResponseWriter, r *http.Request) {
 		Provider: req.Provider,
 		Config:   req.Config,
 		Enabled:  enabled,
+		Locked:   req.Locked,
 	}
 	if err := h.Store.CredentialSources().Create(r.Context(), src); err != nil {
+		if req.Locked && errors.Is(err, store.ErrConflict) {
+			// The name is taken, possibly by the tenant itself. Never take
+			// it over silently: the caller decides, with an explicit PUT.
+			httpx.Conflict(w, fmt.Sprintf("a credential source named %q already exists in this tenant; to take it over, PUT /api/v1/credential-sources/{id} with \"locked\": true and the config", req.Name))
+			return
+		}
 		writeStoreErr(w, r, "create credential source", err)
 		return
 	}
@@ -252,9 +308,12 @@ func (h CredentialSources) Get(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, newCredentialSourceView(src, usage[src.Name]))
 }
 
-// Update handles PUT /api/v1/credential-sources/{id}. name, config and
-// enabled are each optional; provider cannot change. Renaming a source
-// that connector headers still reference is refused with 409.
+// Update handles PUT /api/v1/credential-sources/{id}. name, config,
+// enabled and locked are each optional; provider cannot change. Renaming a
+// source that connector headers still reference is refused with 409. A
+// lock is applied before the other fields are written and an unlock after
+// them; the store write carries the lock check itself, so a lock set by a
+// platform admin after this handler's read is never bypassed or cleared.
 func (h CredentialSources) Update(w http.ResponseWriter, r *http.Request) {
 	tid, ok := requireTenant(w, r)
 	if !ok {
@@ -267,6 +326,26 @@ func (h CredentialSources) Update(w http.ResponseWriter, r *http.Request) {
 	src, err := h.Store.CredentialSources().Get(r.Context(), tid, chi.URLParam(r, "id"))
 	if err != nil {
 		writeStoreErr(w, r, "update credential source", err)
+		return
+	}
+	if h.denyLockedChange(w, r, src.Locked) {
+		return
+	}
+	if req.Locked != nil && h.denySetLocked(w, r, *req.Locked, src.Locked) {
+		return
+	}
+	finalLocked := src.Locked
+	if req.Locked != nil {
+		finalLocked = *req.Locked
+	}
+	if req.Config != nil && h.denyLockedAuthCredential(w, r, tid, req.Config, finalLocked) {
+		return
+	}
+	if req.Config == nil && src.Locked && !finalLocked && h.denyLockedAuthCredential(w, r, tid, src.Config, false) {
+		return
+	}
+	if finalLocked && !src.Locked && req.Config == nil {
+		httpx.ValidationError(w, "locking a source needs its config in the same request (\"config\"), so it is never locked with a config the platform did not set")
 		return
 	}
 	usage, err := h.usageForTenant(r.Context(), tid)
@@ -303,10 +382,31 @@ func (h CredentialSources) Update(w http.ResponseWriter, r *http.Request) {
 		src.Enabled = *req.Enabled
 	}
 
-	if err := h.Store.CredentialSources().Update(r.Context(), src); err != nil {
+	guard := store.LockGuard(h.isPlatformAdmin(r))
+	if finalLocked && !src.Locked {
+		// Locking an unlocked source (for example one a tenant created
+		// under a name the platform takes over) writes the platform's
+		// config and the lock in one statement: a locked source with the
+		// tenant's URL would get a locked credential's token.
+		if err := h.Store.CredentialSources().UpdateLocked(r.Context(), src); err != nil {
+			writeStoreErr(w, r, "lock credential source", err)
+			return
+		}
+		h.invalidate(r, src.Provider)
+		httpx.WriteJSON(w, http.StatusOK, newCredentialSourceView(src, usage[src.Name]))
+		return
+	}
+	if err := h.Store.CredentialSources().Update(r.Context(), src, guard); err != nil {
 		writeStoreErr(w, r, "update credential source", err)
 		return
 	}
+	if !finalLocked && src.Locked {
+		if err := h.Store.CredentialSources().SetLocked(r.Context(), tid, src.ID, false); err != nil {
+			writeStoreErr(w, r, "unlock credential source", err)
+			return
+		}
+	}
+	src.Locked = finalLocked
 	h.invalidate(r, src.Provider)
 	httpx.WriteJSON(w, http.StatusOK, newCredentialSourceView(src, usage[src.Name]))
 }
@@ -323,6 +423,9 @@ func (h CredentialSources) Delete(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, r, "delete credential source", err)
 		return
 	}
+	if h.denyLockedChange(w, r, src.Locked) {
+		return
+	}
 	usage, err := h.usageForTenant(r.Context(), tid)
 	if err != nil {
 		writeStoreErr(w, r, "delete credential source", err)
@@ -332,7 +435,7 @@ func (h CredentialSources) Delete(w http.ResponseWriter, r *http.Request) {
 		httpx.Conflict(w, fmt.Sprintf("credential source %q is used by %s", src.Name, refNames(refs)))
 		return
 	}
-	if err := h.Store.CredentialSources().SoftDelete(r.Context(), tid, src.ID); err != nil {
+	if err := h.Store.CredentialSources().SoftDelete(r.Context(), tid, src.ID, store.LockGuard(h.isPlatformAdmin(r))); err != nil {
 		writeStoreErr(w, r, "delete credential source", err)
 		return
 	}

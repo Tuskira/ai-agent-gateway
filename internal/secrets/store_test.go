@@ -78,13 +78,16 @@ func (f *fakeCredentialStore) List(_ context.Context, tenantID string) ([]*store
 	return out, nil
 }
 
-func (f *fakeCredentialStore) Rotate(_ context.Context, tenantID, name string, ciphertext, nonce []byte, keyID string, fieldNames []string) error {
+func (f *fakeCredentialStore) Rotate(_ context.Context, tenantID, name string, ciphertext, nonce []byte, keyID string, fieldNames []string, guard store.LockGuard) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	c, ok := f.byKey[fakeKey(tenantID, name)]
 	if !ok {
 		return store.ErrNotFound
+	}
+	if c.Locked && !bool(guard) {
+		return store.ErrLocked
 	}
 	c.Ciphertext = ciphertext
 	c.Nonce = nonce
@@ -95,15 +98,30 @@ func (f *fakeCredentialStore) Rotate(_ context.Context, tenantID, name string, c
 	return nil
 }
 
-func (f *fakeCredentialStore) Delete(_ context.Context, tenantID, name string) error {
+func (f *fakeCredentialStore) Delete(_ context.Context, tenantID, name string, guard store.LockGuard) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	key := fakeKey(tenantID, name)
-	if _, ok := f.byKey[key]; !ok {
+	c, ok := f.byKey[key]
+	if !ok {
 		return store.ErrNotFound
 	}
+	if c.Locked && !bool(guard) {
+		return store.ErrLocked
+	}
 	delete(f.byKey, key)
+	return nil
+}
+
+func (f *fakeCredentialStore) SetLocked(_ context.Context, tenantID, name string, locked bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.byKey[fakeKey(tenantID, name)]
+	if !ok {
+		return store.ErrNotFound
+	}
+	c.Locked = locked
 	return nil
 }
 
@@ -215,7 +233,7 @@ func TestService_Rotate(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := svc.Rotate(ctx, "tenant-a", "okta", map[string]string{"client_secret": "new"}); err != nil {
+	if err := svc.Rotate(ctx, "tenant-a", "okta", map[string]string{"client_secret": "new"}, store.UnlockedOnly); err != nil {
 		t.Fatalf("Rotate: %v", err)
 	}
 
@@ -243,7 +261,7 @@ func TestService_Delete(t *testing.T) {
 	if _, err := svc.Create(ctx, "tenant-a", "okta", "t", map[string]string{"x": "1"}, "u"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := svc.Delete(ctx, "tenant-a", "okta"); err != nil {
+	if err := svc.Delete(ctx, "tenant-a", "okta", store.UnlockedOnly); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := svc.Get(ctx, "tenant-a", "okta"); !errors.Is(err, store.ErrNotFound) {
@@ -349,7 +367,7 @@ func TestService_Fetcher_Caches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
-	if err := cs.Rotate(ctx, "tenant-a", "okta", ciphertext, nonce, row.KeyID, row.FieldNames); err != nil {
+	if err := cs.Rotate(ctx, "tenant-a", "okta", ciphertext, nonce, row.KeyID, row.FieldNames, store.UnlockedOnly); err != nil {
 		t.Fatalf("raw Rotate: %v", err)
 	}
 
@@ -384,7 +402,7 @@ func TestService_Fetcher_TTLExpires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
-	if err := cs.Rotate(ctx, "tenant-a", "okta", ciphertext, nonce, row.KeyID, row.FieldNames); err != nil {
+	if err := cs.Rotate(ctx, "tenant-a", "okta", ciphertext, nonce, row.KeyID, row.FieldNames, store.UnlockedOnly); err != nil {
 		t.Fatalf("raw Rotate: %v", err)
 	}
 
@@ -420,7 +438,7 @@ func TestService_Invalidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
-	if err := cs.Rotate(ctx, "tenant-a", "okta", ciphertext, nonce, row.KeyID, row.FieldNames); err != nil {
+	if err := cs.Rotate(ctx, "tenant-a", "okta", ciphertext, nonce, row.KeyID, row.FieldNames, store.UnlockedOnly); err != nil {
 		t.Fatalf("raw Rotate: %v", err)
 	}
 

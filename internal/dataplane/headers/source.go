@@ -39,6 +39,7 @@ func SourceFromStore(src *store.CredentialSource) *pkgheaders.Source {
 		Name:     src.Name,
 		Provider: src.Provider,
 		Enabled:  src.Enabled,
+		Locked:   src.Locked,
 		Config:   cfg,
 	}
 }

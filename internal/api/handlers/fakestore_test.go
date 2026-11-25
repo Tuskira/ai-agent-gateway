@@ -388,12 +388,15 @@ func (s *fakeCredentialStore) List(_ context.Context, tenantID string) ([]*store
 	return out, nil
 }
 
-func (s *fakeCredentialStore) Rotate(_ context.Context, tenantID, name string, ciphertext, nonce []byte, keyID string, fieldNames []string) error {
+func (s *fakeCredentialStore) Rotate(_ context.Context, tenantID, name string, ciphertext, nonce []byte, keyID string, fieldNames []string, guard store.LockGuard) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.byKey[credKey(tenantID, name)]
 	if !ok {
 		return store.ErrNotFound
+	}
+	if c.Locked && !bool(guard) {
+		return store.ErrLocked
 	}
 	c.Ciphertext = ciphertext
 	c.Nonce = nonce
@@ -404,14 +407,29 @@ func (s *fakeCredentialStore) Rotate(_ context.Context, tenantID, name string, c
 	return nil
 }
 
-func (s *fakeCredentialStore) Delete(_ context.Context, tenantID, name string) error {
+func (s *fakeCredentialStore) Delete(_ context.Context, tenantID, name string, guard store.LockGuard) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := credKey(tenantID, name)
-	if _, ok := s.byKey[key]; !ok {
+	c, ok := s.byKey[key]
+	if !ok {
 		return store.ErrNotFound
 	}
+	if c.Locked && !bool(guard) {
+		return store.ErrLocked
+	}
 	delete(s.byKey, key)
+	return nil
+}
+
+func (s *fakeCredentialStore) SetLocked(_ context.Context, tenantID, name string, locked bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.byKey[credKey(tenantID, name)]
+	if !ok {
+		return store.ErrNotFound
+	}
+	c.Locked = locked
 	return nil
 }
 

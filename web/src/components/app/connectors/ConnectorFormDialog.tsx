@@ -250,6 +250,9 @@ function ConnectorFormBody({
         // Not edited here: keep a disabled connector disabled across an edit.
         enabled: connector?.metadata?.enabled === false ? false : undefined,
         restrict_exempt: restrictExempt ? true : undefined,
+        // Not edited here: keep a connector that requires its headers
+        // requiring them across an edit.
+        headers_required: connector?.metadata?.headers_required === true ? true : undefined,
       },
     }
 

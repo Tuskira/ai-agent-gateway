@@ -165,6 +165,13 @@ type Connectors struct {
 	// whoever operates the connector endpoint. Enable only for backends you
 	// fully trust. Env: GATEWAY_CONNECTORS_ALLOW_BEARER_TOKEN_FORWARDING.
 	AllowBearerTokenForwarding bool `yaml:"allow_bearer_token_forwarding"`
+	// FailOnUnresolvedHeaders makes a call to any connector fail with
+	// JSON-RPC -32002 ("credential header <name> unavailable") when one of
+	// the connector's configured headers cannot be resolved, instead of
+	// sending the request without it. A connector can opt in on its own
+	// with metadata.headers_required: true. Default false.
+	// Env: GATEWAY_CONNECTORS_FAIL_ON_UNRESOLVED_HEADERS.
+	FailOnUnresolvedHeaders bool `yaml:"fail_on_unresolved_headers"`
 }
 
 // Egress is the outbound-request (SSRF) policy applied to every URL a

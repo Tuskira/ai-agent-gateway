@@ -11,7 +11,7 @@ import (
 // store.Invalidation for every committed write to a row a gateway process
 // caches: agent profiles and their grants and skills, the skill registry,
 // credentials, credential sources and API keys. The events are published by
-// row triggers (migration 000015), so they commit, or roll back, with the
+// row triggers (migration 000017), so they commit, or roll back, with the
 // write that caused them, whichever process or code path made it.
 const invalidateChannel = "gateway_invalidate"
 

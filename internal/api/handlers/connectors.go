@@ -338,6 +338,12 @@ func (h Connectors) validateAndBuild(ctx context.Context, req connectorRequest) 
 			return
 		}
 	}
+	if v, present := meta["headers_required"]; present {
+		if _, ok := v.(bool); !ok {
+			err = fmt.Errorf("metadata.headers_required must be a boolean")
+			return
+		}
+	}
 	return req.Name, req.Endpoint, timeoutMS, meta, nil
 }
 

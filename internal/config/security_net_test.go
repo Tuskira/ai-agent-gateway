@@ -75,3 +75,23 @@ func TestEgressEnvOverlayAndValidation(t *testing.T) {
 		t.Error("metadata IP accepted in catalog URL")
 	}
 }
+
+func TestFailOnUnresolvedHeadersEnv(t *testing.T) {
+	t.Cleanup(netguardtest.AllowLoopback) // Load installs the policy process-wide
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Connectors.FailOnUnresolvedHeaders {
+		t.Error("connectors.fail_on_unresolved_headers defaults to true, want false")
+	}
+	t.Setenv("GATEWAY_CONNECTORS_FAIL_ON_UNRESOLVED_HEADERS", "true")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Connectors.FailOnUnresolvedHeaders {
+		t.Error("GATEWAY_CONNECTORS_FAIL_ON_UNRESOLVED_HEADERS=true did not set connectors.fail_on_unresolved_headers")
+	}
+}

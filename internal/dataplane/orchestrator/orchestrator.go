@@ -599,6 +599,15 @@ func (o *Orchestrator) fanOutInitialize(ctx context.Context, in Request, sess *s
 // there are any, the connector's stream is opened for the session too,
 // since a request may arrive on it rather than inside a call's reply.
 func (o *Orchestrator) handshake(ctx context.Context, in Request, backends session.Backends, conn *store.Connector) (*mcp.InitializeResult, bool) {
+	res, err := o.handshakeErr(ctx, in, backends, conn)
+	return res, err == nil
+}
+
+// handshakeErr is handshake with the cause of a failure. A connector whose
+// required header could not be resolved is not marked unhealthy: the
+// backend was never reached, so its health says nothing, and the cool-down
+// would keep refusing calls after the credential service recovers.
+func (o *Orchestrator) handshakeErr(ctx context.Context, in Request, backends session.Backends, conn *store.Connector) (*mcp.InitializeResult, error) {
 	advertised := advertisedCapabilities(backends, conn)
 	call := client.Call{
 		Connector:          conn,
@@ -609,12 +618,18 @@ func (o *Orchestrator) handshake(ctx context.Context, in Request, backends sessi
 
 	res, callResult, err := o.deps.Client.Initialize(ctx, call)
 	if err != nil {
+		var hu *client.HeaderUnavailableError
+		if errors.As(err, &hu) {
+			o.log.Warn("connector initialize refused; a required header is unavailable",
+				"connector_id", conn.ID, "connector", conn.Name, "header", hu.Header)
+			return nil, err
+		}
 		o.log.Warn("connector initialize failed; marking unhealthy",
 			"connector_id", conn.ID, "connector", conn.Name, "error", err)
 		if err := o.deps.Router.MarkUnhealthy(ctx, conn); err != nil {
 			o.log.Warn("failed to persist connector health", "connector_id", conn.ID, "error", err)
 		}
-		return nil, false
+		return nil, err
 	}
 
 	backends.SetBackend(conn.ID, session.Backend{
@@ -658,7 +673,7 @@ func (o *Orchestrator) handshake(ctx context.Context, in Request, backends sessi
 		})
 	}
 
-	return res, true
+	return res, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -955,6 +970,9 @@ func (o *Orchestrator) handleToolsCall(ctx context.Context, in Request) Result {
 	backend, err := o.ensureBackend(ctx, in, route.Connector)
 	if err != nil {
 		o.log.Warn("failed to prepare backend session", "connector_id", route.Connector.ID, "error", err)
+		if e := headerUnavailable(err); e != nil {
+			return o.fail(in, e)
+		}
 		return o.fail(in, mcp.NewError(mcp.ErrorCodeToolExecution, "connector handshake failed: "+err.Error(), nil))
 	}
 
@@ -1043,6 +1061,14 @@ func (o *Orchestrator) toolCallFailure(ctx context.Context, in Request, route *r
 	o.forgetBackend(in, route.Connector.ID)
 
 	switch {
+	case headerUnavailable(err) != nil:
+		o.log.Warn("tool call refused; a required header is unavailable",
+			"tool", qualified, "connector_id", route.Connector.ID)
+		return Result{
+			Response:    mcp.NewErrorResponse(in.JSONRPC.ID, headerUnavailable(err)),
+			ConnectorID: route.Connector.ID,
+		}
+
 	case client.IsTimeout(err):
 		o.log.Warn("tool call timed out", "tool", qualified, "connector_id", route.Connector.ID, "error", err)
 		return Result{
@@ -1073,6 +1099,17 @@ func (o *Orchestrator) toolCallFailure(ctx context.Context, in Request, route *r
 			ConnectorID: route.Connector.ID,
 		}
 	}
+}
+
+// headerUnavailable returns the -32002 error for a call refused because a
+// required connector header could not be resolved, or nil for any other
+// error.
+func headerUnavailable(err error) *mcp.Error {
+	var hu *client.HeaderUnavailableError
+	if !errors.As(err, &hu) {
+		return nil
+	}
+	return mcp.NewError(mcp.ErrorCodeToolExecution, hu.Error(), map[string]any{"header": hu.Header})
 }
 
 func timeoutMessage(tool string) string {
@@ -1187,7 +1224,11 @@ func (o *Orchestrator) ensureBackend(ctx context.Context, in Request, conn *stor
 	handshakeCtx, cancel := context.WithTimeout(ctx, initializeDeadline)
 	defer cancel()
 
-	if _, ok := o.handshake(handshakeCtx, in, backends, conn); !ok {
+	if _, err := o.handshakeErr(handshakeCtx, in, backends, conn); err != nil {
+		var hu *client.HeaderUnavailableError
+		if errors.As(err, &hu) {
+			return session.Backend{}, err
+		}
 		return session.Backend{}, fmt.Errorf("connector %q handshake failed", conn.Name)
 	}
 	return backends.Backend(conn.ID), nil

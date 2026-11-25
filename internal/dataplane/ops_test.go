@@ -351,3 +351,72 @@ func TestOpsAdapter_ConnectorChanged_RefreshesCache(t *testing.T) {
 		t.Errorf("a disabled connector was rediscovered (%d tools/list calls)", n)
 	}
 }
+
+// A connector that requires its headers is not marked unhealthy by a health
+// probe, discovery or cache refresh that is refused because a header cannot
+// be resolved (the backend was never reached), and a header that can only
+// come from a caller (incoming_field) does not stop those system calls.
+func TestOpsAdapter_RequiredHeaderRefusalIsNotAnUnhealthyBackend(t *testing.T) {
+	plane, st, backend, conn := newOpsFixture(t)
+	ctx := context.Background()
+
+	// "env" is not registered in this fixture's header registry, so this
+	// header cannot resolve.
+	conn.Metadata = map[string]any{
+		"headers_required": true,
+		"headers": map[string]any{
+			"Authorization": map[string]any{"type": "external", "provider": "env", "config": map[string]any{"var": "X"}},
+		},
+	}
+	if err := st.Connectors().Update(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	status := func() string {
+		c, err := st.Connectors().Get(ctx, opsTenantID, conn.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.Status
+	}
+
+	res, err := plane.ConnectorOps.Probe(ctx, opsTenantID, conn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "unhealthy" || res.Error != "credential header Authorization unavailable" {
+		t.Errorf("Probe = %+v, want unhealthy with the header refusal", res)
+	}
+	if _, err := plane.ConnectorOps.Discover(ctx, opsTenantID, conn.ID); err == nil {
+		t.Error("Discover succeeded without its required header")
+	}
+	if _, err := plane.CacheOps.Refresh(ctx, opsTenantID, conn.ID); err == nil {
+		t.Error("Refresh succeeded without its required header")
+	}
+	if n, err := plane.CacheOps.Refresh(ctx, opsTenantID, ""); err != nil || n != 0 {
+		t.Errorf("tenant-wide Refresh = %d, %v; want 0 tools and no error", n, err)
+	}
+	if got := status(); got != "unknown" {
+		t.Errorf("connector status = %q after refusals, want it untouched (unknown)", got)
+	}
+	if n := backend.Calls(mcp.MethodInitialize); n != 0 {
+		t.Errorf("backend received %d initialize requests, want 0", n)
+	}
+
+	// A caller-derived header cannot resolve on a system call; it is skipped
+	// there even though the connector requires its headers.
+	conn.Metadata = map[string]any{
+		"headers_required": true,
+		"headers": map[string]any{
+			"X-Caller": map[string]any{"type": "incoming_field", "header": "X-Caller"},
+		},
+	}
+	if err := st.Connectors().Update(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := plane.ConnectorOps.Probe(ctx, opsTenantID, conn.ID); err != nil || res.Status != "healthy" {
+		t.Errorf("Probe with a caller-derived header = %+v, %v; want healthy", res, err)
+	}
+	if tools, err := plane.ConnectorOps.Discover(ctx, opsTenantID, conn.ID); err != nil || len(tools) != 2 {
+		t.Errorf("Discover with a caller-derived header = %d tools, %v; want 2", len(tools), err)
+	}
+}

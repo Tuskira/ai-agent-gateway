@@ -56,6 +56,9 @@ export interface ConnectorMetadata {
    * restricted (key containment), e.g. a tool for asking a person for help.
    * Absent means `false`. Only an admin (`admin.manage`) may change it. */
   restrict_exempt?: boolean
+  /** `true` makes a call fail with -32002 when a configured header cannot be
+   * resolved, instead of being sent without it. Absent means `false`. */
+  headers_required?: boolean
   headers?: Record<string, HeaderConfig>
   retry?: Record<string, unknown>
   tool_arg_overrides?: ToolArgOverrides

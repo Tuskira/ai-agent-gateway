@@ -84,6 +84,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile cache's 30s or a secret cache's TTL (default 5 minutes). Replicas
   need the migration applied before the notifications exist; the TTLs stay
   as the backstop.
+- **Fail a call when a connector header cannot be resolved (opt-in).**
+  `metadata.headers_required: true` on a connector, or
+  `connectors.fail_on_unresolved_headers: true` for all of them, makes a call
+  refuse with JSON-RPC `-32002` (`credential header <name> unavailable`) when
+  a configured header fails to resolve, instead of sending the request
+  without it. Nothing is sent to the backend, the refusal is not retried and
+  the connector is not marked unhealthy (also by a health probe, discovery or
+  cache refresh, which skip headers taken from a caller). Default off:
+  unresolved headers are still skipped.
 
 ### Changed
 

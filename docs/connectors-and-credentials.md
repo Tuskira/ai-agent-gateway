@@ -105,6 +105,40 @@ In the console, an admin sets it with **Callable while an agent is
 restricted** in the MCP form; the MCP details show **Callable while
 restricted** when it is on.
 
+## Failing on an unresolved header
+
+By default a header that cannot be resolved (an external credential service
+that is down, an expired or disabled credential source, a missing secret) is
+logged and left off the request, and the backend decides what to do without
+it. For a connector whose backend would answer an unauthenticated request with
+data you did not mean to expose, or would quietly act as another account, that
+is the wrong default.
+
+Set `metadata.headers_required: true` on the connector (a boolean; anything
+else is refused with `400` `metadata.headers_required must be a boolean`), or
+set `connectors.fail_on_unresolved_headers: true` for every connector (see
+[configuration.md](configuration.md)). Then, if any configured header fails
+to resolve, the call is refused before anything is sent to the backend:
+
+```json
+{"jsonrpc":"2.0","id":7,"error":{"code":-32002,"message":"credential header Authorization unavailable","data":{"header":"Authorization"}}}
+```
+
+- The message names the header, never the cause (the cause is in the gateway
+  log).
+- The same error answers the connector handshake, so a call that would have
+  opened a backend session is refused too.
+- It is not retried, and it does not mark the connector unhealthy (also not
+  from a health probe, discovery or a cache refresh): the backend was never
+  reached, so the connector works again as soon as the credential resolves.
+  `prompts/get` and `resources/read` are refused the same way.
+- Health probes, discovery and the background cache refresh have no caller, so
+  a header taken from the caller (`token_field`, `incoming_field`) cannot
+  resolve on them; it is skipped there, as it is for any connector, and only
+  the other header types are required.
+- `PUT` replaces `metadata` as a whole: send `headers_required` back or it is
+  cleared. The console keeps it across an edit.
+
 ## Health and discovery
 
 ```sh

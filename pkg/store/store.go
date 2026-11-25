@@ -374,6 +374,15 @@ func (c *Connector) RestrictExempt() bool {
 	return v
 }
 
+// HeadersRequired reports whether a header of this connector that cannot be
+// resolved fails the call (metadata.headers_required is true) instead of
+// being left off the outbound request. Absent or anything but true is
+// false.
+func (c *Connector) HeadersRequired() bool {
+	v, _ := c.Metadata["headers_required"].(bool)
+	return v
+}
+
 // MCPCatalogField is one value a tenant supplies when adding a catalog
 // entry. Query, when set, routes the value into the connector URL as that
 // query parameter (an optional project scope, say) instead of into the

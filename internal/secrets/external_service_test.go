@@ -193,6 +193,37 @@ func TestExternalService_CacheIsPerConnector(t *testing.T) {
 	}
 }
 
+// Combination of the per-connector cache key and replica invalidation: an
+// invalidation event for a tenant drops the values of every connector the
+// tenant has cached, not only the ones with an empty connector id.
+func TestExternalService_InvalidateTenantDropsEveryConnectorsValue(t *testing.T) {
+	p, rs, _ := newExternalServiceFixture(t)
+	cfg := map[string]any{"credential_id": "shared", "field": "token"}
+	src := sourceFor(rs, "tenant-a")
+	ctxFor := func(connectorID, slug string) context.Context {
+		ctx := auth.WithPrincipal(context.Background(), &auth.Principal{Subject: "key-1", TenantID: "tenant-a"})
+		return headers.WithResolveInfo(ctx, headers.ResolveInfo{
+			ConnectorID: connectorID, ConnectorSlug: slug, HeaderName: "Authorization", Source: src,
+		})
+	}
+	rs.set("old", 0, http.StatusOK)
+	for _, c := range [][2]string{{"conn-1", "one"}, {"conn-2", "two"}} {
+		if v, err := p.Resolve(ctxFor(c[0], c[1]), cfg); err != nil || v != "old" {
+			t.Fatalf("%s = %q, %v", c[1], v, err)
+		}
+	}
+	if n := rs.resolves.Load(); n != 2 {
+		t.Fatalf("resolve calls = %d, want 2", n)
+	}
+	rs.set("new", 0, http.StatusOK)
+	p.InvalidateTenant("tenant-a")
+	for _, c := range [][2]string{{"conn-1", "one"}, {"conn-2", "two"}} {
+		if v, err := p.Resolve(ctxFor(c[0], c[1]), cfg); err != nil || v != "new" {
+			t.Errorf("%s after InvalidateTenant = %q, %v; want the fresh value", c[1], v, err)
+		}
+	}
+}
+
 func TestExternalService_TTLIsMinOfServiceAndConfig(t *testing.T) {
 	p, rs, _ := newExternalServiceFixture(t)
 	now := time.Now()

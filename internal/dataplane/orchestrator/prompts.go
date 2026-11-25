@@ -219,6 +219,9 @@ func (o *Orchestrator) handlePromptsGet(ctx context.Context, in Request) Result 
 	backend, err := o.ensureBackend(ctx, in, conn)
 	if err != nil {
 		o.log.Warn("failed to prepare backend session", "connector_id", conn.ID, "error", err)
+		if e := headerUnavailable(err); e != nil {
+			return o.fail(in, e)
+		}
 		return o.fail(in, mcp.NewError(mcp.ErrorCodeToolExecution, "connector handshake failed: "+err.Error(), nil))
 	}
 
@@ -269,6 +272,9 @@ func (o *Orchestrator) handleResourcesRead(ctx context.Context, in Request) Resu
 	backend, err := o.ensureBackend(ctx, in, conn)
 	if err != nil {
 		o.log.Warn("failed to prepare backend session", "connector_id", conn.ID, "error", err)
+		if e := headerUnavailable(err); e != nil {
+			return o.fail(in, e)
+		}
 		return o.fail(in, mcp.NewError(mcp.ErrorCodeToolExecution, "connector handshake failed: "+err.Error(), nil))
 	}
 
@@ -347,6 +353,10 @@ func (o *Orchestrator) catalogFailure(ctx context.Context, in Request, conn *sto
 	case errors.Is(err, context.Canceled):
 		o.log.Debug(method+" cancelled by the caller", "target", qualified, "connector_id", conn.ID)
 		msg = "request cancelled"
+	case headerUnavailable(err) != nil:
+		// The backend was never reached: no health change.
+		o.log.Warn(method+" refused; a required header is unavailable", "target", qualified, "connector_id", conn.ID)
+		msg = headerUnavailable(err).Message
 	default:
 		o.log.Error(method+" failed", "target", qualified, "connector_id", conn.ID, "error", err)
 		if err := o.deps.Router.MarkUnhealthy(ctx, conn); err != nil {

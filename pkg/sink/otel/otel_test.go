@@ -160,6 +160,26 @@ func TestWriteLLMCall_EmitsSpanWithAttributes(t *testing.T) {
 	}
 }
 
+func TestWriteLLMCall_AttributionAttributes(t *testing.T) {
+	s, exp := newTestSink(t)
+	s.WriteLLMCall(&sink.LLMCall{Timestamp: time.Now(), Provider: "anthropic", User: "alice@example.com",
+		Tags: map[string]string{"team": "search", "job.id": "n-1"}})
+	s.WriteLLMCall(&sink.LLMCall{Timestamp: time.Now(), Provider: "anthropic"})
+	spans := exp.GetSpans()
+	if len(spans) != 2 {
+		t.Fatalf("got %d spans", len(spans))
+	}
+	a := attrMap(spans[0].Attributes)
+	if a["enduser.id"] != "alice@example.com" || a["gateway.tag.team"] != "search" || a["gateway.tag.job.id"] != "n-1" {
+		t.Errorf("attrs = %+v", a)
+	}
+	for k := range attrMap(spans[1].Attributes) {
+		if k == "enduser.id" || strings.HasPrefix(k, "gateway.tag.") {
+			t.Errorf("untagged call carries %s", k)
+		}
+	}
+}
+
 // Discovery names never leave the gateway over OTLP: counts only.
 func TestWrite_DiscoveryCountsOnly(t *testing.T) {
 	s, exp := newTestSink(t)

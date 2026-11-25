@@ -651,6 +651,68 @@ feeds analytics ([Agent traffic
 flow](observability.md#agent-traffic-flow)), and like `client_ip` it is a
 ClickHouse column and stdout field, not stored in the Postgres ledger.
 
+### Request tags
+
+Two optional request headers label a call for cost attribution (per user,
+team, feature or job) without minting an API key per dimension:
+
+```sh
+curl http://localhost:8082/v1/messages \
+  -H "Authorization: Bearer gk_..." \
+  -H "X-Gateway-User: alice@example.com" \
+  -H "X-Gateway-Tags: team=search,feature=chat,run_id=2026-11-24%2Fnightly" \
+  -d '{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+| Header | Becomes | Rules |
+|---|---|---|
+| `X-Gateway-User` | `llm_calls.user` | Trimmed, control characters and invalid UTF-8 dropped, cut to 256 bytes. |
+| `X-Gateway-Tags` | `llm_calls.tags` (a map) | Comma-separated `key=value` pairs. A key matches `^[a-z][a-z0-9_.-]{0,63}$`. A value is percent-decoded UTF-8 (`%2C` for a comma, `%20` for a space; `+` stays a plus), 1 to 256 bytes after decoding, with no control characters. At most 16 pairs (`llm_proxy.capture.tags.max_pairs`), and the whole header at most 4096 bytes. |
+
+A pair that breaks a rule is **dropped**; the call is never refused (no
+`400`) and the valid pairs are kept. A repeated key keeps its first value,
+pairs past the cap are dropped, and a header over 4096 bytes is cut back to
+its last complete pair. Every dropped pair adds to
+`gateway_llm_tags_dropped_total` (see
+[observability.md](observability.md#metrics-prometheus)), so a caller sending
+tags the gateway cannot keep shows up on a dashboard instead of failing
+silently. Repeated `X-Gateway-Tags` header lines are joined with commas.
+
+Both headers are removed from the request before it goes upstream and before
+header capture: they are never forwarded to the provider and never appear in
+the stored `headers`. This holds even with tags turned off.
+
+**Where they land.**
+
+- Postgres `llm_calls`: `"user" text NOT NULL DEFAULT ''` and
+  `tags jsonb NOT NULL DEFAULT '{}'`, added with `ADD COLUMN IF NOT EXISTS`
+  on start (older rows read back `''` and `{}`). `user` is a reserved word in
+  Postgres, so quote it: `SELECT tags->>'team', sum(cost_usd) FROM llm_calls
+  GROUP BY 1`.
+- ClickHouse `llm_calls`: `` `user` String `` (it already existed for ingested
+  rows) and `tags Map(LowCardinality(String), String)`. The
+  `llm_usage_canonical` view carries both as its last two columns:
+  ``SELECT tags['team'] AS team, sum(cost_usd) FROM llm_usage_canonical GROUP BY team``.
+  Always backtick-quote `` `user` ``: unquoted, ClickHouse reads it as the
+  `user()` function.
+- OpenTelemetry: span attributes `enduser.id` and `gateway.tag.<key>`.
+- stdout: the `user` and `tags` fields of the `llm_call` record.
+- `POST /ingest`: an `llm_calls[]` entry accepts `tags` as a JSON object with
+  the same limits (see [api.md](api.md#ingest)).
+
+**Trust.** Tags are self-reported by the caller. They never affect which
+tenant or key a call is billed to, any limit or budget, or any permission:
+those come from the authenticated API key alone. Treat them as labels for
+reporting, not as an identity. A caller can send any label it likes, and an
+untagged call is stored as normal. Anyone holding a key can attribute its
+traffic to any user or team, so do not use tags where one key holder must be
+unable to blame another. Set `llm_proxy.capture.tags.enabled: false` to stop
+recording them (the headers are still stripped).
+
+Tag values are free text, so do not put secrets or personal data in them
+that you would not want in an analytics table. High-cardinality keys (such as
+a per-request id) work, but are costly to group by in ClickHouse.
+
 ### Secret redaction
 
 With `store_bodies` on, the stored copy of each call is scrubbed of

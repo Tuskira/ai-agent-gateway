@@ -237,6 +237,8 @@ func (rt *router) serveEstimate(w http.ResponseWriter, r *http.Request, info cal
 		SessionID:      sessionOf(ctx),
 		ClientName:     clientName,
 		UserAgent:      userAgent,
+		User:           attributionOf(ctx).user,
+		Tags:           attributionOf(ctx).tags,
 		Profile:        rt.callProfile(r),
 		Provider:       info.provider,
 		Model:          info.model(),

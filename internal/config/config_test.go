@@ -360,6 +360,41 @@ func TestLoad_AssembleStreams(t *testing.T) {
 	})
 }
 
+// Request tags are on by default with a 16 pair cap; both settings come from
+// the environment or YAML, and a nonsensical cap is refused at load.
+func TestLoad_CaptureTags(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil || !cfg.LLMProxy.Capture.Tags.Enabled || cfg.LLMProxy.Capture.Tags.MaxPairs != 16 {
+		t.Fatalf("defaults: %+v, err %v", cfg.LLMProxy.Capture.Tags, err)
+	}
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("GATEWAY_LLM_PROXY_CAPTURE_TAGS_ENABLED", "false")
+		t.Setenv("GATEWAY_LLM_PROXY_CAPTURE_TAGS_MAX_PAIRS", "4")
+		cfg, err := Load("")
+		if err != nil || cfg.LLMProxy.Capture.Tags.Enabled || cfg.LLMProxy.Capture.Tags.MaxPairs != 4 {
+			t.Errorf("env: %+v, err %v", cfg.LLMProxy.Capture.Tags, err)
+		}
+	})
+	t.Run("yaml", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "gateway.yml")
+		if err := os.WriteFile(path, []byte("llm_proxy:\n  capture:\n    tags:\n      max_pairs: 8\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil || !cfg.LLMProxy.Capture.Tags.Enabled || cfg.LLMProxy.Capture.Tags.MaxPairs != 8 {
+			t.Errorf("yaml: %+v, err %v", cfg.LLMProxy.Capture.Tags, err)
+		}
+	})
+	for _, bad := range []string{"0", "-1", "65"} {
+		t.Run("max_pairs "+bad, func(t *testing.T) {
+			t.Setenv("GATEWAY_LLM_PROXY_CAPTURE_TAGS_MAX_PAIRS", bad)
+			if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "max_pairs") {
+				t.Errorf("max_pairs %s: err = %v, want a max_pairs error", bad, err)
+			}
+		})
+	}
+}
+
 // Secret redaction of captured bodies is on by default on both planes and
 // can be turned off per plane, from the environment or from YAML.
 func TestLoad_RedactSecrets(t *testing.T) {

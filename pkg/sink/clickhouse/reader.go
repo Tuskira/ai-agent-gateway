@@ -128,7 +128,7 @@ func (s *Sink) ListLLMCalls(ctx context.Context, tenantID string, f analytics.LL
 	query := `SELECT timestamp, request_id, tenant_id, principal, key_id, session_id, provider, upstream_host,
 		model, path, status_code, duration_ms, stream, input_tokens, output_tokens, cache_read_tokens,
 		cache_creation_tokens, stop_reason, provider_request_id, error, client_ip, client_name, user_agent,
-		requested_model, resolved_vendor, resolved_model, translated, fallback_index, source, ` + "`user`" + `, toFloat64(cost_usd) AS cost_usd
+		requested_model, resolved_vendor, resolved_model, translated, fallback_index, source, ` + "`user`" + `, tags, toFloat64(cost_usd) AS cost_usd
 		FROM llm_calls WHERE ` + where + ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`
 	rows, err := s.c.Query(ctx, query, append(append([]any{}, args...), limit, f.Offset)...)
 	if err != nil {
@@ -148,7 +148,7 @@ func (s *Sink) ListLLMCalls(ctx context.Context, tenantID string, f analytics.LL
 		if err := rows.Scan(&l.Timestamp, &l.RequestID, &l.TenantID, &l.Principal, &l.KeyID, &l.SessionID, &l.Provider, &l.UpstreamHost,
 			&l.Model, &l.Path, &statusCode, &durationMS, &stream, &inTok, &outTok, &cacheReadTok,
 			&cacheCreateTok, &l.StopReason, &l.ProviderRequestID, &l.Error, &l.ClientIP, &l.ClientName, &l.UserAgent,
-			&l.RequestedModel, &l.ResolvedVendor, &l.ResolvedModel, &translated, &fallbackIndex, &l.Source, &l.User, &l.CostUSD); err != nil {
+			&l.RequestedModel, &l.ResolvedVendor, &l.ResolvedModel, &translated, &fallbackIndex, &l.Source, &l.User, &l.Tags, &l.CostUSD); err != nil {
 			return nil, 0, fmt.Errorf("clickhouse: scan llm call row: %w", err)
 		}
 		l.StatusCode = int(statusCode)
@@ -170,7 +170,7 @@ func (s *Sink) GetLLMCall(ctx context.Context, tenantID, requestID string) (*sin
 		model, path, status_code, duration_ms, stream, input_tokens, output_tokens, cache_read_tokens,
 		cache_creation_tokens, stop_reason, provider_request_id, headers, request_body, response_body,
 		messages, system, tools, truncated, error, body_ref, client_ip, client_name, user_agent,
-		requested_model, resolved_vendor, resolved_model, translated, fallback_index, source, ` + "`user`" + `, toFloat64(cost_usd) AS cost_usd
+		requested_model, resolved_vendor, resolved_model, translated, fallback_index, source, ` + "`user`" + `, tags, toFloat64(cost_usd) AS cost_usd
 		FROM llm_calls WHERE tenant_id = ? AND request_id = ? ORDER BY timestamp DESC LIMIT 1`
 
 	var l sink.LLMCall
@@ -187,7 +187,7 @@ func (s *Sink) GetLLMCall(ctx context.Context, tenantID, requestID string) (*sin
 		&l.Model, &l.Path, &statusCode, &durationMS, &stream, &inTok, &outTok, &cacheReadTok,
 		&cacheCreateTok, &l.StopReason, &l.ProviderRequestID, &headersRaw, &reqBody, &respBody,
 		&messages, &system, &tools, &truncated, &l.Error, &l.BodyRef, &l.ClientIP, &l.ClientName, &l.UserAgent,
-		&l.RequestedModel, &l.ResolvedVendor, &l.ResolvedModel, &translated, &fallbackIndex, &l.Source, &l.User, &l.CostUSD,
+		&l.RequestedModel, &l.ResolvedVendor, &l.ResolvedModel, &translated, &fallbackIndex, &l.Source, &l.User, &l.Tags, &l.CostUSD,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

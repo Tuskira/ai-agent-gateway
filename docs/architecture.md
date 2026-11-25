@@ -677,8 +677,9 @@ Client (Claude Code / SDK)     LLM plane (:8082)                Provider
 1. `internal/auth.Middleware` resolves the credential to a `Principal`
    (same mechanism as the MCP flow's step 1).
 2. `withTags` reads `X-Session-Id` (or `X-Claude-Code-Session-Id`) for
-   capture correlation and mints a request id; both headers are stripped
-   before forwarding. Then `llmplane`'s own `requirePermission` checks
+   capture correlation, and the `X-Gateway-User` / `X-Gateway-Tags`
+   attribution headers (see [llm-plane.md](llm-plane.md#request-tags)), and
+   mints a request id; all of these headers are stripped before forwarding. Then `llmplane`'s own `requirePermission` checks
    `llm.access` (403 if ungranted; `agent` holds it via `llm.*`, `admin`
    via `*`, a custom role must be granted explicitly). `llmplane.Handler`
    refuses to build without an `Authorizer` — a nil one previously let

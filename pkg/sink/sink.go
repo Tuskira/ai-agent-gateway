@@ -122,10 +122,17 @@ type LLMCall struct {
 
 	// Source and User mirror AccessLog's fields of the same name (see
 	// AccessLog's doc comments): Source tells a gateway-proxied row
-	// ("gateway", the default) from an ingested one ("interceptor");
-	// User is the ingested row's self-reported caller identity.
+	// ("gateway", the default) from an ingested one ("interceptor").
+	// User is a self-reported caller identity: the ingest field, or the
+	// X-Gateway-User request header on a proxied call (CapUser, 256 bytes).
+	// Never an authenticated identity; Principal/KeyID are that.
 	Source string `json:"source,omitempty"`
 	User   string `json:"user,omitempty"`
+	// Tags are free-form, self-reported attribution labels for cost
+	// reporting (team, feature, job): the X-Gateway-Tags request header on a
+	// proxied call, or the "tags" field of an ingested entry. Bounded by
+	// ParseTagsHeader / CleanTags. They never affect tenant, key or limits.
+	Tags map[string]string `json:"tags,omitempty"`
 
 	// Upstream call shape. Provider is the client's dialect ("anthropic" |
 	// "bedrock" | "openai" | "gemini"); Model is the vendor model actually

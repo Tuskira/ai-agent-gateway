@@ -54,6 +54,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Breaking for store backends:** `CredentialStore.Rotate`/`Delete` and
   `CredentialSourceStore.Update`/`SoftDelete` take a `store.LockGuard`, and
   `CredentialSourceStore` gains `SetLocked` and `UpdateLocked`.
+- **Request tags on LLM calls.** Two optional headers label a call for cost
+  attribution without minting an API key per user, team or job:
+  `X-Gateway-User: <label>` and `X-Gateway-Tags: k1=v1,k2=v2` (keys
+  `[a-z][a-z0-9_.-]{0,63}`, percent-decoded values up to 256 bytes, at most
+  16 pairs, header up to 4096 bytes). They are stored as `llm_calls.user` and
+  `llm_calls.tags` in Postgres (`"user" text`, `tags jsonb`, added on start)
+  and ClickHouse (`tags Map(LowCardinality(String), String)`; the
+  `llm_usage_canonical` view gains `user` and `tags`), exported as
+  `enduser.id` and `gateway.tag.<key>` OpenTelemetry attributes and as `user`
+  and `tags` in stdout records, and accepted as `tags` on `POST /ingest`
+  `llm_calls[]` entries. An invalid pair is dropped, never a `400`, and counted
+  in the new `gateway_llm_tags_dropped_total`. Both headers are always removed
+  before the upstream call and before header capture. Tags are self-reported
+  and never affect tenant, key or limits. Settings:
+  `llm_proxy.capture.tags.enabled` (default `true`) and
+  `llm_proxy.capture.tags.max_pairs` (default `16`). See
+  [docs/llm-plane.md](docs/llm-plane.md#request-tags).
 
 ### Changed
 
@@ -67,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conformance subtest that checks all of it, including concurrent creates.
   A new optional `pkg/ops.ToolListNotifier` lets a `CacheOps` push
   `tools/list_changed`.
+
 
 ## [0.13.2] - 2026-11-17
 

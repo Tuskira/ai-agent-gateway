@@ -474,3 +474,46 @@ func TestIngest_RateLimited429(t *testing.T) {
 		t.Error("sink should not be called when rate limited")
 	}
 }
+
+func TestIngest_TagsAcceptedAndBounded(t *testing.T) {
+	sinkFake := &ingestFakeSink{}
+	d := newIngestDeps(sinkFake, true)
+	d.LLMCapture.Tags = config.LLMCaptureTags{Enabled: true, MaxPairs: 2}
+
+	payload, _ := json.Marshal(map[string]any{
+		"schema_version": 1,
+		"llm_calls": []map[string]any{
+			{"timestamp": "2026-01-15T12:00:00Z", "request_id": "r1", "status_code": 200,
+				"tags": map[string]string{"team": "search", "Bad Key": "x", "feature": "chat", "job": "nightly"}},
+			{"timestamp": "2026-01-15T12:00:00Z", "request_id": "r2", "status_code": 200},
+		},
+	})
+	w := doIngest(t, d, ingestRequestWithPrincipal(string(payload), "tenant-a", false))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if len(sinkFake.gotLLM) != 2 {
+		t.Fatalf("got %d llm calls", len(sinkFake.gotLLM))
+	}
+	// Candidates in key order: feature, job, team; "Bad Key" is invalid; cap 2.
+	if got := sinkFake.gotLLM[0].Tags; len(got) != 2 || got["feature"] != "chat" || got["job"] != "nightly" {
+		t.Errorf("tags = %v, want feature and job only", got)
+	}
+	if got := sinkFake.gotLLM[1].Tags; len(got) != 0 {
+		t.Errorf("r2 tags = %v, want none", got)
+	}
+}
+
+func TestIngest_TagsIgnoredWhenDisabled(t *testing.T) {
+	sinkFake := &ingestFakeSink{}
+	d := newIngestDeps(sinkFake, true)
+	d.LLMCapture.Tags = config.LLMCaptureTags{Enabled: false, MaxPairs: 16}
+	payload, _ := json.Marshal(map[string]any{
+		"schema_version": 1,
+		"llm_calls":      []map[string]any{{"timestamp": "2026-01-15T12:00:00Z", "request_id": "r1", "status_code": 200, "tags": map[string]string{"team": "x"}}},
+	})
+	doIngest(t, d, ingestRequestWithPrincipal(string(payload), "tenant-a", false))
+	if len(sinkFake.gotLLM) != 1 || len(sinkFake.gotLLM[0].Tags) != 0 {
+		t.Errorf("tags recorded with tags disabled: %+v", sinkFake.gotLLM)
+	}
+}

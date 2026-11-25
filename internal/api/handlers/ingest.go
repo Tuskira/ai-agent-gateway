@@ -107,6 +107,10 @@ type llmCallIn struct {
 	RequestBody         string `json:"request_body,omitempty"`
 	ResponseBody        string `json:"response_body,omitempty"`
 	Truncated           bool   `json:"truncated,omitempty"`
+	// Tags are self-reported attribution labels, bounded like the
+	// X-Gateway-Tags header (sink.CleanTags); invalid pairs are dropped, not
+	// rejected. Ignored when llm_proxy.capture.tags.enabled is false.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // accessLogIn is one entry of ingestRequest.AccessLogs. Required:
@@ -451,6 +455,9 @@ func (h Ingest) buildLLMCall(in llmCallIn, p *pkgauth.Principal, user string) (*
 		Error:               in.Error,
 		Source:              sourceInterceptor,
 		User:                user,
+	}
+	if h.LLMCapture.Tags.Enabled {
+		l.Tags, _ = sink.CleanTags(in.Tags, h.LLMCapture.Tags.MaxPairs)
 	}
 	h.applyLLMBodies(l, in)
 	// Skill/MCP discovery scans the interceptor-supplied RESPONSE body (never

@@ -100,6 +100,17 @@ func TestLLMLimitsCollector(t *testing.T) {
 	wantSeries(t, body, `gateway_llm_limit_denials_total{reason="rpm"}`, "5")
 }
 
+func TestLLMTagsCollector(t *testing.T) {
+	m := newMetrics(t, promCfg("127.0.0.1:0"))
+	var dropped atomic.Uint64
+	if err := RegisterLLMTags(m, dropped.Load); err != nil {
+		t.Fatal(err)
+	}
+	wantSeries(t, scrape(t, m), `gateway_llm_tags_dropped_total`, "0")
+	dropped.Store(7)
+	wantSeries(t, scrape(t, m), `gateway_llm_tags_dropped_total`, "7")
+}
+
 type fakeTee struct {
 	sent, dropped, failed atomic.Uint64
 	depth                 atomic.Int64

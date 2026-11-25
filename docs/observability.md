@@ -170,6 +170,7 @@ their standard names.
 | `gateway_llm_call_duration_seconds` | histogram | `provider`, `model` | LLM call duration; a streaming call's duration is the whole stream. |
 | `gateway_llm_fallbacks_total` | counter | `tenant`, `model` | A registered model was answered by a fallback target (index above 0). |
 | `gateway_llm_limit_denials_total` | counter | `reason` (`budget`, `rpm`) | LLM requests refused by a per-key limit. Not split by tenant. LLM plane only. |
+| `gateway_llm_tags_dropped_total` | counter | | Request tag pairs (`X-Gateway-Tags`, or `tags` on an ingested call) discarded as malformed, too long, repeated or over `llm_proxy.capture.tags.max_pairs`. The call itself is unaffected. See [llm-plane.md](llm-plane.md#request-tags). |
 | `gateway_llm_detection_turns_total` | counter | `result` (`sent`, `dropped`, `failed`) | Turns copied to the detection agent: accepted, discarded (queue full, byte budget, shutdown), or refused or unreachable. Present only when `llm_proxy.detection.agent_url` is set. |
 | `gateway_llm_detection_queue_depth` | gauge | | Turns waiting to be posted to the detection agent. |
 | `gateway_auth_locked_ips` | gauge | `plane` (`api`, `mcp`, `llm`) | Client IPs locked out right now after repeated auth failures. Always `0` when `auth.rate_limit.enabled` is false. |
@@ -318,7 +319,7 @@ session timeline, token monitoring) still needs ClickHouse.
 | `GET /analytics/skills/usage`, `GET /analytics/mcps/usage` | Skills and MCP servers seen in LLM traffic — see [Discovered skills and MCP servers](#discovered-skills-and-mcp-servers). |
 | `GET /analytics/logs` | Paginated MCP access-log rows (no bodies), filterable by `method`, `connector_id`, `tool`, `session_id`, `principal`, `status`, `source` (`gateway`/`interceptor`), `user`, `from`, `to`. |
 | `GET /analytics/logs/{request_id}` | One access-log row, including bodies/headers. Admin-only (`admin.manage`, not `analytics.read`). |
-| `GET /analytics/llm-logs` | Paginated LLM-call rows (no bodies), including `client_name`/`user_agent`, filterable by `model`, `session_id`, `principal`, `client_name` (see [Client classification](#client-classification)), `status`, `source`, `user`, `from`, `to`. |
+| `GET /analytics/llm-logs` | Paginated LLM-call rows (no bodies), including `client_name`/`user_agent` and the self-reported `user` and `tags` ([request tags](llm-plane.md#request-tags)), filterable by `model`, `session_id`, `principal`, `client_name` (see [Client classification](#client-classification)), `status`, `source`, `user`, `from`, `to`. |
 | `GET /analytics/llm-logs/{request_id}` | One LLM-call row, including bodies. Admin-only. |
 | `GET /analytics/sessions/{session_id}/timeline` | Merged MCP+LLM event timeline for one gateway session, `?order=asc|desc` — see [Session timeline ownership](#session-timeline-ownership). |
 | `GET /analytics/client-models?range=24h\|7d\|30d` or `from=&to=`, `metric=calls\|tokens\|cost&limit=&client_name=` (default `7d`, `calls`, limit `10`) | Client → model → provider usage graph — see [Client → model Sankey](#client--model-sankey). |

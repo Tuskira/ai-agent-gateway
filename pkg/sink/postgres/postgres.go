@@ -123,6 +123,15 @@ func New(ctx context.Context, o Options) (*Sink, error) {
 			return nil, fmt.Errorf("sink(postgres): add %s column: %w", strings.Fields(col)[0], err)
 		}
 	}
+	// Idempotent upgrade for tables created before request tags existed
+	// (sink.LLMCall.User / Tags: X-Gateway-User, X-Gateway-Tags). "user" is
+	// quoted because user is a reserved word in Postgres. Old rows read back
+	// as '' and '{}'.
+	for _, col := range []string{`"user" text NOT NULL DEFAULT ''`, `tags jsonb NOT NULL DEFAULT '{}'`} {
+		if _, err := db.ExecContext(ctx, "ALTER TABLE "+o.Table+" ADD COLUMN IF NOT EXISTS "+col); err != nil {
+			return nil, fmt.Errorf("sink(postgres): add %s column: %w", strings.Fields(col)[0], err)
+		}
+	}
 	// The budget lookup (KeySpend) filters by (tenant_id, key_id, timestamp);
 	// without this index it would scan the whole capture table every 10 s
 	// per budgeted key. Built once, on first boot after the upgrade.
@@ -187,8 +196,8 @@ const insertCols = `(timestamp, request_id, tenant_id, principal, key_id, sessio
   headers, request_body, response_body, messages, system, tools,
   truncated, body_ref, error, cost_usd,
   requested_model, resolved_vendor, resolved_model, translated, fallback_index,
-  client_name, user_agent, skills_used, mcp_tools_used)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38)
+  client_name, user_agent, skills_used, mcp_tools_used, "user", tags)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40::jsonb)
 ON CONFLICT (request_id) DO NOTHING`
 
 // WriteBatch inserts calls synchronously, returning any error to the caller.
@@ -247,7 +256,24 @@ func insertArgs(c *sink.LLMCall) []any {
 		pgText(c.RequestedModel), pgText(c.ResolvedVendor), pgText(c.ResolvedModel), c.Translated, c.FallbackIndex,
 		pgText(c.ClientName), pgText(c.UserAgent),
 		pgTextArray(c.SkillsUsed), pgTextArray(c.MCPToolsUsed),
+		pgText(c.User), tagsJSON(c.Tags),
 	}
+}
+
+// tagsJSON is the tags column value: a JSON object, "{}" when there are none.
+// Keys and values are text-safe already (sink.ParseTagsHeader / CleanTags
+// reject control characters, so no NUL reaches jsonb), pgText is belt and
+// braces.
+func tagsJSON(tags map[string]string) string {
+	clean := make(map[string]string, len(tags))
+	for k, v := range tags {
+		clean[pgText(k)] = pgText(v)
+	}
+	b, err := json.Marshal(clean)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // pgTextArray is pgText for each element of a text[] value (never nil, so

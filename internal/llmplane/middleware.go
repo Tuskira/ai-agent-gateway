@@ -4,11 +4,13 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	pkgauth "github.com/Tuskira/tusk-ai-secured-gateway/pkg/auth"
+	pkgsink "github.com/Tuskira/tusk-ai-secured-gateway/pkg/sink"
 )
 
 type ctxKey int
@@ -16,6 +18,7 @@ type ctxKey int
 const (
 	ctxSession ctxKey = iota
 	ctxRequestID
+	ctxAttribution
 )
 
 // Caller identity comes from the Principal the gateway's auth middleware
@@ -40,6 +43,19 @@ func keyIDOf(ctx context.Context) string {
 	}
 	return ""
 }
+
+// attribution is the self-reported user label and tags a caller sent in
+// X-Gateway-User / X-Gateway-Tags. Attribution only: nothing reads it for
+// authentication, tenant selection or limits.
+type attribution struct {
+	user string
+	tags map[string]string
+}
+
+func attributionOf(ctx context.Context) attribution {
+	a, _ := ctx.Value(ctxAttribution).(attribution)
+	return a
+}
 func sessionOf(ctx context.Context) string   { s, _ := ctx.Value(ctxSession).(string); return s }
 func requestIDOf(ctx context.Context) string { s, _ := ctx.Value(ctxRequestID).(string); return s }
 
@@ -54,21 +70,47 @@ func peerIP(r *http.Request) string {
 	return host
 }
 
-// withTags reads the session tag for capture correlation and mints a
-// per-request id. It does NOT authenticate. The tag is optional and read from
-// X-Session-Id, falling back to X-Claude-Code-Session-Id (what Claude Code
-// sends); both are stripped so they never reach the provider. Absent → the
-// session id is empty and capture proceeds normally.
-func withTags(next http.Handler) http.Handler {
+// Request headers carrying self-reported attribution (see docs/llm-plane.md,
+// "Request tags"). Always removed before the request goes upstream and
+// before header capture, whether or not capture of tags is enabled.
+const (
+	UserHeader = "X-Gateway-User"
+	TagsHeader = "X-Gateway-Tags"
+)
+
+// withTags is withTagsConfig with attribution recording on and the default
+// pair cap.
+func withTags(next http.Handler) http.Handler { return withTagsConfig(true, 0, next) }
+
+// withTagsConfig reads the session tag and the attribution headers for capture
+// and mints a per-request id. It does NOT authenticate.
+//
+// The session tag is optional and read from X-Session-Id, falling back to
+// X-Claude-Code-Session-Id (what Claude Code sends). X-Gateway-User and
+// X-Gateway-Tags label the call for cost attribution (user and tags on the
+// captured row). All four headers are stripped so they never reach the
+// provider and are not in the captured headers. With tags disabled the
+// attribution headers are still stripped but nothing is recorded. Absent
+// headers leave the values empty and capture proceeds normally.
+func withTagsConfig(tagsOn bool, maxPairs int, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session := r.Header.Get("X-Session-Id")
 		if session == "" {
 			session = r.Header.Get("X-Claude-Code-Session-Id")
 		}
+		user := r.Header.Get(UserHeader)
+		tagsHdr := strings.Join(r.Header.Values(TagsHeader), ",")
 		r.Header.Del("X-Session-Id")
 		r.Header.Del("X-Claude-Code-Session-Id")
+		r.Header.Del(UserHeader)
+		r.Header.Del(TagsHeader)
 		ctx := context.WithValue(r.Context(), ctxSession, session)
 		ctx = context.WithValue(ctx, ctxRequestID, uuid.NewString())
+		if tagsOn {
+			a := attribution{user: pkgsink.CapUser(user)}
+			a.tags, _ = pkgsink.ParseTagsHeader(tagsHdr, maxPairs)
+			ctx = context.WithValue(ctx, ctxAttribution, a)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

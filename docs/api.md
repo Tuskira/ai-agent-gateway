@@ -306,7 +306,11 @@ An **`llm_calls`** entry: required `timestamp` (RFC 3339), `request_id`
 `upstream_host`, `model`, `requested_model`, `path`, `duration_ms`,
 `stream`, `input_tokens`, `output_tokens`, `cache_read_tokens`,
 `cache_creation_tokens`, `stop_reason`, `provider_request_id`, `error`,
-`messages`, `request_body`, `response_body`, `truncated`. `client_name`,
+`messages`, `request_body`, `response_body`, `truncated`, `tags` (a JSON
+object of self-reported labels, same limits as the `X-Gateway-Tags` header:
+see [llm-plane.md](llm-plane.md#request-tags); invalid pairs are dropped, not
+rejected, and the field is ignored when `llm_proxy.capture.tags.enabled` is
+false). `client_name`,
 left empty, is classified from `user_agent` the same way the LLM plane
 classifies a live call ([`sink.ClientFamily`](../pkg/sink/client.go)).
 `cost_usd` is never accepted (always stored `NULL` — subscription usage

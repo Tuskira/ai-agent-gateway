@@ -115,6 +115,14 @@ llm_proxy:
     # it reaches Postgres, the body store or any sink. What goes upstream
     # and back to the client is never changed. Default true.
     redact_secrets: true
+    # Request tags: record the self-reported X-Gateway-User and
+    # X-Gateway-Tags request headers as llm_calls.user / llm_calls.tags for
+    # cost attribution (see docs/llm-plane.md "Request tags"). The headers
+    # are removed before the upstream call whatever this says. Self-reported:
+    # they never affect tenant, key or limits. Default on, 16 pairs.
+    tags:
+      enabled: true
+      max_pairs: 16
 
   # Detection agent (see docs/llm-plane.md "Detection agent"): each relayed
   # call is posted to a LOCAL agent after it completes, with its raw request

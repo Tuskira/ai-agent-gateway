@@ -675,6 +675,9 @@ func Run(ctx context.Context, opts Options) error {
 		if err := metrics.RegisterLLMLimits(gwMetrics, limiter); err != nil {
 			return err
 		}
+		if err := metrics.RegisterLLMTags(gwMetrics, sink.TagsDropped); err != nil {
+			return err
+		}
 		llmCfg := llmConfig(cfg.LLMProxy, pricer, authorizer)
 		llmCfg.ClientIP = clientIPs.IP
 		llmCfg.Limiter = limiter

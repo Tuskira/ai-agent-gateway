@@ -98,6 +98,26 @@ func RegisterLLMLimits(m *Metrics, l LLMLimiter) error {
 	return nil
 }
 
+// TagsDropped reports how many request-tag pairs were discarded (malformed,
+// too long, repeated or over the pair cap): pkg/sink.TagsDropped.
+type TagsDropped func() uint64
+
+// RegisterLLMTags exposes llm_tags_dropped (counter): self-reported tag pairs
+// on LLM calls that were discarded since start. A rising value means a
+// caller sends tags the gateway cannot keep; the call itself is unaffected.
+func RegisterLLMTags(m *Metrics, dropped TagsDropped) error {
+	if _, err := m.Meter().Int64ObservableCounter("llm_tags_dropped",
+		metric.WithDescription("Request tag pairs (X-Gateway-Tags or ingested tags) discarded since start: malformed, too long, repeated or over the pair cap."),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(clamp(dropped()))
+			return nil
+		}),
+	); err != nil {
+		return fmt.Errorf("metrics: register llm_tags_dropped: %w", err)
+	}
+	return nil
+}
+
 // DetectionTee is the LLM plane's copy of finished turns to the detection
 // agent (internal/llmplane.DetectionTee).
 type DetectionTee interface {

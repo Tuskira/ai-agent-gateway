@@ -5,6 +5,9 @@
 //	docker run -d --rm --name ossgw-ch -p 19000:9000 -p 18123:8123 clickhouse/clickhouse-server:24
 //	GATEWAY_TEST_CLICKHOUSE_ADDR=localhost:19000 go test -tags integration ./pkg/sink/clickhouse/... -run Integration -v
 //	docker rm -f ossgw-ch
+//
+// GATEWAY_TEST_CLICKHOUSE_USER / _PASSWORD / _DB are optional (credentials,
+// and an existing database to use instead of "default").
 package clickhouse
 
 import (
@@ -43,8 +46,15 @@ func testConfig(t *testing.T) Config {
 	if err != nil {
 		t.Fatalf("GATEWAY_TEST_CLICKHOUSE_ADDR port %q: %v", portStr, err)
 	}
+	// Optional: a server that needs credentials, and a database other than
+	// "default" (it must already exist) so a shared server is left alone.
+	database := "default"
+	if d := os.Getenv("GATEWAY_TEST_CLICKHOUSE_DB"); d != "" {
+		database = d
+	}
 	return Config{
-		Host: host, Port: port, Database: "default",
+		Host: host, Port: port, Database: database,
+		Username: os.Getenv("GATEWAY_TEST_CLICKHOUSE_USER"), Password: os.Getenv("GATEWAY_TEST_CLICKHOUSE_PASSWORD"),
 		BatchSize: 5, FlushInterval: 200 * time.Millisecond, BufferSize: 100,
 		// Async inserts stay on (the default), with a short busy timeout so
 		// the tests don't each wait out the 10s production default.
@@ -1369,7 +1379,7 @@ func TestIntegration_MigrationIdempotency(t *testing.T) {
 	// collide with another test (or another run) sharing the container.
 	cfg.Database = "ingest_migrate_" + strings.ReplaceAll(uniqueTenantID(t), "-", "_")
 
-	bootstrap, err := clickhouse.Open(Config{Host: cfg.Host, Port: cfg.Port, Database: "default"}.withDefaults().options())
+	bootstrap, err := clickhouse.Open(Config{Host: cfg.Host, Port: cfg.Port, Database: "default", Username: cfg.Username, Password: cfg.Password}.withDefaults().options())
 	if err != nil {
 		t.Fatalf("open bootstrap conn: %v", err)
 	}

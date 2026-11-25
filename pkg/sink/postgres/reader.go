@@ -23,7 +23,7 @@ const defaultListLimit = 50
 const llmListCols = `timestamp, request_id, tenant_id, principal, key_id, session_id, provider, upstream_host,
 	model, path, status_code, duration_ms, stream, input_tokens, output_tokens, cache_read_tokens,
 	cache_creation_tokens, stop_reason, provider_request_id, error, cost_usd, client_name, user_agent,
-	requested_model, resolved_vendor, resolved_model, translated, fallback_index`
+	requested_model, resolved_vendor, resolved_model, translated, fallback_index, "user", tags`
 
 // ListLLMCalls implements analytics.LLMCallReader.
 func (s *Sink) ListLLMCalls(ctx context.Context, tenantID string, f analytics.LLMCallFilter) ([]sink.LLMCall, int, error) {
@@ -84,7 +84,8 @@ func (s *Sink) GetLLMCall(ctx context.Context, tenantID, requestID string) (*sin
 // existed carry NULL) until apply copies them onto the LLMCall.
 type nullCols struct {
 	tenant, principal, key, session, provider, host, model, path, stop, provReq, errText sql.NullString
-	clientName, userAgent, requested, vendor, resolved                                   sql.NullString
+	clientName, userAgent, requested, vendor, resolved, user                             sql.NullString
+	tags                                                                                 []byte
 	status, duration, in, out, cacheRead, cacheCreate                                    sql.NullInt64
 	stream                                                                               sql.NullBool
 	cost                                                                                 sql.NullFloat64
@@ -95,7 +96,7 @@ func listDest(l *sink.LLMCall, n *nullCols) []any {
 	return []any{&l.Timestamp, &l.RequestID, &n.tenant, &n.principal, &n.key, &n.session, &n.provider, &n.host,
 		&n.model, &n.path, &n.status, &n.duration, &n.stream, &n.in, &n.out, &n.cacheRead,
 		&n.cacheCreate, &n.stop, &n.provReq, &n.errText, &n.cost, &n.clientName, &n.userAgent,
-		&n.requested, &n.vendor, &n.resolved, &l.Translated, &l.FallbackIndex}
+		&n.requested, &n.vendor, &n.resolved, &l.Translated, &l.FallbackIndex, &n.user, &n.tags}
 }
 
 func (n *nullCols) apply(l *sink.LLMCall) {
@@ -103,6 +104,13 @@ func (n *nullCols) apply(l *sink.LLMCall) {
 	l.Provider, l.UpstreamHost, l.Model, l.Path = n.provider.String, n.host.String, n.model.String, n.path.String
 	l.StopReason, l.ProviderRequestID, l.Error = n.stop.String, n.provReq.String, n.errText.String
 	l.ClientName, l.UserAgent = n.clientName.String, n.userAgent.String
+	l.User = n.user.String
+	if len(n.tags) > 0 {
+		var t map[string]string
+		if json.Unmarshal(n.tags, &t) == nil && len(t) > 0 {
+			l.Tags = t
+		}
+	}
 	l.RequestedModel, l.ResolvedVendor, l.ResolvedModel = n.requested.String, n.vendor.String, n.resolved.String
 	l.StatusCode, l.DurationMS, l.Stream = int(n.status.Int64), n.duration.Int64, n.stream.Bool
 	l.InputTokens, l.OutputTokens = n.in.Int64, n.out.Int64
@@ -140,6 +148,9 @@ func llmCallWhere(tenantID string, f analytics.LLMCallFilter) (string, []any) {
 	}
 	if f.Status != 0 {
 		add("status_code = $%d", f.Status)
+	}
+	if f.User != "" {
+		add(`"user" = $%d`, f.User)
 	}
 	if !f.From.IsZero() {
 		add("timestamp >= $%d", f.From)

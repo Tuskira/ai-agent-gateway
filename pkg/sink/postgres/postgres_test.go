@@ -3,12 +3,14 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/analytics"
 	"github.com/Tuskira/tusk-ai-secured-gateway/pkg/sink"
 )
 
@@ -77,6 +79,16 @@ func TestInsertArgs(t *testing.T) {
 	if got, _ := args[37].([]string); len(got) != 1 || got[0] != "gw__langfuse__get_trace" {
 		t.Errorf("mcp_tools_used = %#v", args[37])
 	}
+	// "user" and tags are the last two columns: user sanitized like any text,
+	// tags always a JSON object ("{}" when empty, never NULL).
+	args = insertArgs(&sink.LLMCall{User: "a\xffb", Tags: map[string]string{"team": "x"}})
+	if args[38] != "a\uFFFDb" || args[39] != `{"team":"x"}` {
+		t.Errorf("user=%v tags=%v", args[38], args[39])
+	}
+	if got := insertArgs(&sink.LLMCall{})[39]; got != "{}" {
+		t.Errorf("empty tags = %v, want {}", got)
+	}
+
 	args = insertArgs(&sink.LLMCall{})
 	if got, ok := args[36].([]string); !ok || got == nil || len(got) != 0 {
 		t.Errorf("empty skills_used = %#v, want non-nil empty []string", args[36])
@@ -225,5 +237,109 @@ func TestIntegration_ClientInfoColumnsUpgrade(t *testing.T) {
 	}
 	if cn, ua := read("new-row"); cn.String != "claude-code" || ua.String != "claude-cli/2.1.0 (external, cli)" {
 		t.Errorf("new row = client_name=%v user_agent=%v", cn, ua)
+	}
+}
+
+// user and tags must reach a table created BEFORE they existed (ADD COLUMN IF
+// NOT EXISTS on every start), leave old rows as ” and '{}', round-trip on new
+// rows through both readers, and let a jsonb query find a tag. Runs against a
+// real Postgres (GATEWAY_TEST_DATABASE_URL), in a table of its own.
+func TestIntegration_UserAndTagsColumns(t *testing.T) {
+	dsn := os.Getenv("GATEWAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("GATEWAY_TEST_DATABASE_URL not set; skipping the Postgres sink integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	table := "llm_calls_tags_" + strings.ReplaceAll(time.Now().UTC().Format("150405.000000"), ".", "")
+	t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), "DROP TABLE IF EXISTS "+table) })
+
+	// The table as the previous release created it: the base DDL, none of the
+	// columns the ALTER list adds.
+	if _, err := db.ExecContext(ctx, createTableSQL(table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO "+table+" (timestamp, request_id, tenant_id, model) VALUES (now(), 'old-row', 't', 'claude-haiku-4-5')"); err != nil {
+		t.Fatalf("insert old row: %v", err)
+	}
+
+	s, err := New(ctx, Options{DSN: dsn, Table: table})
+	if err != nil {
+		t.Fatalf("New on an old-shape table: %v", err)
+	}
+	defer s.Close()
+	s2, err := New(ctx, Options{DSN: dsn, Table: table}) // idempotent
+	if err != nil {
+		t.Fatalf("second New: %v", err)
+	}
+	s2.Close()
+
+	if err := s.WriteBatch(ctx, []*sink.LLMCall{
+		{Timestamp: time.Now().UTC(), RequestID: "new-row", TenantID: "t", Provider: "anthropic", Model: "m", StatusCode: 200,
+			User: "alice@example.com", Tags: map[string]string{"team": "search", "feature": "café"}},
+		{Timestamp: time.Now().UTC(), RequestID: "plain-row", TenantID: "t", Provider: "anthropic", Model: "m", StatusCode: 200},
+	}); err != nil {
+		t.Fatalf("WriteBatch: %v", err)
+	}
+
+	raw := func(id string) (user, tags string) {
+		if err := db.QueryRowContext(ctx, `SELECT "user", tags::text FROM `+table+" WHERE request_id = $1", id).Scan(&user, &tags); err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		return
+	}
+	if u, tg := raw("old-row"); u != "" || tg != "{}" {
+		t.Errorf("old row user=%q tags=%s, want '' and {}", u, tg)
+	}
+	if u, tg := raw("plain-row"); u != "" || tg != "{}" {
+		t.Errorf("plain row user=%q tags=%s, want '' and {}", u, tg)
+	}
+	if u, _ := raw("new-row"); u != "alice@example.com" {
+		t.Errorf("new row user=%q", u)
+	}
+
+	// jsonb is queryable: cost attribution by tag.
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE tags->>'team' = 'search' AND tags->>'feature' = 'café'").Scan(&n); err != nil || n != 1 {
+		t.Errorf("tag query: n=%d err=%v", n, err)
+	}
+
+	// Both readers return them.
+	got, err := s.GetLLMCall(ctx, "t", "new-row")
+	if err != nil || got.User != "alice@example.com" || got.Tags["team"] != "search" || got.Tags["feature"] != "café" {
+		t.Errorf("GetLLMCall = user %q tags %v err %v", got.User, got.Tags, err)
+	}
+	list, _, err := s.ListLLMCalls(ctx, "t", analytics.LLMCallFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]sink.LLMCall{}
+	for _, l := range list {
+		byID[l.RequestID] = l
+	}
+	if l := byID["new-row"]; l.User != "alice@example.com" || len(l.Tags) != 2 {
+		t.Errorf("list new-row = user %q tags %v", l.User, l.Tags)
+	}
+	if l := byID["old-row"]; l.User != "" || len(l.Tags) != 0 {
+		t.Errorf("list old-row = user %q tags %v", l.User, l.Tags)
+	}
+
+	// The ?user= filter of the LLM logs API applies on this reader too.
+	byUser, total, err := s.ListLLMCalls(ctx, "t", analytics.LLMCallFilter{Limit: 10, User: "alice@example.com"})
+	if err != nil || total != 1 || len(byUser) != 1 || byUser[0].RequestID != "new-row" {
+		t.Errorf("user filter: total=%d rows=%v err=%v", total, byUser, err)
+	}
+	// Attribution never crosses tenants.
+	if _, err := s.GetLLMCall(ctx, "other-tenant", "new-row"); !errors.Is(err, analytics.ErrNotFound) {
+		t.Errorf("GetLLMCall from another tenant: err=%v, want ErrNotFound", err)
+	}
+	if other, _, err := s.ListLLMCalls(ctx, "other-tenant", analytics.LLMCallFilter{User: "alice@example.com"}); err != nil || len(other) != 0 {
+		t.Errorf("other tenant list: %v err=%v", other, err)
 	}
 }

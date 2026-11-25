@@ -158,8 +158,23 @@ func (s *Sink) WriteLLMCall(l *sink.LLMCall) {
 			attribute.Int("skills_used_count", len(l.SkillsUsed)),
 			attribute.Int("mcp_tools_used_count", len(l.MCPToolsUsed)),
 		),
+		oteltrace.WithAttributes(attributionAttrs(l)...),
 	)
 	span.End(oteltrace.WithTimestamp(end))
+}
+
+// attributionAttrs are the self-reported attribution attributes of l:
+// enduser.id from the user label and gateway.tag.<key> per tag. Tag keys
+// are already restricted to [a-z0-9_.-] (sink.TagKeyPattern).
+func attributionAttrs(l *sink.LLMCall) []attribute.KeyValue {
+	var out []attribute.KeyValue
+	if l.User != "" {
+		out = append(out, str("enduser.id", l.User))
+	}
+	for k, v := range l.Tags {
+		out = append(out, str("gateway.tag."+k, v))
+	}
+	return out
 }
 
 // str is attribute.String with invalid UTF-8 replaced: caller-controlled values

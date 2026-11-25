@@ -561,6 +561,21 @@ type LLMCapture struct {
 	// BodyStore optionally offloads captured bodies out of the capture row
 	// (see sink.BodyStore). Only meaningful with StoreBodies.
 	BodyStore BodyStoreConfig `yaml:"body_store"`
+	// Tags controls recording of the X-Gateway-User and X-Gateway-Tags
+	// request headers (self-reported cost attribution).
+	Tags LLMCaptureTags `yaml:"tags"`
+}
+
+// LLMCaptureTags configures request tags on LLM calls. The headers are
+// removed before the upstream call whatever these say.
+type LLMCaptureTags struct {
+	// Enabled records X-Gateway-User as llm_calls.user and X-Gateway-Tags as
+	// llm_calls.tags, and accepts "tags" on ingested llm_calls entries.
+	// Default true.
+	Enabled bool `yaml:"enabled"`
+	// MaxPairs caps the tags kept per call; extra pairs are dropped.
+	// Default 16.
+	MaxPairs int `yaml:"max_pairs"`
 }
 
 // LLMDetection is the detection agent the LLM plane tees each relayed call
@@ -1018,6 +1033,7 @@ func Default() *Config {
 				MaxResponseBytes: 1 << 20,    // 1 MiB per body; 0 = unbounded (opt in explicitly)
 				AssembleStreams:  true,       // a streamed Anthropic reply is stored as one message
 				RedactSecrets:    true,       // scrub credentials from stored bodies
+				Tags:             LLMCaptureTags{Enabled: true, MaxPairs: 16},
 				BodyStore: BodyStoreConfig{
 					Type: "none", // bodies inline in the capture row
 					S3:   S3BodyStoreConfig{Prefix: "llm-bodies"},
@@ -1571,6 +1587,10 @@ func (c *Config) Validate() error {
 		if c.Capture.MaxRequestBytes <= 0 || c.Capture.MaxResponseBytes <= 0 {
 			return fmt.Errorf("capture: max_request_bytes and max_response_bytes must be positive when store_bodies is true")
 		}
+	}
+
+	if mp := c.LLMProxy.Capture.Tags.MaxPairs; mp < 1 || mp > 64 {
+		return fmt.Errorf("llm_proxy.capture.tags: max_pairs must be between 1 and 64, got %d", mp)
 	}
 
 	bs := c.LLMProxy.Capture.BodyStore

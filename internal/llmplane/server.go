@@ -46,13 +46,19 @@ type Config struct {
 	// roles X-Bedrock-Role-Arn may name: a bare account id for the "aws"
 	// partition, "<partition>:<account>" (aws-us-gov:…, aws-cn:…) outside it,
 	// or "*" for every account in every partition.
-	BedrockRoleAccounts     string
-	OpenAIEnabled           bool
-	OpenAIBaseURL           string
-	OpenAIStreamUsage       bool // opt-in: inject stream_options.include_usage (see openaiProvider.InjectStreamUsage)
-	GeminiEnabled           bool
-	GeminiBaseURL           string
-	StoreBodies             bool
+	BedrockRoleAccounts string
+	OpenAIEnabled       bool
+	OpenAIBaseURL       string
+	OpenAIStreamUsage   bool // opt-in: inject stream_options.include_usage (see openaiProvider.InjectStreamUsage)
+	GeminiEnabled       bool
+	GeminiBaseURL       string
+	StoreBodies         bool
+	// TagsDisabled stops recording X-Gateway-User and X-Gateway-Tags on the
+	// captured row (llm_proxy.capture.tags.enabled: false). The headers are
+	// still removed before the upstream call. MaxTagPairs caps the pairs
+	// kept per call; 0 means sink.DefaultMaxTagPairs.
+	TagsDisabled            bool
+	MaxTagPairs             int
 	MaxCaptureRequestBytes  int // bounded storage cap for the request body
 	MaxCaptureResponseBytes int // bounded storage cap for the response body (the stream tee)
 	// AssembleStreams stores a complete streamed response as the one message it
@@ -191,7 +197,7 @@ func chain(h http.Handler, cfg Config) http.Handler {
 	h = streamDeadline(cfg.MaxStreamDuration, h)
 	h = limitBody(cfg.MaxRequestBytes, h)
 	h = requirePermission(cfg.Authorizer, h)
-	h = withTags(h)
+	h = withTagsConfig(!cfg.TagsDisabled, cfg.MaxTagPairs, h)
 	return h
 }
 

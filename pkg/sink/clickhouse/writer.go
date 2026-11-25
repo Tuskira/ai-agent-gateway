@@ -67,7 +67,7 @@ const insertLLMCallsSQL = "INSERT INTO llm_calls (" + `
 	status_code, duration_ms, stream, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
 	stop_reason, provider_request_id, headers, request_body, response_body, messages, system, tools, truncated, error, cost_usd,
 	body_ref, client_ip, client_name, user_agent, requested_model, resolved_vendor, resolved_model, translated, fallback_index, source, ` + "`user`" + `,
-	skills_used, mcp_tools_used, profile
+	skills_used, mcp_tools_used, profile, tags
 )`
 
 func (w *chWriter) InsertLLM(ctx context.Context, rows []*sink.LLMCall) error {
@@ -87,6 +87,7 @@ func (w *chWriter) InsertLLM(ctx context.Context, rows []*sink.LLMCall) error {
 			r.BodyRef, r.ClientIP, r.ClientName, r.UserAgent, r.RequestedModel, r.ResolvedVendor, r.ResolvedModel, boolUint8(r.Translated), int32(r.FallbackIndex),
 			sourceOrDefault(r.Source), r.User,
 			nonNilStrings(r.SkillsUsed), nonNilStrings(r.MCPToolsUsed), r.Profile,
+			nonNilTags(r.Tags),
 		); err != nil {
 			return err
 		}
@@ -217,4 +218,13 @@ func decCost(p *float64) *decimal.Decimal {
 	}
 	d := decimal.NewFromFloat(*p).Round(12)
 	return &d
+}
+
+// nonNilTags is the tags column value: never nil, so the row stores an empty
+// map rather than a driver-dependent NULL.
+func nonNilTags(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
 }

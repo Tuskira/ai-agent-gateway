@@ -211,6 +211,14 @@ var alterLLMCallsIngest = []string{
 	"ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS `user` String DEFAULT ''",
 }
 
+// alterLLMCallsTags upgrades an existing llm_calls table to carry
+// sink.LLMCall.Tags: the self-reported attribution labels from the
+// X-Gateway-Tags request header (or an ingested entry's "tags"). Idempotent;
+// rows written before read back as an empty map.
+var alterLLMCallsTags = []string{
+	`ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS tags Map(LowCardinality(String), String)`,
+}
+
 // alterLLMCallsDiscovery upgrades an existing llm_calls table to carry the
 // skills and MCP tools a response asked to use (sink.LLMCall.SkillsUsed /
 // MCPToolsUsed; see internal/discovery). Idempotent; older rows read back [].
@@ -260,13 +268,16 @@ SELECT
 	cache_creation_tokens AS cache_write_tokens,
 	prompt_tokens + completion_tokens AS total_tokens,
 	cost_usd,
-	toBool(isNotNull(cost_usd)) AS priced
+	toBool(isNotNull(cost_usd)) AS priced,
+	` + "`user`" + `,
+	tags
 FROM (
 	SELECT
 		timestamp, request_id, tenant_id, key_id, session_id, source, profile,
 		if(requested_model != '', requested_model, model) AS caller_model,
 		multiIf(resolved_vendor = '', provider, resolved_vendor = 'openai_compat', 'openai', resolved_vendor) AS pricing_provider,
-		input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd
+		input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd,
+		` + "`user`" + `, tags
 	FROM llm_calls
 	WHERE fallback_index != -1
 		AND status_code < 400
@@ -322,6 +333,7 @@ func schemaStatements() []string {
 	stmts = append(stmts, alterMCPAccessLogsSkillName...)
 	stmts = append(stmts, alterMCPAccessLogsIngest...)
 	stmts = append(stmts, alterLLMCallsIngest...)
+	stmts = append(stmts, alterLLMCallsTags...)
 	return append(stmts, migrationUsageCanonical)
 }
 

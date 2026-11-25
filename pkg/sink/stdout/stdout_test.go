@@ -172,3 +172,33 @@ func TestSink_BodiesOnlyWhenAsked(t *testing.T) {
 		}
 	}
 }
+
+func TestSink_LLMCallCarriesUserAndTags(t *testing.T) {
+	var buf bytes.Buffer
+	s := New(&buf)
+	s.WriteLLMCall(&sink.LLMCall{RequestID: "r1", User: "alice", Tags: map[string]string{"team": "search"}})
+	s.WriteLLMCall(&sink.LLMCall{RequestID: "r2"})
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	var l1, l2 struct {
+		Record map[string]any `json:"record"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &l1); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &l2); err != nil {
+		t.Fatal(err)
+	}
+	tags, _ := l1.Record["tags"].(map[string]any)
+	if l1.Record["user"] != "alice" || tags["team"] != "search" {
+		t.Errorf("record = %v", l1.Record)
+	}
+	if _, ok := l2.Record["user"]; ok {
+		t.Errorf("untagged record has user: %v", l2.Record)
+	}
+	if _, ok := l2.Record["tags"]; ok {
+		t.Errorf("untagged record has tags: %v", l2.Record)
+	}
+}

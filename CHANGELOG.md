@@ -97,6 +97,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The tenant-wide cache reads (`tools/list`, `cache/search`, cache stats)
   skip rows of a connector whose `metadata.enabled` is false; the rows are
   kept and `GET /connectors/{id}/tools` still lists them.
+- **Two connectors no longer share a cached external credential.** The
+  external credential service provider cached a resolved value by source,
+  credential id and field only, so two connectors that named the same
+  credential id, and that the service answers differently, were given
+  whichever value was cached first. The cache key now includes the
+  connector. `ResolveInfo` gains `ConnectorID`.
 
 ## [0.13.2] - 2026-11-17
 

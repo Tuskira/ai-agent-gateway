@@ -152,6 +152,10 @@ type SourceOptionLister interface {
 // and the credential source the header names (nil when it names none).
 // Every field is optional; a provider must cope with any being empty.
 type ResolveInfo struct {
+	// ConnectorID is the id of the connector the header belongs to. A
+	// provider that caches resolved values should include it in its key:
+	// the same credential id can resolve differently per connector.
+	ConnectorID   string
 	ConnectorSlug string
 	HeaderName    string
 	Source        *Source

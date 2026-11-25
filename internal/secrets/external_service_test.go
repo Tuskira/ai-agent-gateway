@@ -155,6 +155,44 @@ func TestExternalService_ResolveSendsContractAndCaches(t *testing.T) {
 	}
 }
 
+// Two connectors that name the same credential_id and field are not given
+// each other's cached value: the service is told which connector asks and
+// may answer differently.
+func TestExternalService_CacheIsPerConnector(t *testing.T) {
+	p, rs, _ := newExternalServiceFixture(t)
+	cfg := map[string]any{"credential_id": "shared", "field": "token"}
+	src := sourceFor(rs, "tenant-a")
+	ctxFor := func(connectorID, slug string) context.Context {
+		ctx := auth.WithPrincipal(context.Background(), &auth.Principal{Subject: "key-1", TenantID: "tenant-a"})
+		return headers.WithResolveInfo(ctx, headers.ResolveInfo{
+			ConnectorID: connectorID, ConnectorSlug: slug, HeaderName: "Authorization", Source: src,
+		})
+	}
+
+	rs.set("for-one", 0, http.StatusOK)
+	if v, err := p.Resolve(ctxFor("conn-1", "one"), cfg); err != nil || v != "for-one" {
+		t.Fatalf("connector one = %q, %v", v, err)
+	}
+	rs.set("for-two", 0, http.StatusOK)
+	if v, err := p.Resolve(ctxFor("conn-2", "two"), cfg); err != nil || v != "for-two" {
+		t.Fatalf("connector two = %q, want its own value, not connector one's cached one (err %v)", v, err)
+	}
+	if got := rs.lastRequest()["connector_slug"]; got != "two" {
+		t.Errorf("the service was asked for connector %q, want two", got)
+	}
+	// Each connector still hits its own cache entry.
+	rs.set("changed", 0, http.StatusOK)
+	if v, _ := p.Resolve(ctxFor("conn-1", "one"), cfg); v != "for-one" {
+		t.Errorf("connector one again = %q, want its cached value", v)
+	}
+	if v, _ := p.Resolve(ctxFor("conn-2", "two"), cfg); v != "for-two" {
+		t.Errorf("connector two again = %q, want its cached value", v)
+	}
+	if n := rs.resolves.Load(); n != 2 {
+		t.Errorf("resolve calls = %d, want 2", n)
+	}
+}
+
 func TestExternalService_TTLIsMinOfServiceAndConfig(t *testing.T) {
 	p, rs, _ := newExternalServiceFixture(t)
 	now := time.Now()

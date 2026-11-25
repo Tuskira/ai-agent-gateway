@@ -403,8 +403,9 @@ At most 1000 options are returned.
   through the same egress guard as connector endpoints. Redirects are
   capped, and every hop must pass the same URL rule as the source, so a
   service cannot redirect the call to plain `http`.
-- Values are cached per tenant, keyed by source, `credential_id` and
-  `field`, for `min(ttl_seconds, secret_store.external_service.cache_ttl)`.
+- Values are cached per tenant, keyed by source, connector, `credential_id`
+  and `field` (two connectors that name the same credential are resolved and
+  cached separately), for `min(ttl_seconds, secret_store.external_service.cache_ttl)`.
   A `ttl_seconds` of 0 or less means the `cache_ttl`.
 - When a backend answers `401`, the gateway drops the tenant's cached values
   and replays the call once with freshly resolved ones. Editing or deleting

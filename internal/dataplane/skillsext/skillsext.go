@@ -268,6 +268,32 @@ func (r *Resolver) Invalidate(tenantID, profileName string) {
 	r.mu.Unlock()
 }
 
+// InvalidateSlug drops the cached bundle of the profile at slug.
+func (r *Resolver) InvalidateSlug(tenantID, slug string) {
+	r.mu.Lock()
+	delete(r.cache, tenantID+"|"+slug)
+	r.mu.Unlock()
+}
+
+// InvalidateTenant drops every cached bundle of tenantID's profiles.
+func (r *Resolver) InvalidateTenant(tenantID string) {
+	prefix := tenantID + "|"
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k := range r.cache {
+		if strings.HasPrefix(k, prefix) {
+			delete(r.cache, k)
+		}
+	}
+}
+
+// InvalidateAll drops every cached bundle, of every tenant.
+func (r *Resolver) InvalidateAll() {
+	r.mu.Lock()
+	r.cache = make(map[string]cacheEntry)
+	r.mu.Unlock()
+}
+
 // URI builds the skill:// URI for a file at path within the named skill.
 func URI(name, path string) string { return Scheme + name + "/" + path }
 

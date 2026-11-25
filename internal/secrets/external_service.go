@@ -372,6 +372,13 @@ func (p *ExternalServiceProvider) InvalidateTenant(tenantID string) {
 	p.mu.Unlock()
 }
 
+// InvalidateAll drops every cached value of every tenant.
+func (p *ExternalServiceProvider) InvalidateAll() {
+	p.mu.Lock()
+	p.cache = make(map[string]map[string]externalServiceEntry)
+	p.mu.Unlock()
+}
+
 func (p *ExternalServiceProvider) cached(tenant, key string) (string, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

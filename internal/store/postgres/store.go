@@ -125,6 +125,14 @@ var connectorToolPrefixMigration string
 //go:embed migrations/000016_platform_locked.up.sql
 var platformLockedMigration string
 
+// invalidateNotifyMigration (000017) publishes a pg_notify event, from row
+// triggers, for every committed write to a row a gateway process caches, so
+// the other replicas evict their caches at once. Its sibling
+// 000017_invalidate_notify.down.sql is for a hand rollback only.
+//
+//go:embed migrations/000017_invalidate_notify.up.sql
+var invalidateNotifyMigration string
+
 // migrations are applied in version order; each is recorded in
 // schema_migrations once applied. Append new migrations here (with the next
 // version) — never edit one that has already shipped.
@@ -148,6 +156,7 @@ var migrations = []struct {
 	{14, strictModelsMigration},
 	{15, connectorToolPrefixMigration},
 	{16, platformLockedMigration},
+	{17, invalidateNotifyMigration},
 }
 
 // migrationLockKey is an arbitrary constant used as a Postgres advisory

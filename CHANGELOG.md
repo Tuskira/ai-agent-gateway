@@ -71,6 +71,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `llm_proxy.capture.tags.enabled` (default `true`) and
   `llm_proxy.capture.tags.max_pairs` (default `16`). See
   [docs/llm-plane.md](docs/llm-plane.md#request-tags).
+- **Profile, skill, credential and credential source changes reach every
+  replica at once.** Migration `000017` adds row triggers that publish a
+  `gateway_invalidate` Postgres notification (`{"kind","tenant","id"}`) for
+  each committed write to agent profiles, their tool grants and skills, the
+  skills registry, credentials, credential sources and API keys, in the same
+  transaction as the write. Every gateway process listens and evicts the
+  resolved profile allow-lists, bound profiles, skill bundles, decrypted
+  secret fields and external credential service values (and an API key's
+  lookup entry) of what changed, flushing them all whenever the listener
+  reconnects. Before, another replica served the old state for up to the
+  profile cache's 30s or a secret cache's TTL (default 5 minutes). Replicas
+  need the migration applied before the notifications exist; the TTLs stay
+  as the backstop.
 
 ### Changed
 

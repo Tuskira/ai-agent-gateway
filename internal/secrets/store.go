@@ -296,6 +296,9 @@ func (s *Service) InvalidateTenant(tenantID string) {
 	s.evictCachePrefix(tenantID + "|")
 }
 
+// InvalidateAll evicts every cached field of every tenant.
+func (s *Service) InvalidateAll() { s.evictCachePrefix("") }
+
 func (s *Service) evictCachePrefix(prefix string) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()

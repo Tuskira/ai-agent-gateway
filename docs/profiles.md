@@ -23,7 +23,11 @@ normalizes it (lowercase, non-`[a-z0-9]` runs collapsed to one hyphen —
 `"SOC Analyst (L1)"` and `"soc_analyst-l1"` both become
 `soc-analyst-l1`) and looks up `agent_profiles` by
 `(tenant, "<tenant-id>-<normalized-name>")`. The resolved allow-list is
-cached for 30 seconds per `(tenant, profile)`.
+cached for 30 seconds per `(tenant, profile)`. With the Postgres store a
+change to a profile, its tool grants or attached skills, or to the skills
+registry, evicts that cache on every replica within milliseconds (see
+[Cache invalidation across replicas](security-model.md#cache-invalidation-across-replicas));
+the 30 seconds is the backstop.
 
 The slug is fixed when the profile is created: renaming a profile does
 not change it, so the header must keep using the original name (a key

@@ -23,6 +23,7 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane/orchestrator"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectioncheck"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/detectionevents"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/invalidate"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/llmplane"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/metrics"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/secrets"
@@ -535,6 +536,42 @@ func (r *revocationRoutine) Run(context.Context) error {
 }
 
 func (r *revocationRoutine) Stop(ctx context.Context) error {
+	r.cancel()
+	select {
+	case <-r.done:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+// invalidationRoutine runs the cache invalidation listener
+// (invalidate.Listen) under the supervisor.
+type invalidationRoutine struct {
+	n      store.InvalidationNotifier
+	target invalidate.Target
+	logger *slog.Logger
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func newInvalidationRoutine(n store.InvalidationNotifier, t invalidate.Target, logger *slog.Logger) *invalidationRoutine {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &invalidationRoutine{n: n, target: t, logger: logger, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+}
+
+func (r *invalidationRoutine) Name() string { return "cache-invalidation-listener" }
+
+func (r *invalidationRoutine) Init(context.Context) error { return nil }
+
+func (r *invalidationRoutine) Run(context.Context) error {
+	defer close(r.done)
+	invalidate.Listen(r.ctx, r.n, r.target, r.logger)
+	return nil
+}
+
+func (r *invalidationRoutine) Stop(ctx context.Context) error {
 	r.cancel()
 	select {
 	case <-r.done:

@@ -37,10 +37,12 @@ import (
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/config"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/dataplane"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/httpplane"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/invalidate"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/llmplane"
 	applog "github.com/Tuskira/tusk-ai-secured-gateway/internal/log"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/mcpcatalog"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/metrics"
+	"github.com/Tuskira/tusk-ai-secured-gateway/internal/secrets"
 	"github.com/Tuskira/tusk-ai-secured-gateway/internal/skills"
 	// Blank-imported for its init() side effect: registers driver
 	// "postgres" with pkg/store. See pkg/store.Open.
@@ -487,6 +489,27 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	// Cross-replica cache invalidation: when the store can push "this row
+	// changed" events (Postgres LISTEN/NOTIFY), every process evicts the
+	// profile, skill, credential and source caches, and the API-key lookup
+	// entry, of what any process wrote, at once. Without it those caches
+	// wait out their TTLs (profiles 30s, secrets and the external service
+	// up to cache_ttl).
+	caches := &invalidate.Caches{Secrets: secDeps.Service}
+	if p, ok := secDeps.Registry.Provider(secrets.ExternalServiceProviderID); ok {
+		if tc, ok := p.(invalidate.TenantCache); ok {
+			caches.External = tc
+		}
+	}
+	if apiKeyAuthenticator != nil {
+		caches.Keys = apiKeyAuthenticator
+	}
+	if n, ok := st.(store.InvalidationNotifier); ok {
+		routines = append(routines, newInvalidationRoutine(n, caches, logger))
+	} else {
+		logger.Warn("store has no invalidation notifier: profile, credential and source changes reach other replicas only when their caches expire")
+	}
+
 	// connectorOps and cacheOps back the API plane's connector
 	// health/discover and cache-management routes (pkg/ops), and come from
 	// the data plane -- so the data plane is built whenever EITHER plane
@@ -526,6 +549,7 @@ func Run(ctx context.Context, opts Options) error {
 		// goroutines all live in Plane.Routines, appended below -- so
 		// holding a Plane costs nothing until one of them is started.
 		defer mcpPlane.Close()
+		caches.Profiles = mcpPlane
 		connectorOps = mcpPlane.ConnectorOps
 		cacheOps = mcpPlane.CacheOps
 		profileOps = mcpPlane.ProfileOps
